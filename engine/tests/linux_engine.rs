@@ -79,7 +79,7 @@ fn establishes_recursive_coverage_before_subscribe_returns() {
     fs::create_dir_all(&nested).unwrap();
 
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), options()).unwrap();
+    let subscription = engine.subscribe(root.path(), options()).unwrap();
 
     assert_eq!(subscription.initial_coverage(), &Coverage::Complete);
     assert_eq!(subscription.stats().watched_directories, 3);
@@ -101,7 +101,7 @@ fn scans_a_populated_tree_moved_into_the_root() {
     fs::write(deep.join("existing.txt"), "before").unwrap();
 
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), options()).unwrap();
+    let subscription = engine.subscribe(root.path(), options()).unwrap();
     let destination = root.path().join("incoming");
     fs::rename(&source, &destination).unwrap();
 
@@ -121,7 +121,7 @@ fn batches_a_file_burst_with_monotonic_sequences() {
     let engine = Engine::new();
     let mut burst_options = options();
     burst_options.max_batch_paths = 17;
-    let mut subscription = engine.subscribe(root.path(), burst_options).unwrap();
+    let subscription = engine.subscribe(root.path(), burst_options).unwrap();
     let expected: BTreeSet<_> = (0..100)
         .map(|index| root.path().join(format!("file-{index:03}.txt")))
         .collect();
@@ -174,7 +174,7 @@ fn preserves_complete_detailed_coverage_across_repeated_directory_bursts() {
         burst_options.batch_window = Duration::from_millis(1);
         burst_options.max_batch_paths = 64;
         burst_options.output_queue_capacity = 64;
-        let mut subscription = engine.subscribe(root.path(), burst_options).unwrap();
+        let subscription = engine.subscribe(root.path(), burst_options).unwrap();
         let expected: BTreeSet<_> = (0..DIRECTORIES_PER_ROUND)
             .map(|index| root.path().join(format!("directory-{index:04}")))
             .collect();
@@ -231,7 +231,7 @@ fn reports_partial_coverage_when_the_watch_limit_is_reached() {
     limited.watch_limit = Some(3);
 
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), limited).unwrap();
+    let subscription = engine.subscribe(root.path(), limited).unwrap();
 
     assert!(matches!(
         subscription.initial_coverage(),
@@ -257,7 +257,7 @@ fn deleting_a_deferred_subtree_restores_current_coverage_accounting() {
     limited.watch_limit = Some(1);
 
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), limited).unwrap();
+    let subscription = engine.subscribe(root.path(), limited).unwrap();
     assert_eq!(subscription.stats().deferred_directories, 2);
 
     fs::remove_dir_all(&deferred).unwrap();
@@ -272,7 +272,7 @@ fn deleting_a_deferred_subtree_restores_current_coverage_accounting() {
 fn stale_create_events_do_not_permanently_degrade_coverage() {
     let root = TestDir::new("transient-churn");
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), options()).unwrap();
+    let subscription = engine.subscribe(root.path(), options()).unwrap();
 
     for index in 0..64 {
         let transient = root.path().join(format!("transient-{index}"));
@@ -308,7 +308,7 @@ fn stale_create_events_do_not_permanently_degrade_coverage() {
 fn discovers_new_nested_directories_and_releases_deleted_watches() {
     let root = TestDir::new("new-topology");
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), options()).unwrap();
+    let subscription = engine.subscribe(root.path(), options()).unwrap();
     let nested = root.path().join("new/a/b");
 
     fs::create_dir_all(&nested).unwrap();
@@ -343,7 +343,7 @@ fn reports_root_moves_as_uncertain_instead_of_claiming_complete_coverage() {
     fs::create_dir(&root).unwrap();
 
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(&root, options()).unwrap();
+    let subscription = engine.subscribe(&root, options()).unwrap();
     fs::rename(&root, &moved).unwrap();
 
     let batch = subscription.recv_timeout(TIMEOUT).expect("root move batch");
@@ -367,7 +367,7 @@ fn reports_ancestor_replacement_as_root_replacement_without_extra_watches() {
     fs::create_dir_all(&root).unwrap();
 
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(&root, options()).unwrap();
+    let subscription = engine.subscribe(&root, options()).unwrap();
     assert_eq!(subscription.stats().watched_directories, 1);
 
     fs::rename(&ancestor, &moved_ancestor).unwrap();
@@ -398,7 +398,7 @@ fn reports_ancestor_replacement_as_root_replacement_without_extra_watches() {
 fn dispose_joins_the_worker_and_prevents_later_delivery() {
     let root = TestDir::new("dispose");
     let engine = Engine::new();
-    let mut subscription = engine.subscribe(root.path(), options()).unwrap();
+    let subscription = engine.subscribe(root.path(), options()).unwrap();
 
     subscription.dispose().unwrap();
     fs::write(root.path().join("after.txt"), "after dispose").unwrap();
@@ -419,7 +419,7 @@ fn rejects_a_symlink_root_instead_of_escaping_the_named_topology() {
     symlink(&target, &link).unwrap();
 
     let error = match Engine::new().subscribe(&link, options()) {
-        Ok(mut subscription) => {
+        Ok(subscription) => {
             subscription.dispose().unwrap();
             panic!("symlink root was accepted")
         }
@@ -440,7 +440,7 @@ fn rejects_a_root_with_a_symlink_in_its_ancestry() {
 
     let root_through_link = link.join("nested");
     let error = match Engine::new().subscribe(&root_through_link, options()) {
-        Ok(mut subscription) => {
+        Ok(subscription) => {
             subscription.dispose().unwrap();
             panic!("root with a symbolic-link ancestor was accepted")
         }
@@ -460,7 +460,7 @@ fn rejects_a_symlink_component_even_when_parent_navigation_cancels_it_lexically(
     let root = link.join("..").join("target");
 
     let error = match Engine::new().subscribe(&root, options()) {
-        Ok(mut subscription) => {
+        Ok(subscription) => {
             subscription.dispose().unwrap();
             panic!("lexically cancelled symbolic-link component was accepted")
         }

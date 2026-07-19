@@ -1,8 +1,8 @@
 # Feasibility architecture and decision record
 
 Status: first Linux feasibility milestone complete; the second-milestone
-directory-burst correctness gate is fixed in targeted stress, without product
-integration or publication.
+directory-burst correctness gate and first shared process-wide runtime slice
+are implemented in targeted stress, without product integration or publication.
 
 ## Decision
 
@@ -14,9 +14,10 @@ generic backend interface in this milestone.
 The completed measurement gate supports continuing the Linux engine: at 10,000
 directories Watchbound was faster and used less incremental RSS than Parcel in
 this tmpfs series, while exposing overflow and coverage loss that Parcel hid.
-This is not yet approval to integrate it. An intermittent, explicitly reported
-directory-topology race and the deliberate multi-root/exclusion gaps must be
-resolved in the next milestone. See `docs/benchmark-results.md`.
+This is not yet approval to integrate it. The directory-topology race and
+shared-runtime gap are addressed in targeted tests here; dynamic exclusions and
+the remaining allocator work are still deliberate gaps. See
+`docs/benchmark-results.md`.
 
 Watchbound is justified only by a stronger contract than “recursively report
 filesystem events”:
@@ -51,14 +52,13 @@ machine is already a useful implementation boundary. There is no public or
 generic backend trait. A second real backend, not a roadmap item, is the point
 at which to reconsider that choice.
 
-The prototype uses the `libc` crate directly for the small inotify/poll surface:
-descriptor creation, watch add/remove, nonblocking reads, and polling. Each
-unsafe call has a local ownership or buffer-safety justification, and event
-headers are read unaligned from a fixed 64 KiB buffer. The `inotify` plus
-`rustix` crates were also evaluated and would reduce handwritten FFI. Revisit
-that tradeoff when the next milestone adds a shared descriptor, command wakeup,
-and `eventfd`; the current single-subscription worker does not need their wider
-abstraction surface.
+The prototype uses the `libc` crate directly for the small inotify/poll/eventfd
+surface: descriptor creation, watch add/remove, nonblocking reads, command
+wakeups, and polling. Each unsafe call has a local ownership or buffer-safety
+justification, and event headers are read unaligned from a fixed 64 KiB buffer.
+The `inotify` plus `rustix` crates were also evaluated and would reduce
+handwritten FFI; that remains a maintainability tradeoff rather than a semantic
+dependency.
 
 ## Public semantic model
 
@@ -83,35 +83,47 @@ engine discards the over-detailed batch, changes coverage to uncertain, and
 queues the root itself as the next conservative invalidation. This trades detail
 for bounded memory without silently retaining a complete-coverage claim.
 
-`dispose` requests shutdown and joins the native worker. After it returns, the
-engine cannot enqueue another batch. The Node proof must additionally prevent a
-queued JavaScript callback from entering after its asynchronous disposal promise
-resolves.
+`dispose` removes and joins the subscription's runtime state. After it returns,
+the shared worker cannot enqueue another batch for that subscription. Disposing
+the final subscription also shuts down and joins the native worker. The Node
+proof must additionally prevent a queued JavaScript callback from entering
+after its asynchronous disposal promise resolves.
 
 ## Linux state machine in this milestone
 
-1. Reject a symlink in any root-path component, validate a real directory root,
-   and create one nonblocking, close-on-exec inotify instance.
-2. Breadth-first traverse real directories without following descendant
-   directory symlinks. Install one watch per directory until an optional
-   caller-provided limit is reached; continue traversal so deferred accounting
-   is explicit.
-3. Read native events on a dedicated thread and deduplicate conservative paths
-   during a short batch window.
-4. On a created or moved-in directory, scan the populated subtree before the
+1. Reject a symlink in any root-path component and validate a real directory
+   root before sending an establishment command to the process runtime.
+2. Lazily create one nonblocking, close-on-exec inotify instance, one
+   nonblocking eventfd command wakeup, and one joined worker for all live
+   subscriptions in the process.
+3. Breadth-first traverse real directories without following descendant
+   directory symlinks. Install a logical interest per subscription and path
+   until that subscription's optional limit is reached; continue traversal so
+   deferred accounting is explicit. Equal native watch descriptors share one
+   registry entry and one kernel allocation.
+4. Read native events on the shared worker and fan them out through the
+   descriptor's logical interests. Each subscription deduplicates its own
+   conservative paths during its own batch window.
+5. On a created or moved-in directory, scan the populated subtree before the
    corresponding batch is made observable. The topology transition is a
    serialization barrier: an expired batch window delays that flush until the
    scan finishes, but does not by itself imply uncertain coverage. Path-count
    and output-queue bounds remain enforced when the event handler returns.
-5. On a moved-out or deleted directory, remove known descendant watches.
-6. On native queue overflow, invalidate the root and report uncertain coverage.
-7. On root move/delete, invalidate the root and report uncertain coverage. A
-   250 ms `(device, inode)` path-identity check also catches replacement caused
-   by moving an ancestor without allocating watches outside the covered tree.
-   The prototype does not yet reattach to a same-path replacement.
-8. On unmount or unexpected kernel watch loss, invalidate the root and report a
-   topology-race uncertainty.
-9. On shutdown, stop, join, close the descriptor, and drop pending output.
+6. On a moved-out or deleted directory, remove that subscription's known
+   descendant interests. Remove a kernel watch only after its final logical
+   interest is gone.
+7. On native queue overflow, invalidate every live root and report uncertain
+   coverage, because overflow belongs to the shared inotify queue.
+8. On root move/delete, invalidate the affected root and report uncertain
+   coverage. A 250 ms `(device, inode)` path-identity check also catches
+   replacement caused by moving an ancestor without allocating watches outside
+   the covered tree. The prototype does not yet reattach to a same-path
+   replacement.
+9. On unmount or unexpected kernel watch loss, invalidate each interested root
+   and report a topology-race uncertainty.
+10. On disposal, remove one subscription's interests and acknowledge only after
+    no later enqueue for it can start. After the final subscription, shut down
+    and join the runtime, close both descriptors, and release every watch.
 
 The symlink validation is a filesystem contract, not an fd-anchored security
 boundary against an adversary replacing ancestors between path operations.
@@ -120,11 +132,11 @@ Runtime mount insertion over a descendant is not observable through inotify;
 stable descendant mount topology is therefore an explicit prototype
 assumption. Root identity replacement is detected by the periodic check above.
 
-The first prototype uses one inotify instance and worker per subscription. This
-keeps the state machine inspectable while testing semantics. Process-wide fair
-allocation and a shared event thread remain the largest deliberate architecture
-gap; they must be implemented together rather than simulated by a public
-abstraction.
+The first prototype used one inotify instance and worker per subscription. The
+current slice replaces that shape with a process-wide runtime while retaining
+opaque `Engine` and `Subscription` handles. `Engine::runtime_stats()` exposes
+live resource gauges for acceptance tests and operational accounting without
+exposing descriptors.
 
 ## Second-milestone topology-race resolution
 
@@ -139,49 +151,53 @@ Topology discovery is now allowed to finish before the caller performs the due
 flush. This preserves the watch-before-read invariant for populated moved-in
 trees, keeps the configured maximum paths per batch and bounded output channel,
 and retains interruptible joined disposal. `topology-race` remains reserved for
-actual evidence: unmount, unexpected `IN_IGNORED`, descriptor aliasing, malformed
-or failed native reads, and poll failures. Event overflow and root replacement
-keep their stronger typed reasons.
+actual evidence: unmount, unexpected `IN_IGNORED`, malformed or failed native
+reads, and poll failures. Event overflow and root replacement keep their
+stronger typed reasons.
 
-## Next architecture assessment
+## Shared runtime assessment
 
-Shared scheduling and allocation must precede dynamic exclusions. Exclusion
-updates need a serialized topology transaction and acknowledgement boundary;
-building that protocol on the current thread-per-subscription shape would create
-a second command/lifecycle design that the shared runtime would immediately
-replace.
+Shared scheduling and reference-counted native allocation now precede dynamic
+exclusions. Exclusion updates still need a serialized topology transaction and
+acknowledgement boundary, but can extend the runtime's existing command envelope
+instead of replacing its lifecycle.
 
-### Shared process-wide runtime
+### Shared process-wide runtime (implemented first slice)
 
-The next engine shape should use one process runtime, one inotify descriptor,
-one command wakeup descriptor, and one joined worker. `Engine` and
-`Subscription` remain opaque handles to it. The worker owns all filesystem
-state; subscribe, exclusion update, and disposal are commands with completion
-acknowledgements rather than concurrent mutations of watcher maps.
+The engine uses one process runtime, one inotify descriptor, one eventfd command
+wakeup, and one joined worker. `Engine` and `Subscription` remain opaque handles
+to it. The worker owns all filesystem state; establishment and disposal are
+ordered commands with completion acknowledgements rather than concurrent
+mutations of watcher maps. The command envelope already carries a generation
+field reserved for exclusion updates, while dynamic exclusions remain disabled.
 
-The scheduler needs explicit turn bounds for native reads, topology directories,
-and commands, with runnable subscriptions visited round-robin. A large initial
-scan or moved-in tree may yield between directories so other roots can deliver
-events, while the affected subscription keeps its topology transition private
-until that scan completes. Per-subscription batch and output-queue bounds remain
-unchanged.
+Scheduler turns are explicitly bounded to 16 commands, two native reads and 64
+decoded native events, and 64 topology directories or 256 directory entries.
+Runnable topology subscriptions are visited round-robin. A large initial scan
+or moved-in tree yields between turns so other roots can receive events, while
+the affected subscription keeps its topology transition private until its scan
+completes. Native parsing also yields when pending topology detail reaches that
+subscription's path bound. Per-subscription batch and output-queue bounds remain
+unchanged, and backpressure changes only that subscription's coverage.
 
-Watch allocation has two levels: the existing subscription limit and a new
-runtime-wide native-watch budget. A unique kernel watch consumes one global
-token. Because one inotify descriptor can return the same watch descriptor for
-overlapping roots or aliased inodes, the descriptor registry must hold
-reference-counted logical `(subscription, path)` interests and remove the
-kernel watch only after the last interest leaves. Each subscription separately
-reports watched and deferred directories. Allocation and promotion requests are
-served round-robin; resource exhaustion produces partial coverage for the
-affected roots rather than allowing the first large root to monopolize tokens.
+The descriptor registry holds reference-counted logical `(subscription, path)`
+interests because one inotify descriptor returns the same watch descriptor for
+overlapping roots or aliased inodes. It removes the kernel watch only after the
+last interest leaves. Each subscription separately enforces its watch limit and
+reports watched and deferred directories, while `native_watches` reports unique
+kernel allocations. A configurable runtime-wide native-watch budget, fair
+allocation under that budget, and automatic promotion of deferred paths remain
+allocator work for a later slice; kernel/process allocation failures are still
+reported as partial coverage on the affected subscription.
 
-Joined disposal becomes a worker command that removes a subscription's logical
+Joined disposal is a worker command that removes a subscription's logical
 interests, flushes or drops its pending delivery according to the existing
 contract, acknowledges only after no later enqueue can begin, and shuts down the
-process runtime after its final handle is gone. Tests must cover overlapping
-roots, concurrent establishment, fair exhaustion and promotion, slow topology
-scans, per-root backpressure isolation, and disposal during queued work.
+process runtime after its final handle is gone. Tests cover shared runtime
+cardinality, overlapping roots, concurrent establishment, slow topology scans,
+per-root backpressure isolation, retained interests after partial disposal,
+concurrent repeated disposal, and final runtime teardown. Fair runtime-budget
+exhaustion and promotion remain tied to the allocator slice.
 
 ### Generation-based atomic exclusions
 
@@ -252,7 +268,8 @@ work but duplicating the surrounding cross-platform product is not sustainable.
 
 ## Deliberate gaps
 
-- process-wide multi-root fairness and one shared inotify event thread;
+- a configurable runtime-wide native-watch budget, fair exhaustion, and
+  deferred-watch promotion;
 - event-driven root-parent anchoring and same-path replacement recovery (the
   prototype currently detects lexical root identity loss by polling);
 - generation-based atomic exclusion updates;

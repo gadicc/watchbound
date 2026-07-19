@@ -251,7 +251,7 @@ impl Task for SubscribeTask {
         if self.shutdown.stop.load(Ordering::Acquire) {
             return Err(Error::from_reason("Node environment is shutting down"));
         }
-        let mut subscription = Engine::new()
+        let subscription = Engine::new()
             .subscribe(&self.root, self.options.clone())
             .map_err(node_error)?;
         if self.shutdown.stop.load(Ordering::Acquire) {
@@ -455,7 +455,7 @@ impl SubscriptionState {
 }
 
 fn bridge_batches(
-    mut subscription: Subscription,
+    subscription: Subscription,
     threadsafe_function: Arc<BatchThreadsafeFunction>,
     callback_tracker: Arc<CallbackTracker>,
     shutdown: Arc<ShutdownGate>,

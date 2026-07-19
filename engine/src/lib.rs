@@ -10,10 +10,9 @@ mod backend;
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
-use std::thread::JoinHandle;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 /// Whether a subscription can currently account for its recursive tree.
@@ -125,6 +124,15 @@ pub struct Stats {
     pub disposed: bool,
 }
 
+/// Live process-wide Linux runtime resource gauges.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeStats {
+    pub inotify_instances: usize,
+    pub worker_threads: usize,
+    pub native_watches: usize,
+    pub subscriptions: usize,
+}
+
 /// A cheap, thread-safe view of one subscription's live counters.
 #[derive(Clone)]
 pub struct StatsHandle {
@@ -176,10 +184,7 @@ impl SharedStats {
     }
 }
 
-/// Factory for independent subscriptions.
-///
-/// A future multi-root scheduler can live behind this type without exposing
-/// Linux descriptors or changing the subscription result model.
+/// Factory for subscriptions on the shared process-wide Linux runtime.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Engine;
 
@@ -197,6 +202,18 @@ impl Engine {
             dynamic_exclusions: false,
             root_replacement_recovery: false,
         }
+    }
+
+    /// Returns live gauges for the shared Linux runtime, or zeroes while no
+    /// subscriptions exist.
+    pub fn runtime_stats(&self) -> RuntimeStats {
+        let registry = runtime_registry()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        registry
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .map_or_else(RuntimeStats::default, |runtime| runtime.stats())
     }
 
     /// Returns only after the initial traversal has either established complete
@@ -217,33 +234,43 @@ impl Engine {
         }
 
         let stats = Arc::new(SharedStats::new());
-        let initialized =
-            backend::linux::InitializedWatcher::new(root, options.clone(), Arc::clone(&stats))?;
-        let initial_coverage = initialized.coverage().clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        let (sender, receiver) = mpsc::sync_channel(options.output_queue_capacity);
-        let worker_stop = Arc::clone(&stop);
-        let worker_stats = Arc::clone(&stats);
-        let worker = std::thread::Builder::new()
-            .name("watchbound-inotify".to_owned())
-            .spawn(move || initialized.run(sender, worker_stop, worker_stats))?;
+        let runtime = acquire_runtime()?;
+        let established = match runtime.subscribe(root, options, Arc::clone(&stats)) {
+            Ok(established) => established,
+            Err(error) => {
+                let _ = release_runtime(&runtime);
+                return Err(error);
+            }
+        };
 
         Ok(Subscription {
-            initial_coverage,
-            receiver,
-            stop,
+            initial_coverage: established.initial_coverage,
+            receiver: Mutex::new(established.receiver),
             stats,
-            worker: Some(worker),
+            lifecycle: Mutex::new(Lifecycle::Active {
+                runtime,
+                subscription_id: established.id,
+            }),
+            disposed: Condvar::new(),
         })
     }
 }
 
 pub struct Subscription {
     initial_coverage: Coverage,
-    receiver: Receiver<ChangeBatch>,
-    stop: Arc<AtomicBool>,
+    receiver: Mutex<Receiver<ChangeBatch>>,
     stats: Arc<SharedStats>,
-    worker: Option<JoinHandle<()>>,
+    lifecycle: Mutex<Lifecycle>,
+    disposed: Condvar,
+}
+
+enum Lifecycle {
+    Active {
+        runtime: Arc<backend::linux::Runtime>,
+        subscription_id: u64,
+    },
+    Disposing,
+    Disposed(Option<(io::ErrorKind, String)>),
 }
 
 impl Subscription {
@@ -252,11 +279,17 @@ impl Subscription {
     }
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<ChangeBatch, RecvTimeoutError> {
-        self.receiver.recv_timeout(timeout)
+        self.receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .recv_timeout(timeout)
     }
 
     pub fn try_recv(&self) -> Result<ChangeBatch, TryRecvError> {
-        self.receiver.try_recv()
+        self.receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_recv()
     }
 
     pub fn stats(&self) -> Stats {
@@ -269,19 +302,64 @@ impl Subscription {
         }
     }
 
-    /// Joins the native worker. Once this returns, the engine can no longer
-    /// enqueue a batch for this subscription.
-    pub fn dispose(&mut self) -> io::Result<()> {
-        let Some(worker) = self.worker.take() else {
-            return Ok(());
+    /// Joins removal of this subscription from the shared worker. Once this
+    /// returns, the engine can no longer enqueue a batch for this subscription.
+    /// Disposing the final subscription also joins the worker thread.
+    pub fn dispose(&self) -> io::Result<()> {
+        let (runtime, subscription_id) = {
+            let mut lifecycle = self
+                .lifecycle
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            loop {
+                match &*lifecycle {
+                    Lifecycle::Active { .. } => {
+                        let Lifecycle::Active {
+                            runtime,
+                            subscription_id,
+                        } = std::mem::replace(&mut *lifecycle, Lifecycle::Disposing)
+                        else {
+                            unreachable!();
+                        };
+                        break (runtime, subscription_id);
+                    }
+                    Lifecycle::Disposing => {
+                        lifecycle = self
+                            .disposed
+                            .wait(lifecycle)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    Lifecycle::Disposed(error) => return stored_result(error),
+                }
+            }
         };
-        self.stop.store(true, Ordering::Release);
-        worker
-            .join()
-            .map_err(|_| io::Error::other("watch worker panicked"))?;
-        while self.receiver.try_recv().is_ok() {}
+
+        let mut result = runtime.dispose(subscription_id);
+        if let Err(error) = release_runtime(&runtime)
+            && result.is_ok()
+        {
+            result = Err(error);
+        }
+        while self
+            .receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_recv()
+            .is_ok()
+        {}
         self.stats.disposed.store(true, Ordering::Release);
-        Ok(())
+
+        let stored_error = result
+            .as_ref()
+            .err()
+            .map(|error| (error.kind(), error.to_string()));
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *lifecycle = Lifecycle::Disposed(stored_error);
+        self.disposed.notify_all();
+        result
     }
 }
 
@@ -289,6 +367,51 @@ impl Drop for Subscription {
     fn drop(&mut self) {
         let _ = self.dispose();
     }
+}
+
+fn stored_result(error: &Option<(io::ErrorKind, String)>) -> io::Result<()> {
+    match error {
+        Some((kind, message)) => Err(io::Error::new(*kind, message.clone())),
+        None => Ok(()),
+    }
+}
+
+static RUNTIME: OnceLock<Mutex<Option<Weak<backend::linux::Runtime>>>> = OnceLock::new();
+
+fn runtime_registry() -> &'static Mutex<Option<Weak<backend::linux::Runtime>>> {
+    RUNTIME.get_or_init(|| Mutex::new(None))
+}
+
+fn acquire_runtime() -> io::Result<Arc<backend::linux::Runtime>> {
+    let mut registry = runtime_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(runtime) = registry.as_ref().and_then(Weak::upgrade)
+        && runtime.try_acquire()
+    {
+        return Ok(runtime);
+    }
+    let runtime = backend::linux::Runtime::start()?;
+    assert!(runtime.try_acquire());
+    *registry = Some(Arc::downgrade(&runtime));
+    Ok(runtime)
+}
+
+fn release_runtime(runtime: &Arc<backend::linux::Runtime>) -> io::Result<()> {
+    let mut registry = runtime_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !runtime.release() {
+        return Ok(());
+    }
+    if registry
+        .as_ref()
+        .and_then(Weak::upgrade)
+        .is_some_and(|current| Arc::ptr_eq(&current, runtime))
+    {
+        *registry = None;
+    }
+    runtime.shutdown_and_join()
 }
 
 fn absolute_path(path: &Path) -> io::Result<PathBuf> {

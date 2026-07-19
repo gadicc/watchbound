@@ -130,6 +130,8 @@ pub struct RuntimeStats {
     pub inotify_instances: usize,
     pub worker_threads: usize,
     pub native_watches: usize,
+    pub native_watch_budget: Option<usize>,
+    pub deferred_interests: usize,
     pub subscriptions: usize,
 }
 
@@ -185,12 +187,29 @@ impl SharedStats {
 }
 
 /// Factory for subscriptions on the shared process-wide Linux runtime.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Engine;
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Engine {
+    runtime_watch_budget: Option<usize>,
+}
 
 impl Engine {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Creates an engine that requires the shared runtime to enforce the given
+    /// unique native-watch budget. The budget is fixed until that runtime's
+    /// final subscription is disposed.
+    pub fn with_runtime_watch_budget(native_watches: usize) -> io::Result<Self> {
+        if native_watches == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "runtime native-watch budget must be positive",
+            ));
+        }
+        Ok(Self {
+            runtime_watch_budget: Some(native_watches),
+        })
     }
 
     pub const fn capabilities(&self) -> Capabilities {
@@ -234,7 +253,7 @@ impl Engine {
         }
 
         let stats = Arc::new(SharedStats::new());
-        let runtime = acquire_runtime()?;
+        let runtime = acquire_runtime(self.runtime_watch_budget)?;
         let established = match runtime.subscribe(root, options, Arc::clone(&stats)) {
             Ok(established) => established,
             Err(error) => {
@@ -382,16 +401,22 @@ fn runtime_registry() -> &'static Mutex<Option<Weak<backend::linux::Runtime>>> {
     RUNTIME.get_or_init(|| Mutex::new(None))
 }
 
-fn acquire_runtime() -> io::Result<Arc<backend::linux::Runtime>> {
+fn acquire_runtime(native_watch_budget: Option<usize>) -> io::Result<Arc<backend::linux::Runtime>> {
     let mut registry = runtime_registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(runtime) = registry.as_ref().and_then(Weak::upgrade)
-        && runtime.try_acquire()
-    {
-        return Ok(runtime);
+    if let Some(runtime) = registry.as_ref().and_then(Weak::upgrade) {
+        if runtime.native_watch_budget() != native_watch_budget {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "engine runtime native-watch budget conflicts with the active shared runtime",
+            ));
+        }
+        if runtime.try_acquire() {
+            return Ok(runtime);
+        }
     }
-    let runtime = backend::linux::Runtime::start()?;
+    let runtime = backend::linux::Runtime::start(native_watch_budget)?;
     assert!(runtime.try_acquire());
     *registry = Some(Arc::downgrade(&runtime));
     Ok(runtime)

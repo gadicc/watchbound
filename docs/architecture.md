@@ -1,8 +1,9 @@
 # Feasibility architecture and decision record
 
 Status: first Linux feasibility milestone complete; the second-milestone
-directory-burst correctness gate and first shared process-wide runtime slice
-are implemented in targeted stress, without product integration or publication.
+directory-burst correctness gate, shared process-wide runtime, and bounded
+native-watch allocator with fair promotion are implemented in targeted stress,
+without product integration or publication.
 
 ## Decision
 
@@ -98,9 +99,11 @@ after its asynchronous disposal promise resolves.
    subscriptions in the process.
 3. Breadth-first traverse real directories without following descendant
    directory symlinks. Install a logical interest per subscription and path
-   until that subscription's optional limit is reached; continue traversal so
-   deferred accounting is explicit. Equal native watch descriptors share one
-   registry entry and one kernel allocation.
+   until either that subscription's optional limit or the runtime's optional
+   unique native-watch budget is reached; continue traversal so every known
+   deferred interest is explicit. Interests for the same `(device, inode)`
+   attach to one descriptor registry entry and consume one runtime token while
+   remaining separate in each subscription's coverage accounting.
 4. Read native events on the shared worker and fan them out through the
    descriptor's logical interests. Each subscription deduplicates its own
    conservative paths during its own batch window.
@@ -111,7 +114,8 @@ after its asynchronous disposal promise resolves.
    and output-queue bounds remain enforced when the event handler returns.
 6. On a moved-out or deleted directory, remove that subscription's known
    descendant interests. Remove a kernel watch only after its final logical
-   interest is gone.
+   interest is gone. A returned subscription or runtime token immediately
+   makes deferred interests eligible for round-robin promotion.
 7. On native queue overflow, invalidate every live root and report uncertain
    coverage, because overflow belongs to the shared inotify queue.
 8. On root move/delete, invalidate the affected root and report uncertain
@@ -121,9 +125,11 @@ after its asynchronous disposal promise resolves.
    replacement.
 9. On unmount or unexpected kernel watch loss, invalidate each interested root
    and report a topology-race uncertainty.
-10. On disposal, remove one subscription's interests and acknowledge only after
-    no later enqueue for it can start. After the final subscription, shut down
-    and join the runtime, close both descriptors, and release every watch.
+10. On disposal, remove one subscription's interests and allocator state and
+    acknowledge only after no later enqueue for it can start. Returned native
+    tokens can promote other subscriptions without resubscription. After the
+    final subscription, shut down and join the runtime, close both descriptors,
+    and release every watch and deferred allocator record.
 
 The symlink validation is a filesystem contract, not an fd-anchored security
 boundary against an adversary replacing ancestors between path operations.
@@ -162,7 +168,7 @@ exclusions. Exclusion updates still need a serialized topology transaction and
 acknowledgement boundary, but can extend the runtime's existing command envelope
 instead of replacing its lifecycle.
 
-### Shared process-wide runtime (implemented first slice)
+### Shared process-wide runtime and allocator
 
 The engine uses one process runtime, one inotify descriptor, one eventfd command
 wakeup, and one joined worker. `Engine` and `Subscription` remain opaque handles
@@ -172,32 +178,82 @@ mutations of watcher maps. The command envelope already carries a generation
 field reserved for exclusion updates, while dynamic exclusions remain disabled.
 
 Scheduler turns are explicitly bounded to 16 commands, two native reads and 64
-decoded native events, and 64 topology directories or 256 directory entries.
-Runnable topology subscriptions are visited round-robin. A large initial scan
-or moved-in tree yields between turns so other roots can receive events, while
-the affected subscription keeps its topology transition private until its scan
-completes. Native parsing also yields when pending topology detail reaches that
+decoded native events, 64 topology directories or 256 directory entries, and
+allocator inspection of 16 subscriptions and 64 deferred candidates for the
+selected subscription. Runnable topology and allocator subscriptions are
+visited round-robin. With a bounded runtime, initial discovery yields after one
+new unique native allocation so concurrently runnable large subscriptions can
+share the available tokens. A large initial scan, promotion, or moved-in tree
+yields between turns so other roots can receive events, while the affected
+subscription keeps its topology transition private until its scan completes.
+Native parsing also yields when pending topology detail reaches that
 subscription's path bound. Per-subscription batch and output-queue bounds remain
 unchanged, and backpressure changes only that subscription's coverage.
 
 The descriptor registry holds reference-counted logical `(subscription, path)`
-interests because one inotify descriptor returns the same watch descriptor for
-overlapping roots or aliased inodes. It removes the kernel watch only after the
-last interest leaves. Each subscription separately enforces its watch limit and
-reports watched and deferred directories, while `native_watches` reports unique
-kernel allocations. A configurable runtime-wide native-watch budget, fair
-allocation under that budget, and automatic promotion of deferred paths remain
-allocator work for a later slice; kernel/process allocation failures are still
-reported as partial coverage on the affected subscription.
+interests because overlapping roots or aliased directory identities can share
+one inotify watch descriptor. Each logical interest counts toward its own
+subscription's `watch_limit`, watched count, and coverage. The runtime budget
+and `native_watches` gauge count unique live kernel watches instead. Adding or
+removing an overlapping logical interest therefore neither consumes nor returns
+a runtime token; only the first or final interest changes the unique count.
+
+`Engine::new()` preserves the unbounded prototype behavior. A caller can use
+`Engine::with_runtime_watch_budget` to request a positive unique-watch budget.
+Configuration is fixed for one runtime lifetime: while any subscription keeps
+that process runtime alive, every subscribing `Engine` must request exactly the
+same bounded value or the same unbounded default. A conflict fails before a
+subscription command is admitted. After final joined shutdown, a later runtime
+may use a different configuration. `RuntimeStats` reports the active budget,
+unique native watches, and queued deferred logical interests; no
+application-specific default is embedded in the engine.
+
+### Allocator and promotion state machine
+
+For each discovered real directory, allocation proceeds as follows:
+
+1. An existing logical interest is already watched and needs no allocation.
+2. If the subscription's own logical watch limit is full, record a deferred
+   subscription-limit interest and continue bounded discovery.
+3. Otherwise, if the directory identity already has a native watch, attach the
+   logical interest without consuming a runtime token—even when the runtime
+   budget is full.
+4. If a new unique watch would exceed the runtime budget, record a deferred
+   runtime-budget interest and continue bounded discovery.
+5. Otherwise install the native watch and record the logical interest. Native
+   permission, process-resource, and transient failures remain explicit
+   non-complete states rather than being mistaken for budget deferral.
+
+When either a subscription slot or a final native-watch token is returned, the
+allocator revisits subscriptions in round-robin order. A subscription at its
+own limit is skipped even if runtime tokens are free. Promotion selects a known
+deferred interest, installs or shares its watch before opening the directory
+iterator, then starts a bounded breadth-first topology job. The promoted path is
+always conservatively invalidated because mutations may have occurred while it
+was unwatched; the engine does not synthesize reconstructed event detail.
+Additional unique descendant watches discovered by that scan remain deferred
+and re-enter the round-robin allocator instead of bypassing other runnable
+subscriptions. Its own promotion installs the watch before re-reading it; an
+already shared descendant can attach without a token.
+
+Promotion is a subscription-local topology barrier. Its pending promotion keeps
+coverage partial, and its invalidation cannot flush, until watch-before-read
+discovery of that promoted region finishes. Other subscriptions continue native
+event delivery and allocator/topology turns. On completion, remaining gaps keep
+coverage partial; if none remain, the same conservative batch publishes the
+transition to complete. Backpressure or uncertainty on one subscription does
+not change another subscription's allocator state. Shared native overflow is
+still runtime-wide uncertainty because loss occurs before fan-out.
 
 Joined disposal is a worker command that removes a subscription's logical
 interests, flushes or drops its pending delivery according to the existing
 contract, acknowledges only after no later enqueue can begin, and shuts down the
 process runtime after its final handle is gone. Tests cover shared runtime
 cardinality, overlapping roots, concurrent establishment, slow topology scans,
-per-root backpressure isolation, retained interests after partial disposal,
-concurrent repeated disposal, and final runtime teardown. Fair runtime-budget
-exhaustion and promotion remain tied to the allocator slice.
+per-root backpressure isolation, bounded fair allocation, subscription-limit
+independence, populated-subtree promotion, retained overlapping interests,
+token return after deletion and disposal, concurrent repeated disposal, and
+final runtime/allocator teardown.
 
 ### Generation-based atomic exclusions
 
@@ -268,8 +324,10 @@ work but duplicating the surrounding cross-platform product is not sustainable.
 
 ## Deliberate gaps
 
-- a configurable runtime-wide native-watch budget, fair exhaustion, and
-  deferred-watch promotion;
+- runtime-budget resizing or weighted/prioritized allocation (configuration is
+  fixed and fairness is round-robin among runnable subscriptions);
+- automatic retry policy for permission, transient, or kernel/process resource
+  allocation failures that were not caused by the configured budgets;
 - event-driven root-parent anchoring and same-path replacement recovery (the
   prototype currently detects lexical root identity loss by polling);
 - generation-based atomic exclusion updates;

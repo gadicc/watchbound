@@ -17,20 +17,42 @@ descendant directory symlinks are skipped. The check is path-based rather than
 an fd-anchored security boundary. Establishment fails instead of returning
 complete coverage if the root vanishes or changes identity during traversal.
 
-An absent `watch_limit` means the engine imposes no product limit; kernel and
-process limits still apply and must be reported as partial coverage. The engine
-does not contain Codex Desktop's `8192` policy value. The limit counts logical
-directories for that subscription even when overlapping roots share a unique
-kernel watch. `Engine::runtime_stats()` separately reports the live unique
-native-watch, subscription, inotify-instance, and worker-thread gauges. A
-configurable runtime-wide watch budget is not part of this slice.
+An absent subscription `watch_limit` means the engine imposes no logical limit
+for that subscription; kernel and process limits still apply and must be
+reported as partial coverage. The engine does not contain Codex Desktop's
+`8192` policy value. The subscription limit counts logical directories even
+when overlapping subscriptions share one native watch.
+
+`Engine::new()` requests the unbounded runtime default.
+`Engine::with_runtime_watch_budget(positive_limit)` requests a budget over
+unique native watches. The first live subscription fixes that configuration for
+the shared runtime's lifetime. A later subscription requesting a different
+bounded value, or bounded versus unbounded operation, fails with
+`InvalidInput`; the runtime does not silently choose one engine's value. After
+the final subscription performs joined shutdown, the next runtime may use a new
+configuration.
+
+`Engine::runtime_stats()` reports the active `native_watch_budget`, unique
+`native_watches`, queued `deferred_interests`, subscriptions, inotify instance,
+and worker thread. An engine with no live runtime reports the default zero/none
+snapshot.
 
 `initial_coverage` never changes. Current coverage travels on later batches.
 Deferred-directory counts describe current known gaps rather than cumulative
-failure history: deleting a deferred subtree can reduce the count and restore
-complete coverage. Still-existing deferred paths are not automatically promoted
-in this prototype. Uncertainty is sticky, with stronger loss reasons (notably
-native overflow) taking precedence over weaker ones.
+failure history. Each subscription accounts for its logical watched and
+deferred directories independently; the runtime budget accounts only for unique
+native watches. Deleting a deferred subtree can reduce the count, while deleting
+watched topology or disposing another subscription can return a token and
+promote a still-existing deferred interest automatically. A subscription at its
+own limit cannot consume a free runtime token.
+
+Promotion installs or shares the native watch before reading the directory,
+invalidates the promoted path conservatively, and scans the populated region in
+bounded scheduler turns. Its topology barrier keeps current coverage partial
+and withholds that invalidation until discovery finishes. The resulting batch
+reports complete only if the scan leaves no other gap. Uncertainty is sticky,
+with stronger loss reasons (notably native overflow) taking precedence over
+weaker ones.
 
 ## Delivery
 
@@ -62,8 +84,10 @@ no later enqueue for it can begin, then the handle drains already queued
 batches. A shared kernel watch remains installed while any other logical
 interest needs it. Disposal of the final subscription additionally shuts down
 and joins the runtime and closes its inotify and command-wakeup descriptors.
-Dropping a subscription performs the same cleanup. Statistics remain readable
-after explicit disposal.
+Dropping a subscription performs the same cleanup. Returned final-interest
+tokens are offered round-robin to other subscriptions before they need any
+resubscription. Statistics remain readable after explicit disposal; its logical
+watched/deferred counts are zero.
 
 The Node layer exposes asynchronous disposal so the JavaScript event loop can
 continue draining or cancelling the bounded Node-API bridge while the Rust

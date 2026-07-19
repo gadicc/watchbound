@@ -36,10 +36,12 @@ const MAX_NATIVE_READS_PER_TURN: usize = 2;
 const MAX_NATIVE_EVENTS_PER_TURN: usize = 64;
 const MAX_TOPOLOGY_DIRECTORIES_PER_TURN: usize = 64;
 const MAX_TOPOLOGY_ENTRIES_PER_TURN: usize = 256;
+const MAX_ALLOCATOR_SUBSCRIPTIONS_PER_TURN: usize = 16;
+const MAX_DEFERRED_CANDIDATES_PER_TURN: usize = 64;
 
 type SubscriptionId = u64;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct RootIdentity {
     device: u64,
     inode: u64,
@@ -79,6 +81,7 @@ struct RuntimeCounters {
     inotify_instances: AtomicUsize,
     worker_threads: AtomicUsize,
     native_watches: AtomicUsize,
+    deferred_interests: AtomicUsize,
     subscriptions: AtomicUsize,
 }
 
@@ -88,6 +91,8 @@ impl RuntimeCounters {
             inotify_instances: self.inotify_instances.load(Ordering::Acquire),
             worker_threads: self.worker_threads.load(Ordering::Acquire),
             native_watches: self.native_watches.load(Ordering::Acquire),
+            native_watch_budget: None,
+            deferred_interests: self.deferred_interests.load(Ordering::Acquire),
             subscriptions: self.subscriptions.load(Ordering::Acquire),
         }
     }
@@ -104,12 +109,13 @@ pub(crate) struct Runtime {
     wakeup: Arc<OwnedFd>,
     worker: Mutex<Option<JoinHandle<()>>>,
     counters: Arc<RuntimeCounters>,
+    native_watch_budget: Option<usize>,
     leases: AtomicUsize,
     shutting_down: AtomicBool,
 }
 
 impl Runtime {
-    pub(crate) fn start() -> io::Result<Arc<Self>> {
+    pub(crate) fn start(native_watch_budget: Option<usize>) -> io::Result<Arc<Self>> {
         let inotify = create_inotify()?;
         let wakeup = Arc::new(create_eventfd()?);
         let (commands, command_receiver) = mpsc::channel();
@@ -119,7 +125,14 @@ impl Runtime {
         let worker = std::thread::Builder::new()
             .name("watchbound-linux-runtime".to_owned())
             .spawn(move || {
-                Worker::new(inotify, worker_wakeup, command_receiver, worker_counters).run();
+                Worker::new(
+                    inotify,
+                    worker_wakeup,
+                    command_receiver,
+                    worker_counters,
+                    native_watch_budget,
+                )
+                .run();
             })?;
         counters.inotify_instances.store(1, Ordering::Release);
         counters.worker_threads.store(1, Ordering::Release);
@@ -128,6 +141,7 @@ impl Runtime {
             wakeup,
             worker: Mutex::new(Some(worker)),
             counters,
+            native_watch_budget,
             leases: AtomicUsize::new(0),
             shutting_down: AtomicBool::new(false),
         }))
@@ -143,6 +157,10 @@ impl Runtime {
             return false;
         }
         true
+    }
+
+    pub(crate) const fn native_watch_budget(&self) -> Option<usize> {
+        self.native_watch_budget
     }
 
     pub(crate) fn release(&self) -> bool {
@@ -247,7 +265,10 @@ impl Runtime {
     }
 
     pub(crate) fn stats(&self) -> RuntimeStats {
-        self.counters.snapshot()
+        RuntimeStats {
+            native_watch_budget: self.native_watch_budget,
+            ..self.counters.snapshot()
+        }
     }
 
     fn send(&self, command: CommandEnvelope) -> io::Result<()> {
@@ -330,7 +351,23 @@ struct Interest {
 
 #[derive(Default)]
 struct NativeWatch {
+    identity: Option<RootIdentity>,
     interests: BTreeSet<Interest>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeferredCause {
+    SubscriptionLimit,
+    RuntimeBudget,
+    NativeResource,
+    Permission,
+    TransientError,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DeferredInterest {
+    reason: PartialReason,
+    cause: DeferredCause,
 }
 
 struct SubscriptionState {
@@ -342,7 +379,9 @@ struct SubscriptionState {
     stats: Arc<SharedStats>,
     output: SyncSender<ChangeBatch>,
     watched_paths: HashMap<PathBuf, i32>,
-    deferred_directories: HashMap<PathBuf, PartialReason>,
+    deferred_directories: HashMap<PathBuf, DeferredInterest>,
+    deferred_order: VecDeque<PathBuf>,
+    pending_promotions: BTreeSet<PathBuf>,
     uncertain_reason: Option<UncertainReason>,
     pending_paths: BTreeSet<PathBuf>,
     pending_started: Option<Instant>,
@@ -378,6 +417,8 @@ impl SubscriptionState {
             output,
             watched_paths: HashMap::new(),
             deferred_directories: HashMap::new(),
+            deferred_order: VecDeque::new(),
+            pending_promotions: BTreeSet::new(),
             uncertain_reason: None,
             pending_paths: BTreeSet::new(),
             pending_started: None,
@@ -395,7 +436,7 @@ impl SubscriptionState {
             Coverage::Partial {
                 reason,
                 watched_directories: self.watched_paths.len(),
-                deferred_directories: self.deferred_directories.len(),
+                deferred_directories: self.deferred_count(),
             }
         } else {
             Coverage::Complete
@@ -422,27 +463,52 @@ impl SubscriptionState {
         self.queue_path(invalidated_path);
     }
 
-    fn defer(&mut self, path: PathBuf, reason: PartialReason) {
+    fn defer(&mut self, path: PathBuf, reason: PartialReason, cause: DeferredCause) {
+        if !self.deferred_directories.contains_key(&path) {
+            self.deferred_order.push_back(path.clone());
+        }
         self.deferred_directories
             .entry(path)
             .and_modify(|current| {
-                if partial_priority(reason) > partial_priority(*current) {
-                    *current = reason;
+                if partial_priority(reason) > partial_priority(current.reason) {
+                    *current = DeferredInterest { reason, cause };
                 }
             })
-            .or_insert(reason);
+            .or_insert(DeferredInterest { reason, cause });
+    }
+
+    fn defer_error(&mut self, path: PathBuf, error: &io::Error) {
+        let reason = partial_reason_for_error(error);
+        let cause = match reason {
+            PartialReason::Permission => DeferredCause::Permission,
+            PartialReason::ResourceLimit => DeferredCause::NativeResource,
+            PartialReason::TransientError => DeferredCause::TransientError,
+        };
+        self.defer(path, reason, cause);
     }
 
     fn remove_deferred_subtree(&mut self, path: &Path) {
         self.deferred_directories
             .retain(|candidate, _| !candidate.starts_with(path));
+        self.deferred_order
+            .retain(|candidate| !candidate.starts_with(path));
     }
 
     fn current_partial_reason(&self) -> Option<PartialReason> {
         self.deferred_directories
             .values()
-            .copied()
+            .map(|deferred| deferred.reason)
+            .chain((!self.pending_promotions.is_empty()).then_some(PartialReason::ResourceLimit))
             .max_by_key(|reason| partial_priority(*reason))
+    }
+
+    fn deferred_count(&self) -> usize {
+        self.deferred_directories.len()
+            + self
+                .pending_promotions
+                .iter()
+                .filter(|path| !self.deferred_directories.contains_key(*path))
+                .count()
     }
 
     fn publish_resource_counts(&self) {
@@ -451,7 +517,7 @@ impl SubscriptionState {
             .store(self.watched_paths.len(), Ordering::Release);
         self.stats
             .deferred_directories
-            .store(self.deferred_directories.len(), Ordering::Release);
+            .store(self.deferred_count(), Ordering::Release);
     }
 
     fn flush_if_due(&mut self) {
@@ -499,6 +565,8 @@ struct TopologyJob {
     directories: VecDeque<PathBuf>,
     active: Option<ActiveDirectory>,
     establishment: bool,
+    promotion_root: Option<PathBuf>,
+    yield_after_promoted_watch: bool,
 }
 
 impl TopologyJob {
@@ -507,6 +575,18 @@ impl TopologyJob {
             directories: VecDeque::from([start]),
             active: None,
             establishment,
+            promotion_root: None,
+            yield_after_promoted_watch: false,
+        }
+    }
+
+    fn promotion(path: PathBuf, active: ActiveDirectory) -> Self {
+        Self {
+            directories: VecDeque::new(),
+            active: Some(active),
+            establishment: false,
+            promotion_root: Some(path),
+            yield_after_promoted_watch: true,
         }
     }
 }
@@ -517,16 +597,30 @@ struct ActiveDirectory {
     deferred_at_limit: bool,
 }
 
+struct OpenedDirectory {
+    active: ActiveDirectory,
+    created_native_watch: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InterestAllocation {
+    Added { created_native_watch: bool },
+    RuntimeBudgetExhausted,
+}
+
 struct Worker {
     inotify: OwnedFd,
     wakeup: Arc<OwnedFd>,
     commands: mpsc::Receiver<CommandEnvelope>,
     counters: Arc<RuntimeCounters>,
+    native_watch_budget: Option<usize>,
     subscriptions: HashMap<SubscriptionId, SubscriptionState>,
     watches: HashMap<i32, NativeWatch>,
+    watch_identities: HashMap<RootIdentity, i32>,
     expected_ignored: BTreeSet<i32>,
     topology_runnable: VecDeque<SubscriptionId>,
     topology_scheduled: BTreeSet<SubscriptionId>,
+    allocator_order: VecDeque<SubscriptionId>,
     next_subscription_id: SubscriptionId,
     read_buffer: Vec<u8>,
     pending_native: Vec<u8>,
@@ -540,17 +634,21 @@ impl Worker {
         wakeup: Arc<OwnedFd>,
         commands: mpsc::Receiver<CommandEnvelope>,
         counters: Arc<RuntimeCounters>,
+        native_watch_budget: Option<usize>,
     ) -> Self {
         Self {
             inotify,
             wakeup,
             commands,
             counters,
+            native_watch_budget,
             subscriptions: HashMap::new(),
             watches: HashMap::new(),
+            watch_identities: HashMap::new(),
             expected_ignored: BTreeSet::new(),
             topology_runnable: VecDeque::new(),
             topology_scheduled: BTreeSet::new(),
+            allocator_order: VecDeque::new(),
             next_subscription_id: 1,
             read_buffer: vec![0; READ_BUFFER_BYTES],
             pending_native: Vec::new(),
@@ -563,6 +661,7 @@ impl Worker {
         while !self.shutting_down {
             let commands = self.process_command_turn();
             let native = self.process_native_turn();
+            let promotion = self.process_promotion_turn();
             let topology = self.process_topology_turn();
             self.run_maintenance();
             if self.shutting_down {
@@ -570,6 +669,7 @@ impl Worker {
             }
             let immediate = commands == MAX_COMMANDS_PER_TURN
                 || native
+                || promotion
                 || topology
                 || !self.topology_runnable.is_empty()
                 || self.pending_native_offset < self.pending_native.len();
@@ -581,7 +681,10 @@ impl Worker {
         }
         self.shutdown_all_subscriptions();
         self.watches.clear();
+        self.watch_identities.clear();
+        self.allocator_order.clear();
         self.counters.native_watches.store(0, Ordering::Release);
+        self.counters.deferred_interests.store(0, Ordering::Release);
         self.counters.inotify_instances.store(0, Ordering::Release);
         self.counters.worker_threads.store(0, Ordering::Release);
     }
@@ -628,6 +731,7 @@ impl Worker {
                         },
                     );
                     self.subscriptions.insert(id, state);
+                    self.allocator_order.push_back(id);
                     self.counters
                         .subscriptions
                         .store(self.subscriptions.len(), Ordering::Release);
@@ -846,6 +950,8 @@ impl Worker {
         let Some(watch) = self.watches.remove(&descriptor) else {
             return;
         };
+        self.watch_identities
+            .retain(|_, candidate| *candidate != descriptor);
         for interest in watch.interests {
             if let Some(state) = self.subscriptions.get_mut(&interest.subscription_id) {
                 state.watched_paths.remove(&interest.path);
@@ -858,6 +964,97 @@ impl Worker {
             }
         }
         self.publish_native_watch_count();
+        self.publish_deferred_interest_count();
+    }
+
+    fn process_promotion_turn(&mut self) -> bool {
+        let candidates = self
+            .allocator_order
+            .len()
+            .min(MAX_ALLOCATOR_SUBSCRIPTIONS_PER_TURN);
+        for _ in 0..candidates {
+            let Some(id) = self.allocator_order.pop_front() else {
+                return false;
+            };
+            self.allocator_order.push_back(id);
+            let Some(mut state) = self.subscriptions.remove(&id) else {
+                continue;
+            };
+            let candidate = self.next_promotable_path(&mut state);
+            let Some(path) = candidate else {
+                self.subscriptions.insert(id, state);
+                continue;
+            };
+            let opened = self.open_topology_directory(&mut state, path.clone(), true);
+            let mut scheduled = false;
+            if let Some(opened) = opened
+                && state.watched_paths.contains_key(&path)
+            {
+                state.pending_promotions.insert(path.clone());
+                state.queue_path(path.clone());
+                state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
+                state.topology_barriers += 1;
+                state
+                    .topology_jobs
+                    .push_back(TopologyJob::promotion(path, opened.active));
+                scheduled = true;
+            }
+            state.publish_resource_counts();
+            self.subscriptions.insert(id, state);
+            self.publish_deferred_interest_count();
+            if scheduled {
+                self.schedule_topology(id);
+            }
+            return true;
+        }
+        false
+    }
+
+    fn next_promotable_path(&self, state: &mut SubscriptionState) -> Option<PathBuf> {
+        if state
+            .options
+            .watch_limit
+            .is_some_and(|limit| state.watched_paths.len() >= limit)
+        {
+            return None;
+        }
+        let candidates = state
+            .deferred_order
+            .len()
+            .min(MAX_DEFERRED_CANDIDATES_PER_TURN);
+        for _ in 0..candidates {
+            let Some(path) = state.deferred_order.pop_front() else {
+                break;
+            };
+            let Some(deferred) = state.deferred_directories.get(&path) else {
+                continue;
+            };
+            let promotable = matches!(
+                deferred.cause,
+                DeferredCause::SubscriptionLimit | DeferredCause::RuntimeBudget
+            ) && !state
+                .pending_promotions
+                .iter()
+                .any(|promoted| path.starts_with(promoted))
+                && self.runtime_token_available_for(&path);
+            state.deferred_order.push_back(path.clone());
+            if promotable {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    fn runtime_token_available_for(&self, path: &Path) -> bool {
+        if self
+            .native_watch_budget
+            .is_none_or(|budget| self.watches.len() < budget)
+        {
+            return true;
+        }
+        directory_identity(path)
+            .ok()
+            .is_some_and(|identity| self.watch_identities.contains_key(&identity))
     }
 
     fn process_topology_turn(&mut self) -> bool {
@@ -870,24 +1067,34 @@ impl Worker {
         };
         let mut directories = 0;
         let mut entries = 0;
+        let mut native_allocations = 0;
         let mut establishment_failed = false;
         while directories < MAX_TOPOLOGY_DIRECTORIES_PER_TURN
             && entries < MAX_TOPOLOGY_ENTRIES_PER_TURN
+            && (self.native_watch_budget.is_none() || native_allocations == 0)
         {
             let Some(mut job) = state.topology_jobs.pop_front() else {
                 break;
             };
             if job.active.is_none() {
                 let Some(directory) = job.directories.pop_front() else {
-                    establishment_failed = self.finish_topology_job(&mut state, job.establishment);
+                    establishment_failed = self.finish_topology_job(
+                        &mut state,
+                        job.establishment,
+                        job.promotion_root.as_deref(),
+                    );
                     if establishment_failed {
                         break;
                     }
                     continue;
                 };
                 directories += 1;
-                match self.open_topology_directory(&mut state, directory) {
-                    Some(active) => job.active = Some(active),
+                let allow_new_native_watch = job.promotion_root.is_none();
+                match self.open_topology_directory(&mut state, directory, allow_new_native_watch) {
+                    Some(opened) => {
+                        native_allocations += usize::from(opened.created_native_watch);
+                        job.active = Some(opened.active);
+                    }
                     None => {
                         state.topology_jobs.push_front(job);
                         continue;
@@ -905,14 +1112,12 @@ impl Worker {
                                 job.directories.push_back(entry.path());
                             }
                             Ok(_) => {}
-                            Err(error) => {
-                                state.defer(active.path.clone(), partial_reason_for_error(&error))
-                            }
+                            Err(error) => state.defer_error(active.path.clone(), &error),
                         }
                     }
                     Some(Err(error)) => {
                         entries += 1;
-                        state.defer(active.path.clone(), partial_reason_for_error(&error));
+                        state.defer_error(active.path.clone(), &error);
                     }
                     None => {
                         if !active.deferred_at_limit {
@@ -926,14 +1131,26 @@ impl Worker {
             if finished {
                 job.active = None;
                 if job.directories.is_empty() {
-                    establishment_failed = self.finish_topology_job(&mut state, job.establishment);
+                    establishment_failed = self.finish_topology_job(
+                        &mut state,
+                        job.establishment,
+                        job.promotion_root.as_deref(),
+                    );
                     if establishment_failed {
+                        break;
+                    }
+                    if self.native_watch_budget.is_some() && native_allocations > 0 {
                         break;
                     }
                     continue;
                 }
             }
+            let yielded_promoted_watch = job.yield_after_promoted_watch;
+            job.yield_after_promoted_watch = false;
             state.topology_jobs.push_front(job);
+            if yielded_promoted_watch {
+                break;
+            }
         }
         if establishment_failed {
             self.discard_unestablished(state);
@@ -942,6 +1159,7 @@ impl Worker {
         state.publish_resource_counts();
         let runnable = !state.topology_jobs.is_empty();
         self.subscriptions.insert(id, state);
+        self.publish_deferred_interest_count();
         if runnable {
             self.schedule_topology(id);
         }
@@ -952,8 +1170,10 @@ impl Worker {
         &mut self,
         state: &mut SubscriptionState,
         directory: PathBuf,
-    ) -> Option<ActiveDirectory> {
+        allow_new_native_watch: bool,
+    ) -> Option<OpenedDirectory> {
         let mut deferred_at_limit = false;
+        let mut created_native_watch = false;
         if !state.watched_paths.contains_key(&directory) {
             let at_limit = state
                 .options
@@ -963,7 +1183,11 @@ impl Worker {
                 match fs::symlink_metadata(&directory) {
                     Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
                         deferred_at_limit = true;
-                        state.defer(directory.clone(), PartialReason::ResourceLimit);
+                        state.defer(
+                            directory.clone(),
+                            PartialReason::ResourceLimit,
+                            DeferredCause::SubscriptionLimit,
+                        );
                     }
                     Ok(_) => {
                         state.remove_deferred_subtree(&directory);
@@ -974,38 +1198,64 @@ impl Worker {
                         return None;
                     }
                     Err(error) => {
-                        state.defer(directory, partial_reason_for_error(&error));
+                        state.defer_error(directory, &error);
                         return None;
                     }
                 }
-            } else if let Err(error) = self.add_interest(state, &directory) {
-                if path_is_stale_or_not_directory(&error) {
-                    state.remove_deferred_subtree(&directory);
-                } else {
-                    state.defer(directory, partial_reason_for_error(&error));
+            } else {
+                match self.add_interest(state, &directory, allow_new_native_watch) {
+                    Ok(InterestAllocation::Added {
+                        created_native_watch: created,
+                    }) => created_native_watch = created,
+                    Ok(InterestAllocation::RuntimeBudgetExhausted) => {
+                        deferred_at_limit = true;
+                        state.defer(
+                            directory.clone(),
+                            PartialReason::ResourceLimit,
+                            DeferredCause::RuntimeBudget,
+                        );
+                    }
+                    Err(error) => {
+                        if path_is_stale_or_not_directory(&error) {
+                            state.remove_deferred_subtree(&directory);
+                        } else {
+                            state.defer_error(directory, &error);
+                        }
+                        return None;
+                    }
                 }
-                return None;
             }
         }
         match fs::read_dir(&directory) {
-            Ok(entries) => Some(ActiveDirectory {
-                path: directory,
-                entries,
-                deferred_at_limit,
+            Ok(entries) => Some(OpenedDirectory {
+                active: ActiveDirectory {
+                    path: directory,
+                    entries,
+                    deferred_at_limit,
+                },
+                created_native_watch,
             }),
             Err(error) if path_is_stale_or_not_directory(&error) => {
                 self.remove_subscription_subtree(state, &directory);
                 None
             }
             Err(error) => {
-                state.defer(directory, partial_reason_for_error(&error));
+                state.defer_error(directory, &error);
                 None
             }
         }
     }
 
-    fn finish_topology_job(&mut self, state: &mut SubscriptionState, establishment: bool) -> bool {
+    fn finish_topology_job(
+        &mut self,
+        state: &mut SubscriptionState,
+        establishment: bool,
+        promotion_root: Option<&Path>,
+    ) -> bool {
         state.topology_barriers = state.topology_barriers.saturating_sub(1);
+        if let Some(path) = promotion_root {
+            state.pending_promotions.remove(path);
+        }
         if !establishment {
             return false;
         }
@@ -1038,6 +1288,11 @@ impl Worker {
         if !failed {
             state.next_root_identity_check = Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
         }
+        // The establishment acknowledgement is the public visibility boundary:
+        // publish both subscription-local and runtime allocator gauges before
+        // the subscribing thread can observe the returned handle.
+        state.publish_resource_counts();
+        self.publish_deferred_interest_count_with(state);
         if let Some(establishment) = state.establishment.take() {
             let _ = establishment.acknowledgement.send(CommandAcknowledgement {
                 generation: establishment.generation,
@@ -1047,7 +1302,30 @@ impl Worker {
         failed
     }
 
-    fn add_interest(&mut self, state: &mut SubscriptionState, path: &Path) -> io::Result<()> {
+    fn add_interest(
+        &mut self,
+        state: &mut SubscriptionState,
+        path: &Path,
+        allow_new_native_watch: bool,
+    ) -> io::Result<InterestAllocation> {
+        let identity = directory_identity(path)?;
+        if let Some(descriptor) = self.watch_identities.get(&identity).copied()
+            && self.watches.contains_key(&descriptor)
+        {
+            self.insert_interest(state, path, descriptor);
+            return Ok(InterestAllocation::Added {
+                created_native_watch: false,
+            });
+        }
+        if !allow_new_native_watch {
+            return Ok(InterestAllocation::RuntimeBudgetExhausted);
+        }
+        if self
+            .native_watch_budget
+            .is_some_and(|budget| self.watches.len() >= budget)
+        {
+            return Ok(InterestAllocation::RuntimeBudgetExhausted);
+        }
         let bytes = path.as_os_str().as_bytes();
         let c_path = CString::new(bytes).map_err(|_| {
             io::Error::new(
@@ -1062,6 +1340,7 @@ impl Worker {
         if descriptor < 0 {
             return Err(io::Error::last_os_error());
         }
+        let created_native_watch = !self.watches.contains_key(&descriptor);
         if self.expected_ignored.contains(&descriptor) {
             // Linux may recycle a removed watch descriptor before its queued
             // IN_IGNORED record is consumed. The later record cannot be
@@ -1069,9 +1348,20 @@ impl Worker {
             // new interest but make its coverage explicitly uncertain.
             state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
         }
+        let watch = self.watches.entry(descriptor).or_default();
+        watch.identity.get_or_insert(identity);
+        self.watch_identities.insert(identity, descriptor);
+        self.insert_interest(state, path, descriptor);
+        self.publish_native_watch_count();
+        Ok(InterestAllocation::Added {
+            created_native_watch,
+        })
+    }
+
+    fn insert_interest(&mut self, state: &mut SubscriptionState, path: &Path, descriptor: i32) {
         self.watches
-            .entry(descriptor)
-            .or_default()
+            .get_mut(&descriptor)
+            .expect("shared native watch must exist")
             .interests
             .insert(Interest {
                 subscription_id: state.id,
@@ -1079,8 +1369,6 @@ impl Worker {
             });
         state.watched_paths.insert(path.to_path_buf(), descriptor);
         state.deferred_directories.remove(path);
-        self.publish_native_watch_count();
-        Ok(())
     }
 
     fn remove_subscription_subtree(&mut self, state: &mut SubscriptionState, path: &Path) {
@@ -1110,6 +1398,8 @@ impl Worker {
         };
         if remove_native {
             self.watches.remove(&descriptor);
+            self.watch_identities
+                .retain(|_, candidate| *candidate != descriptor);
             self.expected_ignored.insert(descriptor);
             // SAFETY: inotify is live. Failure is benign when the kernel has
             // already removed the watch for a deleted inode.
@@ -1123,6 +1413,7 @@ impl Worker {
     fn remove_subscription(&mut self, id: SubscriptionId) {
         self.topology_scheduled.remove(&id);
         self.topology_runnable.retain(|candidate| *candidate != id);
+        self.allocator_order.retain(|candidate| *candidate != id);
         let Some(mut state) = self.subscriptions.remove(&id) else {
             return;
         };
@@ -1147,11 +1438,14 @@ impl Worker {
         self.counters
             .subscriptions
             .store(self.subscriptions.len(), Ordering::Release);
+        self.publish_deferred_interest_count();
     }
 
     fn discard_unestablished(&mut self, mut state: SubscriptionState) {
         self.topology_scheduled.remove(&state.id);
         self.topology_runnable
+            .retain(|candidate| *candidate != state.id);
+        self.allocator_order
             .retain(|candidate| *candidate != state.id);
         let interests: Vec<_> = state.watched_paths.drain().collect();
         for (path, descriptor) in interests {
@@ -1162,6 +1456,7 @@ impl Worker {
         self.counters
             .subscriptions
             .store(self.subscriptions.len(), Ordering::Release);
+        self.publish_deferred_interest_count();
     }
 
     fn shutdown_all_subscriptions(&mut self) {
@@ -1270,6 +1565,27 @@ impl Worker {
             .native_watches
             .store(self.watches.len(), Ordering::Release);
     }
+
+    fn publish_deferred_interest_count(&self) {
+        self.counters.deferred_interests.store(
+            self.subscriptions
+                .values()
+                .map(|state| state.deferred_directories.len())
+                .sum(),
+            Ordering::Release,
+        );
+    }
+
+    fn publish_deferred_interest_count_with(&self, detached: &SubscriptionState) {
+        self.counters.deferred_interests.store(
+            self.subscriptions
+                .values()
+                .map(|state| state.deferred_directories.len())
+                .sum::<usize>()
+                + detached.deferred_directories.len(),
+            Ordering::Release,
+        );
+    }
 }
 
 struct ParsedEvent {
@@ -1283,6 +1599,17 @@ fn path_is_stale_or_not_directory(error: &io::Error) -> bool {
         error.raw_os_error(),
         Some(libc::ENOENT | libc::ENOTDIR | libc::ELOOP)
     )
+}
+
+fn directory_identity(path: &Path) -> io::Result<RootIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
+    }
+    Ok(RootIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
 }
 
 fn partial_priority(reason: PartialReason) -> u8 {
@@ -1381,6 +1708,7 @@ mod tests {
             Arc::new(create_eventfd().unwrap()),
             command_receiver,
             Arc::new(RuntimeCounters::default()),
+            None,
         );
         worker.subscriptions.insert(state.id, state);
 

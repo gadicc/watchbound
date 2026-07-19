@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { fork, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   cpuDelta,
@@ -985,25 +985,18 @@ async function runBridgeBackpressure(adapter, prepared, config) {
 
 function runOverflowMutator(payload) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [overflowMutatorPath, JSON.stringify(payload)], {
-      stdio: ["pipe", "pipe", "pipe"],
+    const child = fork(overflowMutatorPath, [JSON.stringify(payload)], {
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
       detached: true,
     });
-    let stdout = "";
     let stderr = "";
+    let ipcResult = null;
     let settled = false;
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.stdin.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      void notifyOverflowHelper("helper-finished", child.pid).catch(() => {});
-      child.kill("SIGKILL");
-      reject(error);
+    child.on("message", (message) => {
+      if (message?.type === "result") ipcResult = message.result;
     });
     child.on("error", (error) => {
       if (settled) return;
@@ -1023,15 +1016,21 @@ function runOverflowMutator(payload) {
         );
         return;
       }
-      try {
-        resolve(JSON.parse(stdout));
-      } catch (error) {
-        reject(new Error(`overflow mutator returned invalid JSON: ${error.message}`));
+      if (ipcResult == null) {
+        reject(new Error(`overflow mutator returned no IPC result; stderr=${stderr.trim() || "<empty>"}`));
+        return;
       }
+      resolve(ipcResult);
     });
     notifyOverflowHelper("helper-started", child.pid).then(
       () => {
-        if (!settled) child.stdin.end("ready\n");
+        if (settled) return;
+        child.send({ type: "ready" }, (error) => {
+          if (!error || settled) return;
+          settled = true;
+          child.kill("SIGKILL");
+          reject(error);
+        });
       },
       (error) => {
         if (settled) return;

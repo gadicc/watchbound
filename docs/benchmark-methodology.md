@@ -124,10 +124,10 @@ Before recording final readings:
 ## Forced-overflow safety and interpretation
 
 The I/O-heavy overflow scenario is conformance evidence, not a performance
-reading. A detached helper waits on stdin while the trial reports its process
-group to the unstopped controller; only the IPC send callback releases the
-helper to stop the watcher. The controller kills that group and resumes/kills
-the watcher on a hard timeout.
+reading. A detached helper waits on its own IPC channel while the trial reports
+its process group to the unstopped controller; only the controller-notification
+send callback releases the helper to stop the watcher. The controller kills
+that group and resumes/kills the watcher on a hard timeout.
 The helper confirms `/proc/<pid>/status` reached a stopped state before creating
 more distinct files than `max_queued_events`, and always attempts `SIGCONT` on
 normal errors and handled termination signals.

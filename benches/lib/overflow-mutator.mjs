@@ -49,35 +49,57 @@ try {
   }
 
   resumeWatcher();
-  process.stdout.write(
-    JSON.stringify({
-      generated: payload.count,
-      kernelQueueLimit: payload.kernelQueueLimit,
-      exceededQueueBy: payload.count - payload.kernelQueueLimit,
-      stopConfirmed,
-      stopConfirmationMs,
-      resumeAttempted,
-      durationMs: performance.now() - startedAt,
-    }),
-  );
+  await sendResult({
+    generated: payload.count,
+    kernelQueueLimit: payload.kernelQueueLimit,
+    exceededQueueBy: payload.count - payload.kernelQueueLimit,
+    stopConfirmed,
+    stopConfirmationMs,
+    resumeAttempted,
+    durationMs: performance.now() - startedAt,
+  });
 } finally {
   resumeWatcher();
 }
 
+function sendResult(result) {
+  return new Promise((resolve, reject) => {
+    if (typeof process.send !== "function") {
+      reject(new Error("Overflow mutator result IPC is unavailable"));
+      return;
+    }
+    process.send({ type: "result", result }, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
 function waitForReadySignal() {
   return new Promise((resolve, reject) => {
-    let input = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      input += chunk;
-      const newline = input.indexOf("\n");
-      if (newline < 0) return;
-      const command = input.slice(0, newline).trim();
-      if (command === "ready") resolve();
-      else reject(new Error(`Unexpected overflow-mutator command: ${command}`));
-    });
-    process.stdin.once("end", () => reject(new Error("Overflow mutator stdin closed before ready")));
-    process.stdin.once("error", reject);
+    // Node creates child IPC channels unreferenced. Keep this helper alive even
+    // if the controller notification takes longer than module startup.
+    process.channel?.ref();
+    const cleanup = () => {
+      process.off("message", onMessage);
+      process.off("disconnect", onDisconnect);
+      process.channel?.unref();
+    };
+    const onMessage = (message) => {
+      if (message?.type !== "ready") {
+        cleanup();
+        reject(new Error(`Unexpected overflow-mutator command: ${JSON.stringify(message)}`));
+        return;
+      }
+      cleanup();
+      resolve();
+    };
+    const onDisconnect = () => {
+      cleanup();
+      reject(new Error("Overflow mutator IPC closed before ready"));
+    };
+    process.once("message", onMessage);
+    process.once("disconnect", onDisconnect);
   });
 }
 

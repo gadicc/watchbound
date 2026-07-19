@@ -1,0 +1,15 @@
+{
+  "name": "@gadicc/watchbound-node",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Unpublished Node-API proof for Watchbound",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "napi build --platform --release --output-dir .",
+    "test": "node test/smoke.cjs && node --test test/lifecycle.cjs"
+  },
+  "napi": {
+    "binaryName": "watchbound"
+  }
+}

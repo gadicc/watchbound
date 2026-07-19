@@ -1,0 +1,6 @@
+/target/
+/node_modules/
+/node/*.node
+/node/*.so
+/benches/results/*.json
+!/benches/results/.gitkeep

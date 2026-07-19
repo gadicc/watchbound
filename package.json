@@ -1,0 +1,23 @@
+{
+  "name": "@gadicc/watchbound-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Linux feasibility workspace for the Watchbound resource-aware directory watcher",
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "cargo build --workspace",
+    "build:node": "pnpm --dir node build",
+    "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-js.mjs",
+    "test": "cargo test --workspace && pnpm --dir node test && node --test js/test/*.test.js benches/test/*.test.mjs",
+    "conformance": "node benches/conformance.mjs",
+    "benchmark": "node --expose-gc benches/benchmark.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.7.3",
+    "@parcel/watcher": "2.5.6"
+  }
+}

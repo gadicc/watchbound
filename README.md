@@ -46,9 +46,10 @@ node benches/conformance.mjs --help
 node --expose-gc benches/benchmark.mjs --help
 ```
 
-The final performance run is intentionally pending a quiet host. See
+The first final feasibility series is complete. See
 `docs/conformance-findings.md` for correctness evidence and
-`docs/benchmark-results.md` for the measurement stop point.
+`docs/benchmark-results.md` for raw-artifact identities, ranges, caveats, and
+the next-milestone decision.
 
 ## Prototype gaps
 

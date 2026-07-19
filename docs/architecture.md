@@ -1,6 +1,7 @@
 # Feasibility architecture and decision record
 
-Status: provisional for the first Linux feasibility milestone.
+Status: first Linux feasibility milestone complete; continue to a second
+engine milestone without product integration or publication.
 
 ## Decision
 
@@ -8,6 +9,13 @@ Build a small Linux-only Rust prototype around inotify, plus a thin Node-API
 proof, before deciding whether Watchbound should become a maintained package.
 Do not add macOS or Windows backends, Codex policy, publishing machinery, or a
 generic backend interface in this milestone.
+
+The completed measurement gate supports continuing the Linux engine: at 10,000
+directories Watchbound was faster and used less incremental RSS than Parcel in
+this tmpfs series, while exposing overflow and coverage loss that Parcel hid.
+This is not yet approval to integrate it. An intermittent, explicitly reported
+directory-topology race and the deliberate multi-root/exclusion gaps must be
+resolved in the next milestone. See `docs/benchmark-results.md`.
 
 Watchbound is justified only by a stronger contract than “recursively report
 filesystem events”:

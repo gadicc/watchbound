@@ -1,7 +1,6 @@
 # Benchmark and conformance methodology
 
-Status: harness complete; final performance run intentionally deferred until
-the host can be made quiet.
+Status: harness and first final feasibility series complete on 2026-07-19.
 
 ## What the harness compares
 

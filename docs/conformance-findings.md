@@ -1,7 +1,7 @@
 # Correctness and capability findings
 
-Status: independent Linux findings as of 2026-07-19. These are correctness
-observations, not final performance readings.
+Status: final first-milestone Linux findings as of 2026-07-19. Performance
+ranges and the continuation decision are in `docs/benchmark-results.md`.
 
 ## Exact Codex JavaScript helper
 
@@ -14,7 +14,9 @@ worktree was at `f126ebe6b4495e8013804486f982f262b1ab866b` with `patch.js` SHA-2
 
 - All 110 upstream tests passed on Node 25.2.1.
 - The standalone adapter confirmed one working-tree watch per included
-  directory and deterministic release.
+  directory. Callbacks stopped after disposal, but the final harness still
+  observed one retained inotify instance after the disposal window in all ten
+  measured disposal trials.
 - Independent harness smoke cases passed normal deep changes, populated
   moved-in subtrees, same-path root replacement, bursts, and post-disposal
   silence.
@@ -22,9 +24,11 @@ worktree was at `f126ebe6b4495e8013804486f982f262b1ab866b` with `patch.js` SHA-2
   multiple callbacks and duplicate logical paths.
 - Public coverage deliberately reports non-recursive coverage to Codex policy,
   but it does not expose structured complete/partial/uncertain engine state.
-- Runtime name exclusions are unavailable. Git-derived exclusions do update;
-  that scenario still needs a normal, non-sandboxed final conformance run.
-- There is no explicit public native-overflow result.
+- Runtime name exclusions are unavailable. Git-derived exclusions updated
+  successfully in all three unrestricted final conformance trials.
+- There is no typed public native-overflow result. In all three forced-overflow
+  trials the adapter conservatively invalidated the root and later delivered
+  the sentinel, but could not identify overflow as the reason.
 
 ## `@parcel/watcher` 2.5.6
 
@@ -40,9 +44,11 @@ Independent live reproductions and the tagged source agree:
 - Moving the watched root away emitted its deletion, but a new directory at the
   same pathname was not watched and a deep replacement change emitted nothing.
   See [root self-event handling](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/linux/InotifyBackend.cc#L193-L214).
-- Forced queue overflow generated 20,480 distinct files. Only 16,451 paths were
-  delivered; 4,029 were missing, no error or invalidation was reported, and a
-  later sentinel still arrived. The source explicitly skips `IN_Q_OVERFLOW`.
+- Each final forced queue overflow generated 20,480 distinct files. Exactly
+  8,192 paths were delivered and 12,288 were missing in all three runs; no
+  error or invalidation was reported, and a later sentinel still arrived. An
+  earlier independent induction produced different counts but the same silent
+  loss. The source explicitly skips `IN_Q_OVERFLOW`.
   See [overflow handling](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/linux/InotifyBackend.cc#L96-L132).
 - The public API has static ignores only. Overlapping subscriptions are not a
   safe atomic-update emulation because the cached directory tree is keyed by
@@ -71,22 +77,29 @@ Linux backend does not surface.
   signaling, concurrent idempotent disposal, and no callback after disposal
   resolves. Wrapper tests cover non-UTF-8 collapse and GC cleanup when a callback
   captures its subscription.
-- Small harness checks passed normal deep changes, populated moved-in subtrees,
-  file/directory/rename bursts, and disposal.
+- The unrestricted final conformance suite passed all 30 applicable Watchbound
+  trials: normal deep changes, populated moved-in subtrees, root replacement,
+  watch limits, bridge backpressure, forced overflow, all three burst types,
+  and disposal.
 - Root move/replacement is explicitly reported as uncertain and invalidates the
   root. A 250 ms lexical path-identity check also detects an ancestor move.
   Automatic same-path replacement recovery is not implemented, so a deep
   follow-up in the replacement is not delivered.
-- Native overflow parsing is explicit and sticky-uncertain in unit tests. The
-  new process-level forced-overflow scenario is ready but deliberately not run
-  after final-measurement preparation became a user-controlled stop point.
+- In all three process-level forced-overflow trials, the helper confirmed the
+  watcher was stopped before creating 20,480 files against a 16,384-event
+  queue. Watchbound reported `event-overflow`, invalidated the root, drained,
+  and delivered the later sentinel.
+- One of seven measured directory bursts reported `topology-race`, invalidated
+  the root, and missed 864 detailed paths. The final three conformance repeats
+  passed. The failure was explicit but remains next-milestone work.
 - Dynamic exclusions and process-wide multi-root fairness are not implemented.
 
-## Provisional direction
+## Direction
 
-Continue to the controlled measurement gate rather than switching immediately
-to a Parcel wrapper. The reproduced moved-in-tree and overflow behavior means
-Parcel's public API cannot currently satisfy “never silently claim more coverage
-than exists.” This is a provisional go: final performance readings, full forced
-overflow against Watchbound, and the cost/complexity of shared multi-root
-scheduling can still change the decision.
+Continue Watchbound to a second Linux engine milestone rather than switching to
+a Parcel wrapper. The reproduced moved-in-tree, root-lifecycle, and silent
+overflow behavior means Parcel's public API cannot currently satisfy “never
+silently claim more coverage than exists.” Benchmark startup and memory are
+close enough to Parcel that performance is not a stop signal. Do not integrate
+or publish until the intermittent topology race, shared multi-root scheduling,
+and exclusion design are resolved.

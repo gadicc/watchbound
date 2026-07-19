@@ -2,8 +2,8 @@
 
 Status: the Linux feasibility engine now includes the directory-burst
 correctness gate, shared process-wide runtime, bounded fair native-watch
-allocator, and generation-based atomic dynamic exclusions in targeted stress,
-without product integration or publication.
+allocator, generation-based atomic dynamic exclusions, and bounded post-loss
+reconciliation in targeted stress, without product integration or publication.
 
 ## Decision
 
@@ -16,8 +16,8 @@ The completed measurement gate supports continuing the Linux engine: at 10,000
 directories Watchbound was faster and used less incremental RSS than Parcel in
 this tmpfs series, while exposing overflow and coverage loss that Parcel hid.
 This is not yet approval to integrate it. The directory-topology race and
-shared-runtime, allocator, and dynamic-exclusion gaps are addressed in targeted
-tests here. See
+shared-runtime, allocator, dynamic-exclusion, and explicit-reconciliation gaps
+are addressed in targeted tests here. See
 `docs/benchmark-results.md`.
 
 Watchbound is justified only by a stronger contract than “recursively report
@@ -80,6 +80,15 @@ sequence, the committed exclusion generation under which all of its paths were
 selected, and conservative invalidated paths. Initial subscriptions and their
 batches use generation zero. Detailed create/update/delete or rename claims are
 deliberately absent from the first public engine surface.
+
+An existing subscription can request reconciliation without changing its
+exclusion set or generation. Reconciliation does not reconstruct event detail:
+its successful commit always enqueues one conservative root invalidation. It
+can clear `event-overflow`, `topology-race`, or `consumer-backpressure` only
+after the rebuilt topology barrier and that bounded enqueue succeed. A later or
+stronger loss remains sticky. `root-replaced` is not recoverable in this
+milestone; a request is rejected when that reason is already known, and root
+identity is checked again before and after every reconciliation traversal.
 
 The output channel and each batch are bounded. If the consumer queue fills, the
 engine discards the over-detailed batch, changes coverage to uncertain, and
@@ -322,6 +331,60 @@ This design keeps exclusion decisions with consumers while keeping enforcement,
 native resource reclamation, and truthful included-topology coverage in the
 Rust engine.
 
+### Bounded post-loss reconciliation
+
+`Subscription::reconcile()` and its cloneable command handle run a
+subscription-local topology transaction under the currently committed
+exclusion set. The exclusion generation is captured by ownership of the worker
+state, is not advanced, and tags the required root batch. One shared
+per-subscription transaction gate rejects a concurrent reconciliation or
+exclusion replacement with `WouldBlock`; commands are never silently reordered
+across either topology barrier.
+
+The worker first finishes active event/topology work and flushes the pending
+batch boundary. It validates the original root `(device, inode)`, then performs
+a bounded breadth-first traversal. Every included directory is attached to an
+existing shared native watch or receives a new watch before `read_dir`; a
+watched path whose current identity no longer matches its descriptor interest
+is detached and reallocated before it can be read. Excluded prefixes are not
+opened and remain effective for names created later. Exact `PathBuf` bytes are
+used throughout.
+
+Traversal records encountered logical paths. After the scan barrier, bounded
+cursor-based passes sweep unencountered watched interests, deferred interests,
+the deferred-order queue, and pending promotions. Removing a final shared
+interest returns its native token; removing only one overlapping interest
+leaves the other subscription and descriptor intact. Subscription limits and
+the runtime unique-watch budget produce the same truthful partial coverage and
+ordinary round-robin deferred promotion as establishment. An unwatched
+directory is retained as one deferred subtree root and is not read merely to
+invent descendant accounting.
+
+Scheduler work remains capped at the existing directory and entry limits, and
+the reconciling subscription's public watched/deferred gauges remain at their
+previous committed values until the final sweep. Other subscriptions continue
+native delivery and allocator service between turns. Events during the
+transaction are collapsed to the root; directory-create events can extend and
+restart the scan barrier, but no reconstructed detail is claimed.
+
+At commit the root identity is validated again. The worker computes the final
+coverage, attempts the single root batch in the bounded output queue, and only
+then clears the recoverable uncertainty captured at transaction start. A new
+loss increments the subscription's uncertainty epoch and therefore survives
+the commit. If the root batch cannot enter the queue, reconciliation returns
+`WouldBlock`, retains explicit `consumer-backpressure` (or a stronger new loss),
+and leaves a pending root invalidation instead of acknowledging success.
+Successful acknowledgement means the topology, logical interests, watch and
+deferred accounting, final coverage snapshot, root invalidation, and unchanged
+exclusion generation have all committed; it still does not wait for a Node or
+JavaScript callback to run.
+
+Disposal removes any pending reconciliation, completes its acknowledgement
+with interruption, releases its scan/sweep state and interests, and joins the
+same subscription and final-runtime barriers as ordinary disposal. No new
+reconciliation can enter after lifecycle disposal begins or after disposal has
+resolved.
+
 ## Binding decision
 
 Use Node-API rather than direct V8 or libuv calls. The concrete crate choice is
@@ -365,7 +428,10 @@ work but duplicating the surrounding cross-platform product is not sustainable.
   allocation failures that were not caused by the configured budgets;
 - event-driven root-parent anchoring and same-path replacement recovery (the
   prototype currently detects lexical root identity loss by polling);
-- reconciliation that returns uncertain coverage to complete after overflow;
+- recovery of a replaced root identity (reconciliation deliberately rejects
+  or retains `root-replaced` rather than attaching to a replacement);
+- automatic reconciliation policy or reconstructed detail for events lost
+  before/during reconciliation (the public operation is explicit and root-only);
 - runtime descendant mount insertion/reconciliation and a one-filesystem mode;
 - detailed change kinds and rename pairing;
 - native prebuild production and package publishing;

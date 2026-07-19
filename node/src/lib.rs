@@ -16,8 +16,8 @@ use napi::threadsafe_function::{
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
 use watchbound_engine::{
-    ChangeBatch, Coverage, Engine, ExclusionHandle, PartialReason, Stats, StatsHandle,
-    Subscription, SubscriptionOptions, UncertainReason,
+    ChangeBatch, Coverage, Engine, ExclusionHandle, PartialReason, ReconciliationHandle,
+    ReconciliationResult, Stats, StatsHandle, Subscription, SubscriptionOptions, UncertainReason,
 };
 
 type BatchThreadsafeFunction =
@@ -123,6 +123,21 @@ pub struct JsChangeBatch {
     pub coverage: JsCoverage,
 }
 
+#[napi(object, object_from_js = false)]
+pub struct JsReconciliationResult {
+    pub exclusion_generation: u64,
+    pub coverage: JsCoverage,
+}
+
+impl From<ReconciliationResult> for JsReconciliationResult {
+    fn from(result: ReconciliationResult) -> Self {
+        Self {
+            exclusion_generation: result.exclusion_generation,
+            coverage: JsCoverage::from(&result.coverage),
+        }
+    }
+}
+
 impl From<ChangeBatch> for JsChangeBatch {
     fn from(batch: ChangeBatch) -> Self {
         Self {
@@ -176,6 +191,7 @@ pub struct JsCapabilities {
     pub explicit_watch_limits: bool,
     pub overflow_reporting: bool,
     pub dynamic_exclusions: bool,
+    pub reconciliation: bool,
     pub root_replacement_recovery: bool,
     pub exact_path_bytes: bool,
 }
@@ -189,6 +205,7 @@ pub fn capabilities() -> JsCapabilities {
         explicit_watch_limits: capabilities.explicit_watch_limits,
         overflow_reporting: capabilities.overflow_reporting,
         dynamic_exclusions: capabilities.dynamic_exclusions,
+        reconciliation: capabilities.reconciliation,
         root_replacement_recovery: capabilities.root_replacement_recovery,
         exact_path_bytes: true,
     }
@@ -338,6 +355,13 @@ impl NativeSubscription {
         }))
     }
 
+    #[napi(ts_return_type = "Promise<JsReconciliationResult>")]
+    pub fn reconcile(&self) -> AsyncTask<ReconcileTask> {
+        AsyncTask::new(ReconcileTask {
+            reconciliation: self.state.reconciliation.clone(),
+        })
+    }
+
     #[napi(ts_return_type = "Promise<void>")]
     pub fn dispose(&self) -> AsyncTask<DisposeTask> {
         AsyncTask::new(DisposeTask {
@@ -371,6 +395,10 @@ pub struct ReplaceExclusionsTask {
     prefixes: Vec<PathBuf>,
 }
 
+pub struct ReconcileTask {
+    reconciliation: ReconciliationHandle,
+}
+
 impl Task for ReplaceExclusionsTask {
     type Output = Coverage;
     type JsValue = JsCoverage;
@@ -383,6 +411,19 @@ impl Task for ReplaceExclusionsTask {
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
         Ok(JsCoverage::from(&output))
+    }
+}
+
+impl Task for ReconcileTask {
+    type Output = ReconciliationResult;
+    type JsValue = JsReconciliationResult;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.reconciliation.reconcile().map_err(node_error)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output.into())
     }
 }
 
@@ -403,6 +444,7 @@ pub struct SubscriptionState {
     initial_coverage: Coverage,
     stats: StatsHandle,
     exclusions: ExclusionHandle,
+    reconciliation: ReconciliationHandle,
     threadsafe_function: Mutex<Option<Arc<BatchThreadsafeFunction>>>,
     bridge: Mutex<Option<JoinHandle<io::Result<()>>>>,
     shutdown: Arc<ShutdownGate>,
@@ -423,6 +465,7 @@ impl SubscriptionState {
         let initial_coverage = subscription.initial_coverage().clone();
         let stats = subscription.stats_handle();
         let exclusions = subscription.exclusion_handle();
+        let reconciliation = subscription.reconciliation_handle();
         let callback_tracker = Arc::new(CallbackTracker::new());
         let threadsafe_function = Arc::new(threadsafe_function);
         let bridge_callback_tracker = Arc::clone(&callback_tracker);
@@ -443,6 +486,7 @@ impl SubscriptionState {
             initial_coverage,
             stats,
             exclusions,
+            reconciliation,
             threadsafe_function: Mutex::new(Some(threadsafe_function)),
             bridge: Mutex::new(Some(bridge)),
             shutdown,

@@ -5,6 +5,7 @@ export declare class NativeSubscription {
   stats(): JsStats
   get exclusionGeneration(): bigint
   replaceExclusions(generation: bigint, prefixes: Array<Buffer>): Promise<JsCoverage>
+  reconcile(): Promise<JsReconciliationResult>
   dispose(): Promise<void>
 }
 
@@ -16,6 +17,7 @@ export interface JsCapabilities {
   explicitWatchLimits: boolean
   overflowReporting: boolean
   dynamicExclusions: boolean
+  reconciliation: boolean
   rootReplacementRecovery: boolean
   exactPathBytes: boolean
 }
@@ -36,6 +38,11 @@ export interface JsCoverage {
   reason?: string
   watchedDirectories?: number
   deferredDirectories?: number
+}
+
+export interface JsReconciliationResult {
+  exclusionGeneration: bigint
+  coverage: JsCoverage
 }
 
 export interface JsStats {

@@ -58,6 +58,7 @@ export async function subscribe(root, onBatch, options = {}) {
       });
       return nativeSubscription.replaceExclusions(generation, encoded);
     },
+    reconcile: () => nativeSubscription.reconcile(),
     dispose: () =>
       (disposePromise ??= nativeSubscription
         .dispose()

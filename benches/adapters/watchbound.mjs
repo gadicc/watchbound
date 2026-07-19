@@ -68,6 +68,7 @@ export async function loadAdapter() {
     explicitWatchLimits: nativeCapabilities.explicitWatchLimits,
     overflowReporting: nativeCapabilities.overflowReporting,
     consumerBackpressureReporting: true,
+    reconciliation: nativeCapabilities.reconciliation,
   };
 
   return {
@@ -118,6 +119,7 @@ export async function loadAdapter() {
             relativeDirectories,
           );
         },
+        reconcile: () => subscription.reconcile(),
         async stats() {
           const stats = subscription.stats();
           return {

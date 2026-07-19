@@ -54,6 +54,13 @@ pub struct ChangeBatch {
     pub coverage: Coverage,
 }
 
+/// The committed result of one subscription-local reconciliation barrier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReconciliationResult {
+    pub exclusion_generation: u64,
+    pub coverage: Coverage,
+}
+
 /// Per-subscription tuning. No application-specific watch limit is implied.
 #[derive(Clone, Debug)]
 pub struct SubscriptionOptions {
@@ -111,6 +118,7 @@ pub struct Capabilities {
     pub explicit_watch_limits: bool,
     pub overflow_reporting: bool,
     pub dynamic_exclusions: bool,
+    pub reconciliation: bool,
     pub root_replacement_recovery: bool,
 }
 
@@ -221,6 +229,7 @@ impl Engine {
             explicit_watch_limits: true,
             overflow_reporting: true,
             dynamic_exclusions: true,
+            reconciliation: true,
             root_replacement_recovery: false,
         }
     }
@@ -275,8 +284,8 @@ impl Engine {
                 }),
                 disposed: Condvar::new(),
                 exclusion_generation: AtomicU64::new(0),
-                exclusion_update_in_flight: AtomicBool::new(false),
-                exclusion_update_finished: Condvar::new(),
+                topology_transaction_in_flight: AtomicBool::new(false),
+                topology_transaction_finished: Condvar::new(),
             }),
         })
     }
@@ -293,8 +302,8 @@ struct SubscriptionControl {
     lifecycle: Mutex<Lifecycle>,
     disposed: Condvar,
     exclusion_generation: AtomicU64,
-    exclusion_update_in_flight: AtomicBool,
-    exclusion_update_finished: Condvar,
+    topology_transaction_in_flight: AtomicBool,
+    topology_transaction_finished: Condvar,
 }
 
 enum Lifecycle {
@@ -349,6 +358,14 @@ impl Subscription {
         }
     }
 
+    /// Returns a cloneable reconciliation handle for bindings whose receiving
+    /// subscription is owned by a delivery thread.
+    pub fn reconciliation_handle(&self) -> ReconciliationHandle {
+        ReconciliationHandle {
+            control: Arc::clone(&self.control),
+        }
+    }
+
     /// Atomically replaces the complete set of root-relative directory-prefix
     /// exclusions and returns the committed coverage snapshot.
     pub fn replace_exclusions(
@@ -358,6 +375,13 @@ impl Subscription {
     ) -> io::Result<Coverage> {
         self.exclusion_handle()
             .replace_exclusions(generation, prefixes)
+    }
+
+    /// Rebuilds this subscription's included topology under its currently
+    /// committed exclusion generation and returns only after the conservative
+    /// root invalidation and final coverage snapshot are committed.
+    pub fn reconcile(&self) -> io::Result<ReconciliationResult> {
+        self.reconciliation_handle().reconcile()
     }
 
     /// Joins removal of this subscription from the shared worker. Once this
@@ -420,12 +444,12 @@ impl Subscription {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         while self
             .control
-            .exclusion_update_in_flight
+            .topology_transaction_in_flight
             .load(Ordering::Acquire)
         {
             lifecycle = self
                 .control
-                .exclusion_update_finished
+                .topology_transaction_finished
                 .wait(lifecycle)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
@@ -454,16 +478,16 @@ impl ExclusionHandle {
     ) -> io::Result<Coverage> {
         if self
             .control
-            .exclusion_update_in_flight
+            .topology_transaction_in_flight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
-                "an exclusion update is already in progress for this subscription",
+                "a topology transaction is already in progress for this subscription",
             ));
         }
-        let _in_flight = InFlightExclusionUpdate(&self.control);
+        let _in_flight = InFlightTopologyTransaction(&self.control);
         let pending = {
             let lifecycle = self
                 .control
@@ -490,14 +514,57 @@ impl ExclusionHandle {
     }
 }
 
-struct InFlightExclusionUpdate<'a>(&'a SubscriptionControl);
+/// A cloneable reconciliation command handle. It does not keep the batch
+/// receiver alive and dropping it does not dispose the subscription.
+#[derive(Clone)]
+pub struct ReconciliationHandle {
+    control: Arc<SubscriptionControl>,
+}
 
-impl Drop for InFlightExclusionUpdate<'_> {
+impl ReconciliationHandle {
+    pub fn reconcile(&self) -> io::Result<ReconciliationResult> {
+        if self
+            .control
+            .topology_transaction_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "a topology transaction is already in progress for this subscription",
+            ));
+        }
+        let _in_flight = InFlightTopologyTransaction(&self.control);
+        let pending = {
+            let lifecycle = self
+                .control
+                .lifecycle
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Lifecycle::Active {
+                runtime,
+                subscription_id,
+            } = &*lifecycle
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "subscription is disposing or disposed",
+                ));
+            };
+            runtime.queue_reconciliation(*subscription_id)?
+        };
+        pending.wait()
+    }
+}
+
+struct InFlightTopologyTransaction<'a>(&'a SubscriptionControl);
+
+impl Drop for InFlightTopologyTransaction<'_> {
     fn drop(&mut self) {
         self.0
-            .exclusion_update_in_flight
+            .topology_transaction_in_flight
             .store(false, Ordering::Release);
-        self.0.exclusion_update_finished.notify_all();
+        self.0.topology_transaction_finished.notify_all();
     }
 }
 
@@ -608,4 +675,77 @@ fn reject_symlink_ancestry(path: &Path) -> io::Result<PathBuf> {
         current_is_directory = metadata.is_dir();
     }
     Ok(current)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU64;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let serial = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "watchbound-control-{label}-{}-{nonce}-{serial}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn concurrent_reconciliation_request_is_rejected_explicitly() {
+        let root = TestRoot::new("reconciliation-conflict");
+        let subscription = Engine::new()
+            .subscribe(&root.0, SubscriptionOptions::default())
+            .unwrap();
+        {
+            subscription
+                .control
+                .topology_transaction_in_flight
+                .store(true, Ordering::Release);
+            let _gate = InFlightTopologyTransaction(&subscription.control);
+
+            let error = subscription.reconcile().unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert!(error.to_string().contains("topology transaction"));
+        }
+        subscription.dispose().unwrap();
+    }
+
+    #[test]
+    fn reconciliation_and_exclusion_update_conflict_explicitly() {
+        let root = TestRoot::new("exclusion-conflict");
+        let subscription = Engine::new()
+            .subscribe(&root.0, SubscriptionOptions::default())
+            .unwrap();
+        {
+            subscription
+                .control
+                .topology_transaction_in_flight
+                .store(true, Ordering::Release);
+            let _gate = InFlightTopologyTransaction(&subscription.control);
+
+            let error = subscription.replace_exclusions(1, vec![]).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert!(error.to_string().contains("topology transaction"));
+        }
+        subscription.dispose().unwrap();
+    }
 }

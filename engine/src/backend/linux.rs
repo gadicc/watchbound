@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ffi::CString;
 use std::fs;
 use std::io;
+use std::ops::Bound::{Excluded, Unbounded};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
@@ -13,8 +14,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::{
-    ChangeBatch, Coverage, PartialReason, RuntimeStats, SharedStats, SubscriptionOptions,
-    UncertainReason,
+    ChangeBatch, Coverage, PartialReason, ReconciliationResult, RuntimeStats, SharedStats,
+    SubscriptionOptions, UncertainReason,
 };
 
 const WATCH_MASK: u32 = libc::IN_ATTRIB
@@ -249,6 +250,21 @@ impl Runtime {
         })
     }
 
+    pub(crate) fn queue_reconciliation(
+        &self,
+        id: SubscriptionId,
+    ) -> io::Result<PendingReconciliationAcknowledgement> {
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        self.send(CommandEnvelope {
+            generation: 0,
+            command: Command::Reconcile {
+                subscription_id: id,
+                acknowledgement,
+            },
+        })?;
+        Ok(PendingReconciliationAcknowledgement { acknowledged })
+    }
+
     pub(crate) fn stats(&self) -> RuntimeStats {
         RuntimeStats {
             native_watch_budget: self.native_watch_budget,
@@ -286,6 +302,25 @@ impl PendingExclusionAcknowledgement {
         if acknowledged.generation != self.generation {
             return Err(io::Error::other(
                 "shared runtime acknowledged the wrong exclusion generation",
+            ));
+        }
+        acknowledged.value
+    }
+}
+
+pub(crate) struct PendingReconciliationAcknowledgement {
+    acknowledged: Receiver<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+}
+
+impl PendingReconciliationAcknowledgement {
+    pub(crate) fn wait(self) -> io::Result<ReconciliationResult> {
+        let acknowledged = self
+            .acknowledged
+            .recv()
+            .map_err(|_| io::Error::other("shared runtime stopped during reconciliation"))?;
+        if acknowledged.generation != 0 {
+            return Err(io::Error::other(
+                "shared runtime acknowledged the wrong reconciliation generation",
             ));
         }
         acknowledged.value
@@ -381,6 +416,10 @@ enum Command {
         prefixes: Vec<PathBuf>,
         acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Coverage>>>,
     },
+    Reconcile {
+        subscription_id: SubscriptionId,
+        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+    },
     Shutdown {
         acknowledgement: SyncSender<CommandAcknowledgement<()>>,
     },
@@ -439,9 +478,11 @@ struct SubscriptionState {
     selection_generation: u64,
     exclusions: BTreeSet<PathBuf>,
     exclusion_update: Option<PendingExclusionUpdate>,
+    reconciliation: Option<PendingReconciliation>,
     topology_jobs: VecDeque<TopologyJob>,
     topology_barriers: usize,
     establishment: Option<PendingEstablishment>,
+    uncertainty_epoch: u64,
 }
 
 struct PendingEstablishment {
@@ -463,6 +504,26 @@ enum ExclusionUpdatePhase {
     WaitingForTopology,
     RemovingExcluded,
     ScanningIncluded,
+}
+
+struct PendingReconciliation {
+    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+    phase: ReconciliationPhase,
+    encountered: BTreeSet<PathBuf>,
+    sweep_after: Option<PathBuf>,
+    rebuilt_deferred_order: VecDeque<PathBuf>,
+    starting_uncertainty: Option<UncertainReason>,
+    starting_uncertainty_epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReconciliationPhase {
+    WaitingForTopology,
+    Scanning,
+    SweepingWatched,
+    SweepingDeferred,
+    SweepingDeferredOrder,
+    SweepingPromotions,
 }
 
 impl SubscriptionState {
@@ -497,16 +558,24 @@ impl SubscriptionState {
             selection_generation: 0,
             exclusions: BTreeSet::new(),
             exclusion_update: None,
+            reconciliation: None,
             topology_jobs: VecDeque::from([TopologyJob::new(root, true)]),
             topology_barriers: 1,
             establishment: Some(establishment),
+            uncertainty_epoch: 0,
         }
     }
 
     fn coverage(&self) -> Coverage {
         if let Some(reason) = self.uncertain_reason {
             Coverage::Uncertain { reason }
-        } else if let Some(reason) = self.current_partial_reason() {
+        } else {
+            self.coverage_without_uncertainty()
+        }
+    }
+
+    fn coverage_without_uncertainty(&self) -> Coverage {
+        if let Some(reason) = self.current_partial_reason() {
             Coverage::Partial {
                 reason,
                 watched_directories: self.watched_paths.len(),
@@ -538,6 +607,7 @@ impl SubscriptionState {
     }
 
     fn mark_uncertain(&mut self, reason: UncertainReason, invalidated_path: PathBuf) {
+        self.uncertainty_epoch = self.uncertainty_epoch.saturating_add(1);
         self.uncertain_reason = Some(match self.uncertain_reason {
             Some(current) if uncertainty_priority(current) >= uncertainty_priority(reason) => {
                 current
@@ -662,6 +732,7 @@ struct TopologyJob {
     promotion_root: Option<PathBuf>,
     yield_after_promoted_watch: bool,
     require_watch_before_read: bool,
+    reconciliation: bool,
 }
 
 impl TopologyJob {
@@ -673,6 +744,7 @@ impl TopologyJob {
             promotion_root: None,
             yield_after_promoted_watch: false,
             require_watch_before_read: !establishment,
+            reconciliation: false,
         }
     }
 
@@ -684,6 +756,7 @@ impl TopologyJob {
             promotion_root: None,
             yield_after_promoted_watch: false,
             require_watch_before_read: true,
+            reconciliation: false,
         }
     }
 
@@ -695,6 +768,19 @@ impl TopologyJob {
             promotion_root: Some(path),
             yield_after_promoted_watch: true,
             require_watch_before_read: true,
+            reconciliation: false,
+        }
+    }
+
+    fn reconciliation(start: PathBuf) -> Self {
+        Self {
+            directories: VecDeque::from([start]),
+            active: None,
+            establishment: false,
+            promotion_root: None,
+            yield_after_promoted_watch: false,
+            require_watch_before_read: true,
+            reconciliation: true,
         }
     }
 }
@@ -878,10 +964,10 @@ impl Worker {
                                 state.exclusion_generation
                             ),
                         ))
-                    } else if state.exclusion_update.is_some() {
+                    } else if state.exclusion_update.is_some() || state.reconciliation.is_some() {
                         Err(io::Error::new(
                             io::ErrorKind::WouldBlock,
-                            "an exclusion update is already in progress for this subscription",
+                            "a topology transaction is already in progress for this subscription",
                         ))
                     } else {
                         validate_exclusion_prefixes(&state.root, prefixes)
@@ -924,6 +1010,55 @@ impl Worker {
                         });
                     self.subscriptions.insert(subscription_id, state);
                     self.publish_deferred_interest_count();
+                    if runnable {
+                        self.schedule_topology(subscription_id);
+                    }
+                }
+                Command::Reconcile {
+                    subscription_id,
+                    acknowledgement,
+                } => {
+                    let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "subscription is no longer active",
+                            )),
+                        });
+                        continue;
+                    };
+                    if state.exclusion_update.is_some() || state.reconciliation.is_some() {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::WouldBlock,
+                                "a topology transaction is already in progress for this subscription",
+                            )),
+                        });
+                    } else if state.uncertain_reason == Some(UncertainReason::RootReplaced) {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "root-replaced uncertainty is not recoverable by reconciliation",
+                            )),
+                        });
+                    } else {
+                        state.reconciliation = Some(PendingReconciliation {
+                            acknowledgement,
+                            phase: ReconciliationPhase::WaitingForTopology,
+                            encountered: BTreeSet::new(),
+                            sweep_after: None,
+                            rebuilt_deferred_order: VecDeque::new(),
+                            starting_uncertainty: None,
+                            starting_uncertainty_epoch: 0,
+                        });
+                        self.progress_reconciliation(&mut state);
+                    }
+                    let runnable =
+                        !state.topology_jobs.is_empty() || reconciliation_runnable(&state);
+                    self.subscriptions.insert(subscription_id, state);
                     if runnable {
                         self.schedule_topology(subscription_id);
                     }
@@ -996,6 +1131,7 @@ impl Worker {
     fn has_blocking_topology_pressure(&self) -> bool {
         self.subscriptions.values().any(|state| {
             state.exclusion_update.is_none()
+                && state.reconciliation.is_none()
                 && state.topology_barriers > 0
                 && state.pending_paths.len() >= state.options.max_batch_paths
         })
@@ -1110,7 +1246,7 @@ impl Worker {
         } else if mask & libc::IN_MOVE_SELF != 0 && directory == state.root {
             state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
         }
-        if state.exclusion_update.is_some()
+        if (state.exclusion_update.is_some() || state.reconciliation.is_some())
             && state.topology_barriers > 0
             && state.pending_paths.len() >= state.options.max_batch_paths
             && !state.pending_paths.contains(&event_path)
@@ -1118,17 +1254,31 @@ impl Worker {
         {
             state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
         } else {
-            state.queue_path(event_path.clone());
+            if state.reconciliation.is_some() {
+                state.queue_path(state.root.clone());
+            } else {
+                state.queue_path(event_path.clone());
+            }
         }
         if mask & libc::IN_ISDIR != 0 {
             if mask & (libc::IN_MOVED_FROM | libc::IN_DELETE) != 0 {
                 self.remove_subscription_subtree(state, &event_path);
             }
             if mask & (libc::IN_CREATE | libc::IN_MOVED_TO) != 0 {
+                if let Some(reconciliation) = state.reconciliation.as_mut()
+                    && reconciliation.phase != ReconciliationPhase::WaitingForTopology
+                {
+                    reconciliation.phase = ReconciliationPhase::Scanning;
+                    reconciliation.sweep_after = None;
+                }
                 state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
                 state
                     .topology_jobs
-                    .push_back(TopologyJob::new(event_path, false));
+                    .push_back(if state.reconciliation.is_some() {
+                        TopologyJob::reconciliation(event_path)
+                    } else {
+                        TopologyJob::new(event_path, false)
+                    });
                 state.topology_barriers += 1;
                 self.schedule_topology(state.id);
             }
@@ -1155,7 +1305,7 @@ impl Worker {
                 } else if !expected {
                     state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
                 }
-                if state.exclusion_update.is_none() {
+                if state.exclusion_update.is_none() && state.reconciliation.is_none() {
                     state.publish_resource_counts();
                 }
             }
@@ -1177,7 +1327,7 @@ impl Worker {
             let Some(mut state) = self.subscriptions.remove(&id) else {
                 continue;
             };
-            if state.exclusion_update.is_some() {
+            if state.exclusion_update.is_some() || state.reconciliation.is_some() {
                 self.subscriptions.insert(id, state);
                 continue;
             }
@@ -1186,7 +1336,7 @@ impl Worker {
                 self.subscriptions.insert(id, state);
                 continue;
             };
-            let opened = self.open_topology_directory(&mut state, path.clone(), true, false);
+            let opened = self.open_topology_directory(&mut state, path.clone(), true, false, false);
             let mut scheduled = false;
             if let Some(opened) = opened
                 && state.watched_paths.contains_key(&path)
@@ -1300,6 +1450,7 @@ impl Worker {
                     directory,
                     allow_new_native_watch,
                     !job.require_watch_before_read,
+                    job.reconciliation,
                 ) {
                     Some(opened) => {
                         native_allocations += usize::from(opened.created_native_watch);
@@ -1369,14 +1520,16 @@ impl Worker {
             return true;
         }
         self.progress_exclusion_update(&mut state);
-        if state.exclusion_update.is_none() {
+        self.progress_reconciliation(&mut state);
+        if state.exclusion_update.is_none() && state.reconciliation.is_none() {
             state.publish_resource_counts();
         }
         let runnable = !state.topology_jobs.is_empty()
             || state
                 .exclusion_update
                 .as_ref()
-                .is_some_and(|update| update.phase != ExclusionUpdatePhase::WaitingForTopology);
+                .is_some_and(|update| update.phase != ExclusionUpdatePhase::WaitingForTopology)
+            || reconciliation_runnable(&state);
         self.subscriptions.insert(id, state);
         self.publish_deferred_interest_count();
         if runnable {
@@ -1391,6 +1544,7 @@ impl Worker {
         directory: PathBuf,
         allow_new_native_watch: bool,
         read_without_watch: bool,
+        reconciliation: bool,
     ) -> Option<OpenedDirectory> {
         if state.is_excluded(&directory) {
             state.remove_deferred_subtree(&directory);
@@ -1398,6 +1552,19 @@ impl Worker {
         }
         let mut deferred_at_limit = false;
         let mut created_native_watch = false;
+        if reconciliation && state.watched_paths.contains_key(&directory) {
+            let current_identity = directory_identity(&directory);
+            let descriptor = state.watched_paths.get(&directory).copied();
+            let watched_identity = descriptor
+                .and_then(|descriptor| self.watches.get(&descriptor))
+                .and_then(|watch| watch.identity);
+            if current_identity.ok() != watched_identity
+                && let Some(descriptor) = descriptor
+            {
+                state.watched_paths.remove(&directory);
+                self.remove_interest(state.id, &directory, descriptor);
+            }
+        }
         if !state.watched_paths.contains_key(&directory) {
             let at_limit = state
                 .options
@@ -1412,6 +1579,7 @@ impl Worker {
                             PartialReason::ResourceLimit,
                             DeferredCause::SubscriptionLimit,
                         );
+                        mark_reconciliation_encounter(state, &directory, reconciliation);
                         if !read_without_watch {
                             return None;
                         }
@@ -1441,6 +1609,7 @@ impl Worker {
                             PartialReason::ResourceLimit,
                             DeferredCause::RuntimeBudget,
                         );
+                        mark_reconciliation_encounter(state, &directory, reconciliation);
                         if !read_without_watch {
                             return None;
                         }
@@ -1449,13 +1618,15 @@ impl Worker {
                         if path_is_stale_or_not_directory(&error) {
                             state.remove_deferred_subtree(&directory);
                         } else {
-                            state.defer_error(directory, &error);
+                            state.defer_error(directory.clone(), &error);
                         }
+                        mark_reconciliation_encounter(state, &directory, reconciliation);
                         return None;
                     }
                 }
             }
         }
+        mark_reconciliation_encounter(state, &directory, reconciliation);
         match fs::read_dir(&directory) {
             Ok(entries) => Some(OpenedDirectory {
                 active: ActiveDirectory {
@@ -1610,6 +1781,289 @@ impl Worker {
         }
     }
 
+    fn progress_reconciliation(&mut self, state: &mut SubscriptionState) {
+        let ready_to_start = state.reconciliation.as_ref().is_some_and(|reconciliation| {
+            reconciliation.phase == ReconciliationPhase::WaitingForTopology
+                && state.topology_jobs.is_empty()
+                && state.topology_barriers == 0
+        });
+        if ready_to_start {
+            state.flush();
+            state.pending_paths.clear();
+            state.pending_started = None;
+            state.pending_generation = None;
+
+            match RootIdentity::capture(&state.root) {
+                Ok(identity) if identity == state.root_identity => {
+                    let reconciliation = state
+                        .reconciliation
+                        .as_mut()
+                        .expect("ready reconciliation must exist");
+                    reconciliation.phase = ReconciliationPhase::Scanning;
+                    reconciliation.starting_uncertainty = state.uncertain_reason;
+                    reconciliation.starting_uncertainty_epoch = state.uncertainty_epoch;
+                    state.topology_barriers = 2;
+                    state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
+                    state
+                        .topology_jobs
+                        .push_back(TopologyJob::reconciliation(state.root.clone()));
+                }
+                Ok(_) | Err(_) => {
+                    state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+                    if let Some(reconciliation) = state.reconciliation.take() {
+                        let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+                            generation: 0,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "watch root identity changed before reconciliation",
+                            )),
+                        });
+                    }
+                }
+            }
+        }
+
+        let scan_complete = state.reconciliation.as_ref().is_some_and(|reconciliation| {
+            reconciliation.phase == ReconciliationPhase::Scanning
+                && state.topology_jobs.is_empty()
+                && state.topology_barriers == 1
+        });
+        if scan_complete {
+            let reconciliation = state
+                .reconciliation
+                .as_mut()
+                .expect("scanned reconciliation must exist");
+            reconciliation.phase = ReconciliationPhase::SweepingWatched;
+            reconciliation.sweep_after = None;
+        }
+
+        let mut work = 0;
+        while work < MAX_TOPOLOGY_DIRECTORIES_PER_TURN {
+            let Some(phase) = state
+                .reconciliation
+                .as_ref()
+                .map(|reconciliation| reconciliation.phase)
+            else {
+                return;
+            };
+            match phase {
+                ReconciliationPhase::WaitingForTopology | ReconciliationPhase::Scanning => break,
+                ReconciliationPhase::SweepingWatched => {
+                    let after = state
+                        .reconciliation
+                        .as_ref()
+                        .and_then(|reconciliation| reconciliation.sweep_after.clone());
+                    let candidate = match after {
+                        Some(after) => state
+                            .watched_paths
+                            .range((Excluded(after), Unbounded))
+                            .next()
+                            .map(|(path, descriptor)| (path.clone(), *descriptor)),
+                        None => state
+                            .watched_paths
+                            .iter()
+                            .next()
+                            .map(|(path, descriptor)| (path.clone(), *descriptor)),
+                    };
+                    if let Some((path, descriptor)) = candidate {
+                        let encountered =
+                            state.reconciliation.as_ref().is_some_and(|reconciliation| {
+                                reconciliation.encountered.contains(&path)
+                            });
+                        state
+                            .reconciliation
+                            .as_mut()
+                            .expect("sweeping reconciliation must exist")
+                            .sweep_after = Some(path.clone());
+                        if !encountered {
+                            state.watched_paths.remove(&path);
+                            self.remove_interest(state.id, &path, descriptor);
+                        }
+                        work += 1;
+                    } else {
+                        let reconciliation = state
+                            .reconciliation
+                            .as_mut()
+                            .expect("sweeping reconciliation must exist");
+                        reconciliation.phase = ReconciliationPhase::SweepingDeferred;
+                        reconciliation.sweep_after = None;
+                    }
+                }
+                ReconciliationPhase::SweepingDeferred => {
+                    let after = state
+                        .reconciliation
+                        .as_ref()
+                        .and_then(|reconciliation| reconciliation.sweep_after.clone());
+                    let candidate = match after {
+                        Some(after) => state
+                            .deferred_directories
+                            .range((Excluded(after), Unbounded))
+                            .next()
+                            .map(|(path, _)| path.clone()),
+                        None => state.deferred_directories.keys().next().cloned(),
+                    };
+                    if let Some(path) = candidate {
+                        let encountered =
+                            state.reconciliation.as_ref().is_some_and(|reconciliation| {
+                                reconciliation.encountered.contains(&path)
+                            });
+                        state
+                            .reconciliation
+                            .as_mut()
+                            .expect("sweeping reconciliation must exist")
+                            .sweep_after = Some(path.clone());
+                        if !encountered {
+                            state.deferred_directories.remove(&path);
+                        }
+                        work += 1;
+                    } else {
+                        let reconciliation = state
+                            .reconciliation
+                            .as_mut()
+                            .expect("sweeping reconciliation must exist");
+                        reconciliation.phase = ReconciliationPhase::SweepingDeferredOrder;
+                        reconciliation.sweep_after = None;
+                    }
+                }
+                ReconciliationPhase::SweepingDeferredOrder => {
+                    if let Some(path) = state.deferred_order.pop_front() {
+                        if state.deferred_directories.contains_key(&path) {
+                            state
+                                .reconciliation
+                                .as_mut()
+                                .expect("rebuilding reconciliation must exist")
+                                .rebuilt_deferred_order
+                                .push_back(path);
+                        }
+                        work += 1;
+                    } else {
+                        let reconciliation = state
+                            .reconciliation
+                            .as_mut()
+                            .expect("rebuilding reconciliation must exist");
+                        state.deferred_order =
+                            std::mem::take(&mut reconciliation.rebuilt_deferred_order);
+                        reconciliation.phase = ReconciliationPhase::SweepingPromotions;
+                    }
+                }
+                ReconciliationPhase::SweepingPromotions => {
+                    let after = state
+                        .reconciliation
+                        .as_ref()
+                        .and_then(|reconciliation| reconciliation.sweep_after.clone());
+                    let candidate = match after {
+                        Some(after) => state
+                            .pending_promotions
+                            .range((Excluded(after), Unbounded))
+                            .next()
+                            .cloned(),
+                        None => state.pending_promotions.iter().next().cloned(),
+                    };
+                    if let Some(path) = candidate {
+                        let encountered =
+                            state.reconciliation.as_ref().is_some_and(|reconciliation| {
+                                reconciliation.encountered.contains(&path)
+                            });
+                        state
+                            .reconciliation
+                            .as_mut()
+                            .expect("sweeping reconciliation must exist")
+                            .sweep_after = Some(path.clone());
+                        if !encountered {
+                            state.pending_promotions.remove(&path);
+                        }
+                        work += 1;
+                    } else {
+                        self.commit_reconciliation(state);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn commit_reconciliation(&mut self, state: &mut SubscriptionState) {
+        let root_stable = RootIdentity::capture(&state.root)
+            .is_ok_and(|identity| identity == state.root_identity);
+        if !root_stable {
+            state.topology_barriers = state.topology_barriers.saturating_sub(1);
+            state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+            if let Some(reconciliation) = state.reconciliation.take() {
+                let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+                    generation: 0,
+                    value: Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "watch root identity changed during reconciliation",
+                    )),
+                });
+            }
+            return;
+        }
+
+        let reconciliation = state
+            .reconciliation
+            .take()
+            .expect("committing reconciliation must exist");
+        state.topology_barriers = state.topology_barriers.saturating_sub(1);
+        let clears_recoverable_uncertainty = state.uncertainty_epoch
+            == reconciliation.starting_uncertainty_epoch
+            && state.uncertain_reason == reconciliation.starting_uncertainty
+            && state.uncertain_reason.is_none_or(recoverable_uncertainty);
+        state.pending_paths.clear();
+        state.pending_started = None;
+        state.pending_generation = None;
+        let result = ReconciliationResult {
+            exclusion_generation: state.exclusion_generation,
+            coverage: if clears_recoverable_uncertainty {
+                state.coverage_without_uncertainty()
+            } else {
+                state.coverage()
+            },
+        };
+        let batch = ChangeBatch {
+            sequence: state.next_sequence,
+            exclusion_generation: state.exclusion_generation,
+            invalidated_paths: vec![state.root.clone()],
+            coverage: result.coverage.clone(),
+        };
+        match state.output.try_send(batch) {
+            Ok(()) => {
+                if clears_recoverable_uncertainty {
+                    state.uncertain_reason = None;
+                }
+                state.next_sequence = state.next_sequence.saturating_add(1);
+                state
+                    .stats
+                    .batches_delivered
+                    .fetch_add(1, Ordering::Relaxed);
+                state.publish_resource_counts();
+                self.publish_deferred_interest_count_with(state);
+                let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+                    generation: 0,
+                    value: Ok(result),
+                });
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                state.stats.batches_dropped.fetch_add(1, Ordering::Relaxed);
+                if state.uncertainty_epoch == reconciliation.starting_uncertainty_epoch {
+                    state.uncertain_reason = Some(UncertainReason::ConsumerBackpressure);
+                } else {
+                    state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
+                }
+                state.queue_path(state.root.clone());
+                state.publish_resource_counts();
+                self.publish_deferred_interest_count_with(state);
+                let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+                    generation: 0,
+                    value: Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "reconciliation root invalidation could not enter the output queue",
+                    )),
+                });
+            }
+        }
+    }
+
     fn finish_topology_job(
         &mut self,
         state: &mut SubscriptionState,
@@ -1747,7 +2201,7 @@ impl Worker {
             self.remove_interest(state.id, &watched_path, descriptor);
         }
         state.remove_deferred_subtree(path);
-        if state.exclusion_update.is_none() {
+        if state.exclusion_update.is_none() && state.reconciliation.is_none() {
             state.publish_resource_counts();
         }
     }
@@ -1809,6 +2263,15 @@ impl Worker {
                 value: Err(io::Error::new(
                     io::ErrorKind::Interrupted,
                     "subscription disposed during exclusion update",
+                )),
+            });
+        }
+        if let Some(reconciliation) = state.reconciliation.take() {
+            let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+                generation: 0,
+                value: Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "subscription disposed during reconciliation",
                 )),
             });
         }
@@ -1949,7 +2412,7 @@ impl Worker {
         self.counters.deferred_interests.store(
             self.subscriptions
                 .values()
-                .map(|state| state.deferred_directories.len())
+                .map(|state| state.stats.deferred_directories.load(Ordering::Acquire))
                 .sum(),
             Ordering::Release,
         );
@@ -1959,9 +2422,9 @@ impl Worker {
         self.counters.deferred_interests.store(
             self.subscriptions
                 .values()
-                .map(|state| state.deferred_directories.len())
+                .map(|state| state.stats.deferred_directories.load(Ordering::Acquire))
                 .sum::<usize>()
-                + detached.deferred_directories.len(),
+                + detached.stats.deferred_directories.load(Ordering::Acquire),
             Ordering::Release,
         );
     }
@@ -1977,6 +2440,33 @@ fn path_is_stale_or_not_directory(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
         Some(libc::ENOENT | libc::ENOTDIR | libc::ELOOP)
+    )
+}
+
+fn reconciliation_runnable(state: &SubscriptionState) -> bool {
+    state.reconciliation.as_ref().is_some_and(|reconciliation| {
+        matches!(
+            reconciliation.phase,
+            ReconciliationPhase::SweepingWatched
+                | ReconciliationPhase::SweepingDeferred
+                | ReconciliationPhase::SweepingDeferredOrder
+                | ReconciliationPhase::SweepingPromotions
+        )
+    })
+}
+
+fn mark_reconciliation_encounter(state: &mut SubscriptionState, path: &Path, reconciliation: bool) {
+    if reconciliation && let Some(transaction) = state.reconciliation.as_mut() {
+        transaction.encountered.insert(path.to_path_buf());
+    }
+}
+
+fn recoverable_uncertainty(reason: UncertainReason) -> bool {
+    matches!(
+        reason,
+        UncertainReason::EventOverflow
+            | UncertainReason::TopologyRace
+            | UncertainReason::ConsumerBackpressure
     )
 }
 
@@ -2204,5 +2694,138 @@ mod tests {
                 reason: UncertainReason::EventOverflow
             }
         );
+    }
+
+    fn prepare_reconciliation(
+        state: &mut SubscriptionState,
+        reason: UncertainReason,
+    ) -> Receiver<CommandAcknowledgement<io::Result<ReconciliationResult>>> {
+        state.mark_uncertain(reason, state.root.clone());
+        state.pending_paths.clear();
+        state.pending_started = None;
+        state.pending_generation = None;
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        state.reconciliation = Some(PendingReconciliation {
+            acknowledgement,
+            phase: ReconciliationPhase::SweepingPromotions,
+            encountered: BTreeSet::from([state.root.clone()]),
+            sweep_after: None,
+            rebuilt_deferred_order: VecDeque::new(),
+            starting_uncertainty: state.uncertain_reason,
+            starting_uncertainty_epoch: state.uncertainty_epoch,
+        });
+        state.topology_barriers = 1;
+        acknowledged
+    }
+
+    fn worker() -> Worker {
+        let (_commands, command_receiver) = mpsc::channel();
+        Worker::new(
+            create_inotify().unwrap(),
+            Arc::new(create_eventfd().unwrap()),
+            command_receiver,
+            Arc::new(RuntimeCounters::default()),
+            None,
+        )
+    }
+
+    #[test]
+    fn event_overflow_reconciliation_queues_root_before_clearing_uncertainty() {
+        let root = TestRoot::new("reconcile-overflow");
+        let (mut state, batches) = state(&root.0, SubscriptionOptions::default());
+        let acknowledged = prepare_reconciliation(&mut state, UncertainReason::EventOverflow);
+        let mut worker = worker();
+
+        worker.commit_reconciliation(&mut state);
+
+        let result = acknowledged.recv().unwrap().value.unwrap();
+        assert_eq!(result.coverage, Coverage::Complete);
+        let batch = batches.recv().unwrap();
+        assert_eq!(batch.invalidated_paths, vec![root.0.clone()]);
+        assert_eq!(batch.coverage, Coverage::Complete);
+        assert_eq!(state.uncertain_reason, None);
+    }
+
+    #[test]
+    fn topology_race_reconciliation_can_return_to_complete_coverage() {
+        let root = TestRoot::new("reconcile-topology-race");
+        let (mut state, batches) = state(&root.0, SubscriptionOptions::default());
+        let acknowledged = prepare_reconciliation(&mut state, UncertainReason::TopologyRace);
+        let mut worker = worker();
+
+        worker.commit_reconciliation(&mut state);
+
+        assert_eq!(
+            acknowledged.recv().unwrap().value.unwrap().coverage,
+            Coverage::Complete
+        );
+        assert_eq!(batches.recv().unwrap().coverage, Coverage::Complete);
+    }
+
+    #[test]
+    fn root_replaced_uncertainty_is_not_cleared_by_a_topology_commit() {
+        let root = TestRoot::new("reconcile-root-replaced");
+        let (mut state, batches) = state(&root.0, SubscriptionOptions::default());
+        let acknowledged = prepare_reconciliation(&mut state, UncertainReason::RootReplaced);
+        let mut worker = worker();
+
+        worker.commit_reconciliation(&mut state);
+
+        let expected = Coverage::Uncertain {
+            reason: UncertainReason::RootReplaced,
+        };
+        assert_eq!(
+            acknowledged.recv().unwrap().value.unwrap().coverage,
+            expected
+        );
+        assert_eq!(batches.recv().unwrap().coverage, expected);
+    }
+
+    #[test]
+    fn new_overflow_during_reconciliation_preserves_overflow_uncertainty() {
+        let root = TestRoot::new("reconcile-new-overflow");
+        let (mut state, batches) = state(&root.0, SubscriptionOptions::default());
+        let acknowledged = prepare_reconciliation(&mut state, UncertainReason::EventOverflow);
+        state.mark_uncertain(UncertainReason::EventOverflow, root.0.clone());
+        let mut worker = worker();
+
+        worker.commit_reconciliation(&mut state);
+
+        let expected = Coverage::Uncertain {
+            reason: UncertainReason::EventOverflow,
+        };
+        assert_eq!(
+            acknowledged.recv().unwrap().value.unwrap().coverage,
+            expected
+        );
+        assert_eq!(batches.recv().unwrap().coverage, expected);
+    }
+
+    #[test]
+    fn full_output_queue_rejects_reconciliation_and_retains_backpressure() {
+        let root = TestRoot::new("reconcile-backpressure");
+        let options = SubscriptionOptions {
+            output_queue_capacity: 1,
+            ..SubscriptionOptions::default()
+        };
+        let (mut state, batches) = state(&root.0, options);
+        state.queue_path(root.0.join("already-queued"));
+        state.flush();
+        let acknowledged =
+            prepare_reconciliation(&mut state, UncertainReason::ConsumerBackpressure);
+        let mut worker = worker();
+
+        worker.commit_reconciliation(&mut state);
+
+        let error = acknowledged.recv().unwrap().value.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            state.coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::ConsumerBackpressure,
+            }
+        );
+        assert!(state.pending_paths.contains(&root.0));
+        assert!(batches.try_recv().is_ok());
     }
 }

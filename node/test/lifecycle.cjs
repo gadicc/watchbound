@@ -72,6 +72,34 @@ test("native exclusion replacement preserves byte prefixes and generation bounda
   }
 });
 
+test("native reconciliation commits coverage, generation, and a root invalidation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-reconcile-"));
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await binding.subscribe(root, { batchWindowMs: 8 }, (batch) => {
+      batches.push(batch);
+    });
+    await subscription.replaceExclusions(4n, [Buffer.from("hidden")]);
+    fs.mkdirSync(path.join(root, "created", "deep"), { recursive: true });
+
+    const result = await subscription.reconcile();
+    assert.deepEqual(result, {
+      exclusionGeneration: 4n,
+      coverage: { state: "complete" },
+    });
+    assert.equal(binding.capabilities().reconciliation, true);
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.invalidatedPaths.some((value) => value.equals(Buffer.from(root)))),
+      "reconciliation root invalidation was not delivered",
+    );
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("concurrent native dispose calls join once and resolve together", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-dispose-"));
   const subscription = await binding.subscribe(root, {}, () => {});

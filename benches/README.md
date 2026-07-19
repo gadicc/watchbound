@@ -55,11 +55,10 @@ On Linux, inotify usage is the delta of
 `inotify wd:` records in `/proc/self/fdinfo`; lack of readable procfs is reported as an unsupported
 measurement rather than inferred as zero.
 
-Parcel has no public active-subscription exclusion update and Watchbound deliberately defers
-generation-based atomic exclusions to its next milestone. Those trials are listed under
-`excludedRuns` with the capability reason. The Codex adapter exercises its Git-ignore-derived
+Parcel has no public active-subscription exclusion update. Watchbound exercises its
+generation-based atomic exclusions, while the Codex adapter exercises its Git-ignore-derived
 refresh, which is dynamic but not atomic; if `git` cannot run, that trial is an explicit runtime
-skip.
+skip. The harness does not yet contain a standalone reconciliation scenario.
 
 RSS is allocator/high-water-state data and can be noisy even with `--expose-gc`. Use repeated runs
 and the aggregates rather than treating a single RSS delta as precise implementation ownership.

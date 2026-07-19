@@ -68,6 +68,35 @@ test("wrapper replaces exclusions atomically and validates its representation", 
   }
 });
 
+test("wrapper reconciles in place under the committed exclusion generation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-"));
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await subscribe(root, (batch) => batches.push(batch), {
+      batchWindowMs: 8,
+    });
+    await subscription.replaceExclusions(2n, ["hidden"]);
+    fs.mkdirSync(path.join(root, "created", "deep"), { recursive: true });
+
+    const result = await subscription.reconcile();
+    assert.deepEqual(result, {
+      exclusionGeneration: 2n,
+      coverage: { state: "complete" },
+    });
+    assert.equal(capabilities.reconciliation, true);
+    const deadline = Date.now() + 3_000;
+    while (!batches.some((batch) => batch.invalidatedPaths.includes(root)) && Date.now() < deadline) {
+      await delay(10);
+    }
+    assert.ok(batches.some((batch) =>
+      batch.invalidatedPaths.includes(root) && batch.exclusionGeneration === 2n));
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("wrapper validates arguments before entering native code", async () => {
   await assert.rejects(subscribe("", () => {}), /non-empty string/);
   await assert.rejects(subscribe("/tmp", null), /onBatch must be a function/);

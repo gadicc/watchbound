@@ -56,5 +56,7 @@ the next-milestone decision.
 The current Linux engine shares one process-wide worker and inotify instance,
 allocates unique native watches fairly across subscriptions, and implements
 generation-based atomic dynamic exclusions. It reports root replacement as
-uncertain but does not reattach to the replacement. Post-overflow topology
-rebuild, non-Linux backends, and published prebuilds remain for later milestones.
+uncertain but does not reattach to the replacement. Explicit bounded
+post-overflow/topology-race reconciliation is implemented; automatic recovery
+policy, root-replacement recovery, non-Linux backends, and published prebuilds
+remain for later milestones.

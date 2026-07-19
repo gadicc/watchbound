@@ -56,7 +56,13 @@ export interface Subscription {
     generation: bigint,
     prefixes: readonly (string | Uint8Array)[],
   ): Promise<Coverage>;
+  reconcile(): Promise<ReconciliationResult>;
   dispose(): Promise<void>;
+}
+
+export interface ReconciliationResult {
+  exclusionGeneration: bigint;
+  coverage: Coverage;
 }
 
 export interface Capabilities {
@@ -65,6 +71,7 @@ export interface Capabilities {
   explicitWatchLimits: boolean;
   overflowReporting: boolean;
   dynamicExclusions: boolean;
+  reconciliation: boolean;
   rootReplacementRecovery: boolean;
   exactPathBytes: true;
 }

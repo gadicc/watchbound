@@ -151,7 +151,47 @@ and a new update cannot begin after disposal. Exclusion configuration lives only
 for that subscription and is released with its topology, deferred records,
 watches, descriptors, and final worker shutdown.
 
-Remaining gaps are reconciliation after overflow or other sticky uncertainty,
-automatic retry for non-budget native failures, and same-path root replacement
-recovery. Exclusions deliberately do not add Git/glob policy, detailed event
-kinds, rename reconstruction, or cross-platform support.
+Remaining gaps are automatic retry for non-budget native failures and
+same-path root replacement recovery. Exclusions deliberately do not add
+Git/glob policy, detailed event kinds, rename reconstruction, or cross-platform
+support.
+
+## Reconciliation and recovery
+
+Rust exposes synchronous `reconcile()` on `Subscription` and cloneable
+`ReconciliationHandle`. Node and the JavaScript wrapper expose the same worker
+barrier as an asynchronous method. Its result contains the unchanged
+`exclusionGeneration` and the committed final `coverage`; the
+`reconciliation` capability advertises the complete surface.
+
+The recoverable sticky reasons are `event-overflow`, `topology-race`, and
+`consumer-backpressure`. Reconciliation never synthesizes the detailed events
+that may have been lost. It closes the existing pending batch boundary, checks
+the original root identity, scans only the topology included by the current
+committed exclusions, installs or shares a watch before reading each directory,
+and performs bounded mark-and-sweep cleanup of stale watched, deferred, and
+promotion state. The operation can yield between scheduler turns, while its
+subscription continues to expose the previous committed resource gauges.
+
+The exclusion set and generation cannot change during this barrier. A
+concurrent reconciliation or exclusion update fails with `WouldBlock`. Events
+observed while scanning are conservatively represented by the final root
+invalidation, and a directory topology event extends the scan barrier. Batches
+remain single-generation and sequences advance only when the bounded engine
+queue accepts a batch.
+
+Successful acknowledgement occurs after the scan and stale-interest sweep,
+root revalidation, final allocator/coverage publication, and enqueue of the
+root invalidation. Only that successful enqueue permits the uncertainty present
+at the start to clear. A new loss during the barrier remains uncertain. If the
+queue is full, the promise/reconciliation call rejects with a backpressure
+error and the subscription stays uncertain with a pending root invalidation.
+The acknowledgement does not imply that a JavaScript callback has already run.
+
+Known `root-replaced` uncertainty is rejected, and a root identity change found
+at either validation point fails reconciliation while retaining
+`root-replaced`. Same-path replacement attachment remains out of scope.
+Disposal interrupts or joins an active barrier, releases reconciliation and
+deferred state, and preserves idempotent final-runtime shutdown and the rule
+that no enqueue, callback, update, or reconciliation can begin after disposal
+resolves.

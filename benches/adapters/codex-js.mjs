@@ -75,6 +75,7 @@ export async function loadAdapter() {
     explicitWatchLimits: true,
     explicitCoverage: false,
     overflowReporting: false,
+    supervisedOverflow: process.platform === "linux",
     consumerBackpressureReporting: false,
   };
 

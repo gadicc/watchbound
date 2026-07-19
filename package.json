@@ -14,6 +14,7 @@
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-js.mjs",
     "test": "cargo test --workspace && pnpm --dir node test && node --test js/test/*.test.js benches/test/*.test.mjs",
     "test:reconciliation-stress": "node benches/conformance.mjs --adapter watchbound --scenario reconciliation --runs 5 --burst-count 100 --strict",
+    "test:overflow-reconciliation": "node benches/conformance.mjs --adapter watchbound --scenario overflow-reconciliation --allow-forced-overflow --strict --pretty",
     "conformance": "node benches/conformance.mjs",
     "benchmark": "node --expose-gc benches/benchmark.mjs"
   },

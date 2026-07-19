@@ -218,6 +218,17 @@ survive the lifecycle boundary.
 
 This deterministic callback-backpressure case is suitable for ordinary
 development, but is not evidence for real kernel-overflow recovery. The
-I/O-heavy supervised overflow scenario remains separately gated on host
-preparation. Automatic recovery policy and root-replacement recovery remain out
-of scope.
+I/O-heavy `overflow-reconciliation` conformance path uses the same public
+method only after its detached supervisor proves genuine stop/mutate/resume
+induction, the public stream reports `event-overflow`, and delivery quiesces.
+It preserves the generation and exclusion contract, credits only one matching
+root-only recovery batch, and treats any observed interval detail as
+non-guaranteed. Because native overflow belongs to the shared inotify queue, a
+peer is required to stay explicit and truthful—not necessarily complete—while
+continuing delivery during the scan. The acknowledgement may precede callback
+entry because it follows bounded native enqueue.
+
+The scenario is removed by `--quick` and cannot be selected without
+`--allow-forced-overflow`; that acknowledgement is not host-readiness
+confirmation. Its heavy path was not run while being implemented. Automatic
+recovery policy and root-replacement recovery remain out of scope.

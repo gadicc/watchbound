@@ -414,6 +414,26 @@ overflow. The supervised forced-overflow scenario remains separately gated on
 host preparation. Root-replacement recovery and an automatic reconciliation
 policy also remain deliberate gaps.
 
+The dedicated `overflow-reconciliation` variant reuses the detached
+controller-supervised helper and the same public subscription. Its helper must
+prove the watcher stopped before mutation, the workload exceeded
+`max_queued_events`, and the watcher resumed afterward. Only a typed
+`event-overflow` root invalidation plus the native overflow counter can open the
+recovery phase; consumer backpressure and harness-only synthetic uncertainty
+cannot receive genuine-overflow credit. After the bounded output path drains,
+the harness mutates while coverage is still uncertain and invokes the original
+subscription's `reconcile()`.
+
+The recovery commit remains one singleton root batch, with one sequence and
+one unchanged exclusion generation, whose coverage equals the public result.
+Acknowledgement follows bounded root enqueue, not necessarily callback entry.
+A second subscription retains explicit truthful coverage and delivery while
+the primary bounded scan yields. Joined disposal restores subscription state,
+watches, the shared inotify descriptor and eventfd, both bridges, and the final
+runtime worker. This machinery is separately permission-gated and has not yet
+been exercised for a recorded heavy result. Automatic invocation and
+root-replacement recovery remain gaps.
+
 ## Binding decision
 
 Use Node-API rather than direct V8 or libuv calls. The concrete crate choice is

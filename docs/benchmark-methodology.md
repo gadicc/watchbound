@@ -49,6 +49,10 @@ Conformance exercises:
   explicit-coverage, typed-backpressure, and atomic-exclusion surface are
   excluded with a reason rather than credited with a pass;
 - a forced native queue overflow and post-overflow sentinel;
+- separately gated in-place reconciliation after that supervised genuine
+  overflow, requiring typed `event-overflow`, an output drain, mutation during
+  uncertainty, one matching root-only recovery boundary, peer progress, a
+  later deep sentinel, and complete joined cleanup;
 - active dynamic exclusions where the adapter truly supports them;
 - file, directory, and rename bursts;
 - mutation after disposal resolves.
@@ -108,6 +112,18 @@ native output path and that its coverage matches the result; callback
 observation is a later, separately bounded phase. Mutations during uncertainty
 or traversal are not counted as reconstructed detailed delivery.
 
+`overflow-reconciliation` records the same compact recovery evidence but only
+accepts genuine loss when the detached helper proves stop/mutate/resume order,
+the distinct-file workload exceeds the observed/configured kernel queue bound,
+the public batch reason is `event-overflow`, and native overflow statistics
+advance. Synthetic uncertainty and consumer backpressure cannot satisfy it.
+The interval mutation may appear as diagnostic detail, but only the singleton
+root boundary is credited as conservative coverage. A peer on the shared
+inotify stream may itself become uncertain after native overflow; the contract
+requires its coverage to remain explicit and truthful and its delivery to
+continue during the primary reconciliation scan, not that it falsely remain
+complete.
+
 RSS is allocator and high-water-state evidence, not precise ownership. Small
 differences and any single sample are not treated as meaningful. CPU time does
 not identify which native thread consumed it. Latency includes scheduler noise.
@@ -146,7 +162,9 @@ send callback releases the helper to stop the watcher. The controller kills
 that group and resumes/kills the watcher on a hard timeout.
 The helper confirms `/proc/<pid>/status` reached a stopped state before creating
 more distinct files than `max_queued_events`, and always attempts `SIGCONT` on
-normal errors and handled termination signals.
+normal errors and handled termination signals. The normal handshake also
+confirms the mutation completed before resume and that `/proc` subsequently no
+longer reports the watcher stopped.
 
 The report separates this induction evidence from the adapter's loss report.
 After resume it waits for activity and a quiet window before writing the
@@ -193,11 +211,20 @@ These deterministic callback-block/backpressure checks are not evidence that a
 real inotify queue overflow was induced or recovered. The forced-overflow run
 below remains separately gated on explicit quiet-host preparation.
 
+Both heavy scenarios are removed by `--quick`. Selecting either one otherwise
+fails during option parsing unless `--allow-forced-overflow` is present, before
+capability probes or trials are spawned. The flag is only an acknowledgement;
+the operator must still obtain explicit confirmation that the host is quiet
+and prepared. The dedicated command is `pnpm test:overflow-reconciliation`.
+It was added for the confirmed evidence run and was not executed while the
+scenario was implemented.
+
 Final correctness run, including the I/O-heavy forced-overflow case, after the
 user confirms the host is ready:
 
 ```sh
 node benches/conformance.mjs \
+  --allow-forced-overflow \
   --runs 3 \
   --output benches/results/conformance-final.json \
   --quiet

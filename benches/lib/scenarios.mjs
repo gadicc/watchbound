@@ -26,6 +26,7 @@ export const scenarioNames = Object.freeze([
   "queue-overflow",
   "dynamic-exclusions",
   "reconciliation",
+  "overflow-reconciliation",
   "burst-files",
   "burst-directories",
   "burst-renames",
@@ -46,6 +47,7 @@ export function scenarioRequirement(name) {
   if (name === "dynamic-exclusions") return "dynamicExclusions";
   if (name === "bridge-backpressure") return "consumerBackpressure";
   if (name === "reconciliation") return "reconciliation";
+  if (name === "overflow-reconciliation") return "overflowReconciliation";
   return null;
 }
 
@@ -144,7 +146,7 @@ export function prepareScenario(name, config, runDirectory) {
     fs.writeFileSync(target, "before\n");
     return { root, target, excludedDirectory: "excluded" };
   }
-  if (name === "reconciliation") {
+  if (name === "reconciliation" || name === "overflow-reconciliation") {
     const pressureRoot = path.join(root, "pressure");
     const excludedRoot = path.join(root, "excluded");
     const peerRoot = path.join(runDirectory, "peer-root");
@@ -224,6 +226,146 @@ export function prepareScenario(name, config, runDirectory) {
     return { root, target };
   }
   throw new Error(`Unknown scenario: ${name}`);
+}
+
+function countersStrictlyIncrease(batches) {
+  return batches.every((batch, index) => {
+    if (batch.sequence == null || batch.exclusionGeneration == null) return false;
+    return index === 0 || BigInt(batch.sequence) > BigInt(batches[index - 1].sequence);
+  });
+}
+
+export function evaluateOverflowReconciliationEvidence(evidence) {
+  const helper = evidence.helper ?? {};
+  const loss = evidence.lossObservation ?? {};
+  const result = evidence.reconciliationResult;
+  const recoveryBatches = evidence.recoveryBatches ?? [];
+  const primaryBatches = evidence.primaryBatches ?? [];
+  const allPrimaryBatches = evidence.allPrimaryBatches ?? primaryBatches;
+  const rootOnlyMatching = recoveryBatches.filter((batch) =>
+    batch.paths?.length === 1 &&
+    batch.paths[0] === evidence.root &&
+    batch.exclusionGeneration === evidence.committedGeneration &&
+    sameCoverage(batch.coverage, result?.coverage)
+  );
+  const operation = evidence.originalSubscription ?? {};
+  const interval = evidence.intervalMutation ?? {};
+  const peer = evidence.peer ?? {};
+  const lifecycle = evidence.lifecycle ?? {};
+  const generationZeroBoundaries = evidence.generationZeroRootBoundaries ?? [];
+  return [
+    check(
+      "overflow-helper-handshake-ordered",
+      helper.stopConfirmed === true &&
+      helper.mutationStartedAfterStopConfirmed === true &&
+      helper.mutationCompletedBeforeResume === true &&
+      helper.resumeAttempted === true &&
+      helper.resumeConfirmed === true,
+    ),
+    check(
+      "overflow-workload-exceeded-kernel-queue-bound",
+      Number.isSafeInteger(helper.generated) &&
+      Number.isSafeInteger(helper.kernelQueueLimit) &&
+      helper.generated > helper.kernelQueueLimit,
+    ),
+    check(
+      "genuine-event-overflow-observed",
+      loss.uncertainReasons?.includes("event-overflow") === true &&
+      Number(evidence.statsAfterLoss?.overflowEvents ?? 0) >
+        Number(evidence.statsBeforeLoss?.overflowEvents ?? 0) &&
+      helper.stopConfirmed === true,
+    ),
+    check(
+      "consumer-backpressure-not-used-as-overflow-credit",
+      loss.uncertainReasons?.includes("consumer-backpressure") !== true &&
+      Number(evidence.statsAfterLoss?.batchesDropped ?? 0) === 0,
+    ),
+    check("event-overflow-invalidated-root", loss.rootBoundaryCount >= 1),
+    check("overflow-output-path-drained-and-quiesced", loss.quiesced === true),
+    check(
+      "reconciliation-used-original-subscription",
+      operation.publicSubscriptionCreations === 1 &&
+      operation.reconciliationCalls === 1 &&
+      operation.reconciliationCallsOnOriginalSubscription === 1 &&
+      operation.disposalRequests === 0,
+    ),
+    check(
+      "generation-zero-remained-zero",
+      evidence.generationZeroResult?.exclusionGeneration === "0" &&
+      generationZeroBoundaries.length === 1 &&
+      generationZeroBoundaries[0].exclusionGeneration === "0",
+    ),
+    check("nonzero-exclusion-generation-committed", evidence.committedGeneration === "1"),
+    check(
+      "reconciliation-generation-unchanged",
+      result?.exclusionGeneration === evidence.committedGeneration,
+    ),
+    check("all-primary-batches-have-counters", allPrimaryBatches.every((batch) =>
+      batch.sequence != null && batch.exclusionGeneration != null
+    )),
+    check("primary-sequences-strictly-monotonic", countersStrictlyIncrease(allPrimaryBatches)),
+    check(
+      "no-primary-batch-crossed-committed-generation",
+      primaryBatches.every((batch) =>
+        batch.exclusionGeneration === evidence.committedGeneration
+      ),
+    ),
+    check(
+      "one-singleton-root-recovery-boundary",
+      recoveryBatches.length === 1 && rootOnlyMatching.length === 1,
+    ),
+    check(
+      "reconciliation-result-matches-root-batch-coverage",
+      result != null && evidence.reconciliationError == null && rootOnlyMatching.length === 1,
+    ),
+    check(
+      "loss-interval-mutation-was-supervised",
+      interval.startedAfterOverflowObserved === true &&
+      interval.completedBeforeReconciliation === true &&
+      interval.conservativeRootBoundary === true,
+    ),
+    check(
+      "coverage-stayed-uncertain-through-loss-interval",
+      interval.coverageStayedUncertain === true,
+    ),
+    check(
+      "loss-interval-not-credited-as-detailed-reconstruction",
+      interval.guaranteedDetailedReconstruction === false,
+    ),
+    check(
+      "current-and-future-excluded-prefixes-stayed-excluded",
+      evidence.excludedPathsObserved === false,
+    ),
+    check("reconciliation-scan-progress-observed", evidence.scanProgressObserved === true),
+    check(
+      "peer-delivered-during-reconciliation-scan",
+      peer.deliveredDuringScan === true && peer.coverageTruthful === true,
+    ),
+    check("peer-sequences-strictly-monotonic", peer.sequencesStrictlyMonotonic === true),
+    check("peer-generation-stayed-zero", peer.generationStayedZero === true),
+    check(
+      "post-reconciliation-deep-sentinel-delivered",
+      evidence.postReconciliationSentinelDelivered === true,
+    ),
+    check(
+      "root-replaced-not-credited-as-recovered",
+      loss.uncertainReasons?.includes("root-replaced") !== true &&
+      evidence.finalCoverageReason !== "root-replaced",
+    ),
+    check("joined-idempotent-disposal", lifecycle.bothDisposed === true),
+    check(
+      "post-disposal-reconciliation-rejected-by-lifecycle",
+      lifecycle.reconcileRejectedAfterDisposal === true,
+    ),
+    check(
+      "no-callback-started-after-disposal-resolved",
+      lifecycle.noCallbackAfterDisposal === true,
+    ),
+    check("final-disposal-restored-inotify-resources", lifecycle.inotifyRestored === true),
+    check("final-disposal-restored-eventfd-resources", lifecycle.eventfdsRestored === true),
+    check("final-disposal-joined-native-threads", lifecycle.threadsRestored === true),
+    check("final-subscription-state-returned-to-baseline", lifecycle.subscriptionStateReleased === true),
+  ];
 }
 
 async function safeStats(session) {
@@ -836,6 +978,9 @@ async function runDynamicExclusions(adapter, prepared, config) {
 }
 
 async function runQueueOverflow(adapter, prepared, config) {
+  if (config.allowForcedOverflow !== true) {
+    throw new Error("queue-overflow requires the forced-overflow permission gate");
+  }
   const recorder = createRecorder(prepared.root);
   const started = await subscribeMeasured(adapter, prepared, config, recorder);
   let disposal;
@@ -1097,9 +1242,15 @@ async function runBridgeBackpressure(adapter, prepared, config) {
   }
 }
 
-async function runReconciliation(adapter, prepared, config) {
+async function runReconciliation(adapter, prepared, config, lossKind = "consumer-backpressure") {
+  const forcedOverflow = lossKind === "event-overflow";
+  if (forcedOverflow && config.allowForcedOverflow !== true) {
+    throw new Error("overflow-reconciliation requires the forced-overflow permission gate");
+  }
   const recorder = createRecorder(prepared.root);
   const peerRecorder = createRecorder(prepared.peerRoot);
+  const primaryAllCheckpoint = recorder.checkpoint();
+  const peerAllCheckpoint = peerRecorder.checkpoint();
   const waitCell = new Int32Array(new SharedArrayBuffer(4));
   const lifecycleStartedAt = processSample();
   const threadsAtStart = watchboundThreadSample();
@@ -1112,7 +1263,7 @@ async function runReconciliation(adapter, prepared, config) {
   const primary = await subscribeMeasured(adapter, prepared, config, recorder, {
     batchWindowMs: 1,
     maxBatchPaths: 4_096,
-    outputQueueCapacity: 2,
+    outputQueueCapacity: forcedOverflow ? 64 : 2,
     onBatch(batch) {
       if (blockNextCallback && !callbackWasBlocked) {
         callbackWasBlocked = true;
@@ -1178,18 +1329,40 @@ async function runReconciliation(adapter, prepared, config) {
     const committedGeneration = primary.session.exclusionGeneration;
     await requirePhaseQuiescence(recorder, config, "exclusion commit");
 
-    blockNextCallback = true;
+    blockNextCallback = !forcedOverflow;
     const pressureCheckpoint = recorder.checkpoint();
+    const statsBeforePressure = await safeStats(primary.session);
     const pressureStartedAtMs = nowMs();
-    for (const target of prepared.pressureTargets) {
-      fs.appendFileSync(target, "trigger\n");
+    let overflowHelper = null;
+    let kernelQueueLimit = null;
+    let generatedEventCount = null;
+    if (forcedOverflow) {
+      kernelQueueLimit = 16_384;
+      try {
+        const parsed = Number.parseInt(
+          fs.readFileSync("/proc/sys/fs/inotify/max_queued_events", "utf8").trim(),
+          10,
+        );
+        if (Number.isSafeInteger(parsed) && parsed > 0) kernelQueueLimit = parsed;
+      } catch {}
+      generatedEventCount = kernelQueueLimit + 4_096;
+      overflowHelper = await runOverflowMutator({
+        watcherPid: process.pid,
+        root: prepared.root,
+        count: generatedEventCount,
+        kernelQueueLimit,
+      });
+    } else {
+      for (const target of prepared.pressureTargets) {
+        fs.appendFileSync(target, "trigger\n");
+      }
     }
     const pressureMutationEndedAtMs = nowMs();
     const uncertaintyObserved = await waitFor(
       () => recorder
         .summary(pressureCheckpoint)
         .uncertainReasons
-        .includes("consumer-backpressure"),
+        .includes(lossKind),
       config.timeoutMs,
     );
     const pressureQuiesced = await waitForQuiescence(recorder, config);
@@ -1317,14 +1490,14 @@ async function runReconciliation(adapter, prepared, config) {
     const finalStatsBeforeDisposal = await safeStats(primary.session);
     const peerFinalStatsBeforeDisposal = await safeStats(peer.session);
 
-    const postDisposalPrimaryCheckpoint = recorder.checkpoint();
-    const postDisposalPeerCheckpoint = peerRecorder.checkpoint();
     [primaryDisposal, peerDisposal] = await Promise.all([
       disposeMeasured(primary.session),
       disposeMeasured(peer.session),
     ]);
     await Promise.all([primary.session.dispose(), peer.session.dispose()]);
     cleanupFinished = true;
+    const postDisposalPrimaryCheckpoint = recorder.checkpoint();
+    const postDisposalPeerCheckpoint = peerRecorder.checkpoint();
     const finalStats = await safeStats(primary.session);
     const peerFinalStats = await safeStats(peer.session);
     let postDisposalReconciliationError = null;
@@ -1373,7 +1546,84 @@ async function runReconciliation(adapter, prepared, config) {
     const peerCoverageStayedComplete = peerBatches.every(
       (batch) => batch.coverage?.state === "complete",
     );
+    const peerCoverageTruthful = peerBatches.every((batch) =>
+      typeof batch.coverage?.state === "string"
+    );
+    const allPrimaryBatches = recorder.batchesSince(primaryAllCheckpoint);
+    const allPeerBatches = peerRecorder.batchesSince(peerAllCheckpoint);
     const isRootBatch = (batch, root) => batch.paths.includes(path.resolve(root));
+    const overflowChecks = forcedOverflow
+      ? [
+          ...evaluateOverflowReconciliationEvidence({
+            root: resolvedPrimaryRoot,
+            helper: overflowHelper,
+            lossObservation: pressureObservation,
+            statsBeforeLoss: statsBeforePressure,
+            statsAfterLoss: statsAfterPressure,
+            committedGeneration,
+            generationZeroResult: peerReconciliation,
+            generationZeroRootBoundaries: peerGenerationZeroObservation.rootBoundaries,
+            reconciliationResult,
+            reconciliationError,
+            recoveryBatches: recoveryRootBatches,
+            primaryBatches: pressureBatches
+              .concat(intervalBatches)
+              .concat(reconciliationBatches)
+              .concat(postReconciliationBatches),
+            allPrimaryBatches,
+            intervalMutation: {
+              startedAfterOverflowObserved: uncertaintyObserved &&
+                intervalMutationStartedAtMs >= pressureMutationEndedAtMs,
+              completedBeforeReconciliation:
+                intervalMutationEndedAtMs <= reconciliationStartedAtMs,
+              detailedPathObserved: intervalObservation.detectedPathCount > 0,
+              guaranteedDetailedReconstruction: false,
+              conservativeRootBoundary:
+                recoveryRootBatches.length === 1 && matchingRecoveryBoundaries.length === 1,
+              coverageStayedUncertain:
+                intervalObservation.uncertainReasons.includes("event-overflow"),
+            },
+            excludedPathsObserved,
+            originalSubscription: primaryOperationEvidenceBeforeDisposal,
+            peer: {
+              deliveredDuringScan: scanProgressObserved && peerDelivered &&
+                peerDeliveryBatch?.atMs >= reconciliationStartedAtMs &&
+                peerDeliveryBatch?.atMs <= reconciliationAcknowledgedAtMs,
+              coverageTruthful: peerCoverageTruthful && allPeerBatches.every((batch) =>
+                typeof batch.coverage?.state === "string"
+              ),
+              sequencesStrictlyMonotonic: countersStrictlyIncrease(allPeerBatches),
+              generationStayedZero: allPeerBatches.every((batch) =>
+                batch.exclusionGeneration === "0"
+              ),
+            },
+            scanProgressObserved,
+            postReconciliationSentinelDelivered:
+              deliverySucceeded(postReconciliationObservation),
+            finalCoverageReason: reconciliationResult?.coverage?.reason ?? null,
+            lifecycle: {
+              bothDisposed: finalStats?.disposed === true && peerFinalStats?.disposed === true,
+              reconcileRejectedAfterDisposal:
+                postDisposalReconciliationRejectedByLifecycle,
+              noCallbackAfterDisposal:
+                postDisposalObservation.primary.batchCount === 0 &&
+                postDisposalObservation.peer.batchCount === 0,
+              inotifyRestored,
+              eventfdsRestored,
+              threadsRestored,
+              subscriptionStateReleased:
+                finalStats?.disposed === true && peerFinalStats?.disposed === true &&
+                Number(finalStats?.directoryWatches ?? 0) === 0 &&
+                Number(peerFinalStats?.directoryWatches ?? 0) === 0,
+            },
+          }),
+          ...observationHealthChecks("event-overflow", pressureObservation),
+          ...observationHealthChecks("overflow-loss-interval", intervalObservation),
+          ...observationHealthChecks("overflow-reconciliation", reconciliationObservation),
+          ...observationHealthChecks("post-overflow-reconciliation", postReconciliationObservation),
+          ...observationHealthChecks("overflow-peer", peerObservation),
+        ]
+      : null;
 
     return {
       subscriptionLifecycle: {
@@ -1383,8 +1633,14 @@ async function runReconciliation(adapter, prepared, config) {
       subscriptionOptions: {
         batchWindowMs: 1,
         maxBatchPaths: 4_096,
-        outputQueueCapacity: 2,
+        outputQueueCapacity: forcedOverflow ? 64 : 2,
       },
+      lossKind,
+      overflowInduction: forcedOverflow ? {
+        kernelQueueLimit,
+        generatedEventCount,
+        helper: overflowHelper,
+      } : null,
       callbackBlockMs: 200,
       callbackWasBlocked,
       callbackWorkloadDurationMs,
@@ -1399,6 +1655,7 @@ async function runReconciliation(adapter, prepared, config) {
         coverage: exclusionCoverage,
       },
       pressureObservation,
+      statsBeforePressure,
       statsAfterPressure,
       intervalObservation,
       relevantBatches: {
@@ -1475,7 +1732,7 @@ async function runReconciliation(adapter, prepared, config) {
         threadsRestored,
       },
       observation: postReconciliationObservation,
-      checks: [
+      checks: overflowChecks ?? [
         check(
           "reconciliation-used-existing-subscription",
           primaryOperationEvidenceBeforeDisposal?.publicSubscriptionCreations === 1 &&
@@ -1633,7 +1890,9 @@ function runOverflowMutator(payload) {
     let ipcResult = null;
     let settled = false;
     child.stderr.on("data", (chunk) => {
-      stderr += chunk;
+      if (stderr.length < 32 * 1_024) {
+        stderr = (stderr + chunk.toString()).slice(0, 32 * 1_024);
+      }
     });
     child.on("message", (message) => {
       if (message?.type === "result") ipcResult = message.result;
@@ -1818,6 +2077,9 @@ export async function runScenario(name, adapter, prepared, config) {
   if (name === "queue-overflow") return runQueueOverflow(adapter, prepared, config);
   if (name === "dynamic-exclusions") return runDynamicExclusions(adapter, prepared, config);
   if (name === "reconciliation") return runReconciliation(adapter, prepared, config);
+  if (name === "overflow-reconciliation") {
+    return runReconciliation(adapter, prepared, config, "event-overflow");
+  }
   if (name === "burst-files") return runBurst(adapter, prepared, config, "files");
   if (name === "burst-directories") return runBurst(adapter, prepared, config, "directories");
   if (name === "burst-renames") return runBurst(adapter, prepared, config, "renames");

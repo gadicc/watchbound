@@ -152,6 +152,7 @@ function planForOptions(kind, options) {
               topologyDelayMs: options.topologyDelayMs,
               exclusionObservationMs: options.exclusionObservationMs,
               disposalObservationMs: options.disposalObservationMs,
+              allowForcedOverflow: options.allowForcedOverflow,
               tempDir: options.tempDir,
             },
           });
@@ -194,6 +195,27 @@ export function scenarioExclusionReason(plan, probe) {
       !capabilities.dynamicExclusions?.atomic
     ) {
       return "Reconciliation requires atomic dynamic exclusions";
+    }
+  }
+  if (requirement === "overflowReconciliation") {
+    const capabilities = probe.adapter.capabilities;
+    if (capabilities.reconciliation !== true) {
+      return "Overflow reconciliation requires public existing-subscription reconciliation";
+    }
+    if (!capabilities.explicitCoverage) {
+      return "Overflow reconciliation requires explicit coverage reporting";
+    }
+    if (!capabilities.overflowReporting) {
+      return "Overflow reconciliation requires explicit event-overflow reporting";
+    }
+    if (!capabilities.supervisedOverflow) {
+      return "The supervised genuine-overflow mechanism is not supported";
+    }
+    if (
+      !capabilities.dynamicExclusions?.supported ||
+      !capabilities.dynamicExclusions?.atomic
+    ) {
+      return "Overflow reconciliation requires atomic dynamic exclusions";
     }
   }
   return null;
@@ -588,6 +610,7 @@ export async function runSuite(kind, options) {
       tempDir: options.tempDir,
       trialOrder: options.trialOrder,
       quick: options.quick,
+      allowForcedOverflow: options.allowForcedOverflow,
       codexWatcherPath:
         process.env.WATCHBOUND_CODEX_WATCHER_PATH ||
         "/home/dragon/src/codex-desktop-linux/linux-features/directory-only-working-tree-watch/patch.js",

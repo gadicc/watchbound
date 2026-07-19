@@ -52,6 +52,28 @@ overflow, so it is not evidence for native-overflow recovery; the supervised
 forced-overflow run remains separately gated on explicit host preparation.
 Automatic recovery policy and recovery of a replaced root identity remain open.
 
+## Supervised overflow-reconciliation machinery
+
+The next conformance scenario, `overflow-reconciliation`, is now implemented
+but has not been executed. It combines the existing detached overflow helper
+with the public reconciliation lifecycle on one unchanged subscription. The
+bounded raw evidence covers helper stop/mutate/resume order, queue-bound
+exceedance, typed `event-overflow` and root invalidation, output drain, an
+uncertain-interval mutation, generations and sequences, one singleton root
+recovery boundary, matching result coverage, exclusions, peer progress, a deep
+sentinel, lifecycle rejection, and native-resource baselines.
+
+Capability checks exclude adapters without public reconciliation, explicit
+overflow/coverage, atomic exclusions, or the supervised mechanism; synthetic
+loss and deterministic consumer backpressure do not receive genuine-overflow
+credit. `--quick` removes both forced-overflow scenarios, and selecting either
+heavy scenario requires `--allow-forced-overflow` before any probe or trial can
+start. That flag does not establish host readiness. No forced-overflow command,
+heavy conformance suite, new raw result, or final performance reading was run
+or recorded during implementation. The final evidence run awaits explicit
+quiet-host confirmation. Automatic recovery and root-replacement recovery are
+still open.
+
 ## Exact Codex JavaScript helper
 
 The baseline imports

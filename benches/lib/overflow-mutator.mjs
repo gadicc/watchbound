@@ -10,6 +10,7 @@ const startedAt = performance.now();
 let watcherStopped = false;
 let stopConfirmed = false;
 let resumeAttempted = false;
+let resumeConfirmed = false;
 
 function resumeWatcher() {
   if (!watcherStopped) return;
@@ -42,20 +43,28 @@ try {
   watcherStopped = true;
   const stopConfirmationMs = await waitUntilStopped(payload.watcherPid, 2_000);
   stopConfirmed = true;
+  const mutationStartedAfterStopConfirmed = stopConfirmed;
 
   for (let index = 0; index < payload.count; index += 1) {
     const name = `overflow-${String(index).padStart(6, "0")}.txt`;
     fs.writeFileSync(path.join(payload.root, name), "overflow\n");
   }
 
+  const mutationCompletedBeforeResume = watcherStopped && !resumeAttempted;
   resumeWatcher();
+  const resumeConfirmationMs = await waitUntilResumed(payload.watcherPid, 2_000);
+  resumeConfirmed = true;
   await sendResult({
     generated: payload.count,
     kernelQueueLimit: payload.kernelQueueLimit,
     exceededQueueBy: payload.count - payload.kernelQueueLimit,
     stopConfirmed,
     stopConfirmationMs,
+    mutationStartedAfterStopConfirmed,
+    mutationCompletedBeforeResume,
     resumeAttempted,
+    resumeConfirmed,
+    resumeConfirmationMs,
     durationMs: performance.now() - startedAt,
   });
 } finally {
@@ -121,6 +130,29 @@ async function waitUntilStopped(pid, timeoutMs) {
   }
   const error = new Error(`Watcher process ${pid} did not enter a stopped state within ${timeoutMs} ms`);
   error.code = "WATCHBOUND_OVERFLOW_STOP_TIMEOUT";
+  throw error;
+}
+
+async function waitUntilResumed(pid, timeoutMs) {
+  const started = performance.now();
+  const deadline = started + timeoutMs;
+  while (performance.now() < deadline) {
+    let status;
+    try {
+      status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
+    } catch (error) {
+      const wrapped = new Error(`Could not confirm watcher resume state: ${error.message}`);
+      wrapped.code = "WATCHBOUND_OVERFLOW_RESUME_CHECK_FAILED";
+      throw wrapped;
+    }
+    const state = /^State:\s+([A-Za-z])/mu.exec(status)?.[1] ?? null;
+    if (state !== "T" && state !== "t") return performance.now() - started;
+    await delay(5);
+  }
+  const error = new Error(
+    `Watcher process ${pid} remained stopped for ${timeoutMs} ms after resume`,
+  );
+  error.code = "WATCHBOUND_OVERFLOW_RESUME_TIMEOUT";
   throw error;
 }
 

@@ -50,7 +50,9 @@ node --expose-gc benches/benchmark.mjs --help
 The targeted reconciliation command is an ordinary-development conformance
 check. It uses deterministic native-to-JavaScript consumer backpressure and
 does not induce a real inotify queue overflow. The I/O-heavy forced-overflow
-evidence run remains separately gated on quiet-host preparation.
+scenarios are removed by `--quick` and require both explicit quiet-host
+confirmation and the `--allow-forced-overflow` acknowledgement. The flag is a
+safety interlock, not evidence that the host is ready.
 
 The first final feasibility series is complete. See
 `docs/conformance-findings.md` for correctness evidence and
@@ -65,6 +67,10 @@ generation-based atomic dynamic exclusions. Its public conformance scenario
 exercises bounded reconciliation in place on an existing subscription,
 including an unchanged exclusion generation, a conservative root boundary,
 peer-subscription isolation, post-recovery delivery, and joined cleanup. It
+also contains a separately gated `overflow-reconciliation` scenario that can
+apply those checks after supervised genuine `event-overflow`; its machinery is
+implemented, but no new heavy trial or final reading was recorded with this
+change. It
 reports root replacement as uncertain but does not reattach to the replacement.
 Automatic recovery policy, root-replacement recovery, non-Linux backends, and
 published prebuilds remain for later milestones.

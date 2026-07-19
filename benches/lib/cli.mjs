@@ -14,6 +14,7 @@ const DEFAULT_CONFORMANCE_SCENARIOS = [
   "queue-overflow",
   "dynamic-exclusions",
   "reconciliation",
+  "overflow-reconciliation",
   "burst-files",
   "burst-directories",
   "burst-renames",
@@ -40,7 +41,7 @@ function list(value) {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
-function help(kind) {
+export function help(kind) {
   return `Usage: node benches/${kind}.mjs [options]
 
 Outputs one JSON document to stdout. Trials are isolated and run serially.
@@ -60,6 +61,7 @@ Outputs one JSON document to stdout. Trials are isolated and run serially.
   --quiet                           suppress stdout (requires --output)
   --order <rotating|fixed>          adapter order within repeated trials (default: rotating)
   --quick                           100 directories/events, one run, no forced overflow
+  --allow-forced-overflow           acknowledge the I/O-heavy forced-overflow safety gate
   --pretty                          indent JSON output
   --strict                          exit non-zero on errors or failed checks
   --help                            show this text
@@ -94,6 +96,7 @@ export function parseOptions(kind, argv) {
     pretty: false,
     strict: false,
     quick: false,
+    allowForcedOverflow: false,
     help: false,
   };
 
@@ -136,6 +139,7 @@ export function parseOptions(kind, argv) {
     else if (argument === "--pretty") options.pretty = true;
     else if (argument === "--strict") options.strict = true;
     else if (argument === "--quick") options.quick = true;
+    else if (argument === "--allow-forced-overflow") options.allowForcedOverflow = true;
     else if (argument === "--help" || argument === "-h") options.help = true;
     else throw new Error(`Unknown option: ${argument}`);
   }
@@ -165,10 +169,23 @@ export function parseOptions(kind, argv) {
     options.runs = 1;
     options.directoryCounts = [100];
     options.burstCount = 100;
-    options.scenarios = options.scenarios.filter((name) => name !== "queue-overflow");
+    options.scenarios = options.scenarios.filter((name) =>
+      name !== "queue-overflow" && name !== "overflow-reconciliation"
+    );
   }
   if (options.scenarios.length === 0) {
     throw new Error("No scenarios remain after applying command presets");
+  }
+  if (
+    options.scenarios.some((name) =>
+      name === "queue-overflow" || name === "overflow-reconciliation"
+    ) &&
+    !options.help &&
+    !options.allowForcedOverflow
+  ) {
+    throw new Error(
+      "Forced-overflow scenarios require --allow-forced-overflow after explicit host preparation",
+    );
   }
   return options;
 }

@@ -98,6 +98,7 @@ export async function loadAdapter() {
     explicitCoverage: true,
     explicitWatchLimits: nativeCapabilities.explicitWatchLimits,
     overflowReporting: nativeCapabilities.overflowReporting,
+    supervisedOverflow: process.platform === "linux",
     consumerBackpressureReporting: true,
     reconciliation: advertisesReconciliation(
       nativeCapabilities,

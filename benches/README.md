@@ -14,7 +14,7 @@ not corrupt the report's JSON.
 ## Commands
 
 ```sh
-node benches/conformance.mjs --pretty
+node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 pnpm test:reconciliation-stress
 node --expose-gc benches/benchmark.mjs --pretty
@@ -68,10 +68,15 @@ and the aggregates rather than treating a single RSS delta as precise implementa
 Forced overflow is intentionally omitted by `--quick`. The full conformance command uses a detached,
 controller-supervised helper. An IPC/stdin handshake records the helper process group before it can
 stop the watcher; it then confirms the watcher reached `SIGSTOP` and creates
-`max_queued_events + 4096` distinct files. After resume, the watcher must show activity and reach a
+`max_queued_events + 4096` distinct files. It records that mutation began only after the stop was
+confirmed, finished before resume, and that `/proc` no longer showed the watcher stopped afterward.
+After resume, the watcher must show activity and reach a
 quiet boundary before the harness starts a separate sentinel phase. Induction evidence, explicit
 coverage/loss reporting, drain status, and sentinel delivery are separate results. It is a correctness
-stress case and should be run only when that I/O load is acceptable.
+stress case and should be run only after the user explicitly confirms that the host is quiet and
+prepared. Selecting `queue-overflow` or `overflow-reconciliation` requires
+`--allow-forced-overflow`; the acknowledgement never infers host readiness. Both scenarios are
+removed by `--quick`, and an overflow-only quick selection fails because no scenario remains.
 
 The bridge-backpressure case is likewise conformance-only: it blocks the first JavaScript callback,
 keeps producing mutations, and requires both a native output-queue drop and a typed root-dominant
@@ -106,3 +111,21 @@ node benches/conformance.mjs --adapter watchbound --scenario reconciliation --ru
 The repeat command intentionally omits `--quick`, because that preset selects one run. Both commands
 are ordinary-development evidence only. They do not prove recovery from a real inotify overflow; the
 separately supervised forced-overflow run remains gated on explicit host-preparation confirmation.
+
+`overflow-reconciliation` combines the two evidence paths without treating one as the other. It
+requires Watchbound's public existing-subscription reconciliation, typed `event-overflow`, explicit
+coverage, atomic exclusions, and the supervised helper; unsupported adapters are excluded with an
+explicit reason and receive no pass credit. After genuine overflow is reported and the output path
+quiesces, the scenario mutates during the still-uncertain interval and calls `reconcile()` on the
+original subscription. It requires unchanged generation zero and committed generation one, complete
+monotonic batch counters, one singleton root recovery boundary with coverage identical to the public
+result, truthful peer coverage and delivery during the bounded scan, exclusion preservation, a deep
+post-recovery sentinel, lifecycle rejection after idempotent disposal, and restoration of watches,
+inotify descriptors, the runtime eventfd, bridge threads, worker, and subscription state.
+
+Loss-interval detail is retained only as diagnostic evidence; it is never credited as guaranteed
+reconstruction. `root-replaced` remains non-recoverable. Reconciliation acknowledgement means the
+matching root boundary entered the bounded output path, while the JavaScript callback may start
+later. The targeted heavy command is `pnpm test:overflow-reconciliation`, but it embeds the permission
+flag and must not be invoked until the user separately confirms host preparation. This implementation
+did not run it or record a new final result.

@@ -161,6 +161,7 @@ async function runTrial(payload) {
       topologyDelayMs: payload.config.topologyDelayMs,
       exclusionObservationMs: payload.config.exclusionObservationMs,
       disposalObservationMs: payload.config.disposalObservationMs,
+      allowForcedOverflow: payload.config.allowForcedOverflow === true,
     },
     preparationMs,
     adapterLoad: loaded.measurement,

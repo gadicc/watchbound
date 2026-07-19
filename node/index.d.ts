@@ -3,6 +3,8 @@
 export declare class NativeSubscription {
   get initialCoverage(): JsCoverage
   stats(): JsStats
+  get exclusionGeneration(): bigint
+  replaceExclusions(generation: bigint, prefixes: Array<Buffer>): Promise<JsCoverage>
   dispose(): Promise<void>
 }
 
@@ -20,6 +22,7 @@ export interface JsCapabilities {
 
 export interface JsChangeBatch {
   sequence: bigint
+  exclusionGeneration: bigint
   /**
    * Exact Linux path bytes. The JavaScript wrapper may decode UTF-8 paths,
    * but the native boundary never performs a lossy conversion.

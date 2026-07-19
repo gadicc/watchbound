@@ -2,22 +2,22 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use napi::bindgen_prelude::{AsyncTask, Buffer, FnArgs, Function};
+use napi::bindgen_prelude::{AsyncTask, BigInt, Buffer, FnArgs, Function};
 use napi::threadsafe_function::{
     ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
 use watchbound_engine::{
-    ChangeBatch, Coverage, Engine, PartialReason, Stats, StatsHandle, Subscription,
-    SubscriptionOptions, UncertainReason,
+    ChangeBatch, Coverage, Engine, ExclusionHandle, PartialReason, Stats, StatsHandle,
+    Subscription, SubscriptionOptions, UncertainReason,
 };
 
 type BatchThreadsafeFunction =
@@ -116,6 +116,7 @@ impl From<&Coverage> for JsCoverage {
 #[napi(object, object_from_js = false)]
 pub struct JsChangeBatch {
     pub sequence: u64,
+    pub exclusion_generation: u64,
     /// Exact Linux path bytes. The JavaScript wrapper may decode UTF-8 paths,
     /// but the native boundary never performs a lossy conversion.
     pub invalidated_paths: Vec<Buffer>,
@@ -126,6 +127,7 @@ impl From<ChangeBatch> for JsChangeBatch {
     fn from(batch: ChangeBatch) -> Self {
         Self {
             sequence: batch.sequence,
+            exclusion_generation: batch.exclusion_generation,
             invalidated_paths: batch
                 .invalidated_paths
                 .iter()
@@ -308,6 +310,34 @@ impl NativeSubscription {
         )
     }
 
+    #[napi(getter)]
+    pub fn exclusion_generation(&self) -> u64 {
+        self.state.exclusions.exclusion_generation()
+    }
+
+    #[napi(ts_return_type = "Promise<JsCoverage>")]
+    pub fn replace_exclusions(
+        &self,
+        generation: BigInt,
+        prefixes: Vec<Buffer>,
+    ) -> Result<AsyncTask<ReplaceExclusionsTask>> {
+        let (negative, generation, lossless) = generation.get_u64();
+        if negative || !lossless {
+            return Err(Error::new(
+                Status::InvalidArg,
+                "generation must be a non-negative bigint no greater than u64::MAX",
+            ));
+        }
+        Ok(AsyncTask::new(ReplaceExclusionsTask {
+            exclusions: self.state.exclusions.clone(),
+            generation,
+            prefixes: prefixes
+                .into_iter()
+                .map(|prefix| PathBuf::from(std::ffi::OsString::from_vec(prefix.to_vec())))
+                .collect(),
+        }))
+    }
+
     #[napi(ts_return_type = "Promise<void>")]
     pub fn dispose(&self) -> AsyncTask<DisposeTask> {
         AsyncTask::new(DisposeTask {
@@ -335,6 +365,27 @@ pub struct DisposeTask {
     state: Arc<SubscriptionState>,
 }
 
+pub struct ReplaceExclusionsTask {
+    exclusions: ExclusionHandle,
+    generation: u64,
+    prefixes: Vec<PathBuf>,
+}
+
+impl Task for ReplaceExclusionsTask {
+    type Output = Coverage;
+    type JsValue = JsCoverage;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.exclusions
+            .replace_exclusions(self.generation, std::mem::take(&mut self.prefixes))
+            .map_err(node_error)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(JsCoverage::from(&output))
+    }
+}
+
 impl Task for DisposeTask {
     type Output = ();
     type JsValue = ();
@@ -351,6 +402,7 @@ impl Task for DisposeTask {
 pub struct SubscriptionState {
     initial_coverage: Coverage,
     stats: StatsHandle,
+    exclusions: ExclusionHandle,
     threadsafe_function: Mutex<Option<Arc<BatchThreadsafeFunction>>>,
     bridge: Mutex<Option<JoinHandle<io::Result<()>>>>,
     shutdown: Arc<ShutdownGate>,
@@ -370,6 +422,7 @@ impl SubscriptionState {
     ) -> io::Result<Self> {
         let initial_coverage = subscription.initial_coverage().clone();
         let stats = subscription.stats_handle();
+        let exclusions = subscription.exclusion_handle();
         let callback_tracker = Arc::new(CallbackTracker::new());
         let threadsafe_function = Arc::new(threadsafe_function);
         let bridge_callback_tracker = Arc::clone(&callback_tracker);
@@ -389,6 +442,7 @@ impl SubscriptionState {
         Ok(Self {
             initial_coverage,
             stats,
+            exclusions,
             threadsafe_function: Mutex::new(Some(threadsafe_function)),
             bridge: Mutex::new(Some(bridge)),
             shutdown,

@@ -21,6 +21,7 @@ export type Coverage =
 
 export interface ChangeBatch {
   readonly sequence: bigint;
+  readonly exclusionGeneration: bigint;
   readonly invalidatedPaths: readonly string[];
   readonly invalidatedPathBytes: readonly Uint8Array[];
   readonly pathEncodingCollapsed: boolean;
@@ -49,7 +50,12 @@ export interface Stats {
 
 export interface Subscription {
   readonly initialCoverage: Coverage;
+  readonly exclusionGeneration: bigint;
   stats(): Stats;
+  replaceExclusions(
+    generation: bigint,
+    prefixes: readonly (string | Uint8Array)[],
+  ): Promise<Coverage>;
   dispose(): Promise<void>;
 }
 

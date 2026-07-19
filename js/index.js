@@ -40,7 +40,24 @@ export async function subscribe(root, onBatch, options = {}) {
   let subscription;
   subscription = Object.freeze({
     initialCoverage: nativeSubscription.initialCoverage,
+    get exclusionGeneration() {
+      return nativeSubscription.exclusionGeneration;
+    },
     stats: () => nativeSubscription.stats(),
+    replaceExclusions: (generation, prefixes) => {
+      if (typeof generation !== "bigint" || generation < 0n) {
+        throw new TypeError("generation must be a non-negative bigint");
+      }
+      if (!Array.isArray(prefixes)) {
+        throw new TypeError("prefixes must be an array of strings or Uint8Array values");
+      }
+      const encoded = prefixes.map((prefix) => {
+        if (typeof prefix === "string") return Buffer.from(prefix);
+        if (prefix instanceof Uint8Array) return Buffer.from(prefix);
+        throw new TypeError("each exclusion prefix must be a string or Uint8Array");
+      });
+      return nativeSubscription.replaceExclusions(generation, encoded);
+    },
     dispose: () =>
       (disposePromise ??= nativeSubscription
         .dispose()
@@ -76,6 +93,7 @@ function normalizeBatch(root, batch) {
 
   return Object.freeze({
     sequence: batch.sequence,
+    exclusionGeneration: batch.exclusionGeneration,
     invalidatedPaths: Object.freeze([...new Set(invalidatedPaths)]),
     invalidatedPathBytes: Object.freeze(invalidatedPathBytes),
     pathEncodingCollapsed,

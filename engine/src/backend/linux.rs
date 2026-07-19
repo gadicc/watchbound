@@ -1,11 +1,11 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ffi::CString;
 use std::fs;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -228,6 +228,71 @@ impl Runtime {
         Ok(())
     }
 
+    pub(crate) fn queue_replace_exclusions(
+        &self,
+        id: SubscriptionId,
+        generation: u64,
+        prefixes: Vec<PathBuf>,
+    ) -> io::Result<PendingExclusionAcknowledgement> {
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        self.send(CommandEnvelope {
+            generation,
+            command: Command::ReplaceExclusions {
+                subscription_id: id,
+                prefixes,
+                acknowledgement,
+            },
+        })?;
+        Ok(PendingExclusionAcknowledgement {
+            generation,
+            acknowledged,
+        })
+    }
+
+    pub(crate) fn stats(&self) -> RuntimeStats {
+        RuntimeStats {
+            native_watch_budget: self.native_watch_budget,
+            ..self.counters.snapshot()
+        }
+    }
+
+    fn send(&self, command: CommandEnvelope) -> io::Result<()> {
+        self.commands
+            .send(command)
+            .map_err(|_| io::Error::other("shared runtime command channel is closed"))?;
+        let value = 1_u64.to_ne_bytes();
+        // SAFETY: wakeup is a live eventfd and value points to exactly eight
+        // initialized bytes, as required by eventfd writes.
+        let written =
+            unsafe { libc::write(self.wakeup.as_raw_fd(), value.as_ptr().cast(), value.len()) };
+        // The worker polls the command channel at a bounded interval even if
+        // this best-effort latency wakeup is interrupted or saturated.
+        let _ = written;
+        Ok(())
+    }
+}
+
+pub(crate) struct PendingExclusionAcknowledgement {
+    generation: u64,
+    acknowledged: Receiver<CommandAcknowledgement<io::Result<Coverage>>>,
+}
+
+impl PendingExclusionAcknowledgement {
+    pub(crate) fn wait(self) -> io::Result<Coverage> {
+        let acknowledged = self
+            .acknowledged
+            .recv()
+            .map_err(|_| io::Error::other("shared runtime stopped during exclusion update"))?;
+        if acknowledged.generation != self.generation {
+            return Err(io::Error::other(
+                "shared runtime acknowledged the wrong exclusion generation",
+            ));
+        }
+        acknowledged.value
+    }
+}
+
+impl Runtime {
     pub(crate) fn shutdown_and_join(&self) -> io::Result<()> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
         let mut result = self.send(CommandEnvelope {
@@ -262,28 +327,6 @@ impl Runtime {
             result = Err(io::Error::other("shared runtime worker panicked"));
         }
         result
-    }
-
-    pub(crate) fn stats(&self) -> RuntimeStats {
-        RuntimeStats {
-            native_watch_budget: self.native_watch_budget,
-            ..self.counters.snapshot()
-        }
-    }
-
-    fn send(&self, command: CommandEnvelope) -> io::Result<()> {
-        self.commands
-            .send(command)
-            .map_err(|_| io::Error::other("shared runtime command channel is closed"))?;
-        let value = 1_u64.to_ne_bytes();
-        // SAFETY: wakeup is a live eventfd and value points to exactly eight
-        // initialized bytes, as required by eventfd writes.
-        let written =
-            unsafe { libc::write(self.wakeup.as_raw_fd(), value.as_ptr().cast(), value.len()) };
-        // The worker polls the command channel at a bounded interval even if
-        // this best-effort latency wakeup is interrupted or saturated.
-        let _ = written;
-        Ok(())
     }
 }
 
@@ -333,6 +376,11 @@ enum Command {
         subscription_id: SubscriptionId,
         acknowledgement: SyncSender<CommandAcknowledgement<()>>,
     },
+    ReplaceExclusions {
+        subscription_id: SubscriptionId,
+        prefixes: Vec<PathBuf>,
+        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Coverage>>>,
+    },
     Shutdown {
         acknowledgement: SyncSender<CommandAcknowledgement<()>>,
     },
@@ -378,14 +426,19 @@ struct SubscriptionState {
     options: SubscriptionOptions,
     stats: Arc<SharedStats>,
     output: SyncSender<ChangeBatch>,
-    watched_paths: HashMap<PathBuf, i32>,
-    deferred_directories: HashMap<PathBuf, DeferredInterest>,
+    watched_paths: BTreeMap<PathBuf, i32>,
+    deferred_directories: BTreeMap<PathBuf, DeferredInterest>,
     deferred_order: VecDeque<PathBuf>,
     pending_promotions: BTreeSet<PathBuf>,
     uncertain_reason: Option<UncertainReason>,
     pending_paths: BTreeSet<PathBuf>,
     pending_started: Option<Instant>,
+    pending_generation: Option<u64>,
     next_sequence: u64,
+    exclusion_generation: u64,
+    selection_generation: u64,
+    exclusions: BTreeSet<PathBuf>,
+    exclusion_update: Option<PendingExclusionUpdate>,
     topology_jobs: VecDeque<TopologyJob>,
     topology_barriers: usize,
     establishment: Option<PendingEstablishment>,
@@ -394,6 +447,22 @@ struct SubscriptionState {
 struct PendingEstablishment {
     generation: u64,
     acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Established>>>,
+}
+
+struct PendingExclusionUpdate {
+    generation: u64,
+    exclusions: BTreeSet<PathBuf>,
+    newly_excluded: VecDeque<PathBuf>,
+    newly_included: Vec<PathBuf>,
+    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Coverage>>>,
+    phase: ExclusionUpdatePhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExclusionUpdatePhase {
+    WaitingForTopology,
+    RemovingExcluded,
+    ScanningIncluded,
 }
 
 impl SubscriptionState {
@@ -415,14 +484,19 @@ impl SubscriptionState {
             options,
             stats,
             output,
-            watched_paths: HashMap::new(),
-            deferred_directories: HashMap::new(),
+            watched_paths: BTreeMap::new(),
+            deferred_directories: BTreeMap::new(),
             deferred_order: VecDeque::new(),
             pending_promotions: BTreeSet::new(),
             uncertain_reason: None,
             pending_paths: BTreeSet::new(),
             pending_started: None,
+            pending_generation: None,
             next_sequence: 1,
+            exclusion_generation: 0,
+            selection_generation: 0,
+            exclusions: BTreeSet::new(),
+            exclusion_update: None,
             topology_jobs: VecDeque::from([TopologyJob::new(root, true)]),
             topology_barriers: 1,
             establishment: Some(establishment),
@@ -444,6 +518,16 @@ impl SubscriptionState {
     }
 
     fn queue_path(&mut self, path: PathBuf) {
+        match self.pending_generation {
+            Some(generation) if generation != self.selection_generation => {
+                self.pending_paths.clear();
+                self.pending_paths.insert(self.root.clone());
+                self.pending_generation = Some(self.selection_generation);
+                self.uncertain_reason = Some(UncertainReason::TopologyRace);
+            }
+            Some(_) => {}
+            None => self.pending_generation = Some(self.selection_generation),
+        }
         if path == self.root {
             self.pending_paths.clear();
             self.pending_paths.insert(path);
@@ -541,6 +625,10 @@ impl SubscriptionState {
         }
         let batch = ChangeBatch {
             sequence: self.next_sequence,
+            exclusion_generation: self
+                .pending_generation
+                .take()
+                .unwrap_or(self.selection_generation),
             invalidated_paths: std::mem::take(&mut self.pending_paths)
                 .into_iter()
                 .collect(),
@@ -559,6 +647,12 @@ impl SubscriptionState {
             Err(TrySendError::Disconnected(_)) => {}
         }
     }
+
+    fn is_excluded(&self, path: &Path) -> bool {
+        self.exclusions
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+    }
 }
 
 struct TopologyJob {
@@ -567,6 +661,7 @@ struct TopologyJob {
     establishment: bool,
     promotion_root: Option<PathBuf>,
     yield_after_promoted_watch: bool,
+    require_watch_before_read: bool,
 }
 
 impl TopologyJob {
@@ -577,6 +672,18 @@ impl TopologyJob {
             establishment,
             promotion_root: None,
             yield_after_promoted_watch: false,
+            require_watch_before_read: !establishment,
+        }
+    }
+
+    fn inclusion(start: PathBuf) -> Self {
+        Self {
+            directories: VecDeque::from([start]),
+            active: None,
+            establishment: false,
+            promotion_root: None,
+            yield_after_promoted_watch: false,
+            require_watch_before_read: true,
         }
     }
 
@@ -587,6 +694,7 @@ impl TopologyJob {
             establishment: false,
             promotion_root: Some(path),
             yield_after_promoted_watch: true,
+            require_watch_before_read: true,
         }
     }
 }
@@ -747,6 +855,79 @@ impl Worker {
                         value: (),
                     });
                 }
+                Command::ReplaceExclusions {
+                    subscription_id,
+                    prefixes,
+                    acknowledgement,
+                } => {
+                    let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "subscription is no longer active",
+                            )),
+                        });
+                        continue;
+                    };
+                    let validation = if generation <= state.exclusion_generation {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!(
+                                "exclusion generation {generation} is not newer than committed generation {}",
+                                state.exclusion_generation
+                            ),
+                        ))
+                    } else if state.exclusion_update.is_some() {
+                        Err(io::Error::new(
+                            io::ErrorKind::WouldBlock,
+                            "an exclusion update is already in progress for this subscription",
+                        ))
+                    } else {
+                        validate_exclusion_prefixes(&state.root, prefixes)
+                    };
+                    match validation {
+                        Err(error) => {
+                            let _ = acknowledgement.send(CommandAcknowledgement {
+                                generation,
+                                value: Err(error),
+                            });
+                        }
+                        Ok(exclusions) => {
+                            let newly_excluded = exclusions
+                                .iter()
+                                .filter(|new| {
+                                    !state.exclusions.iter().any(|old| new.starts_with(old))
+                                })
+                                .cloned()
+                                .collect();
+                            let newly_included = state
+                                .exclusions
+                                .iter()
+                                .filter(|old| !exclusions.iter().any(|new| old.starts_with(new)))
+                                .cloned()
+                                .collect();
+                            state.exclusion_update = Some(PendingExclusionUpdate {
+                                generation,
+                                exclusions,
+                                newly_excluded,
+                                newly_included,
+                                acknowledgement,
+                                phase: ExclusionUpdatePhase::WaitingForTopology,
+                            });
+                            self.progress_exclusion_update(&mut state);
+                        }
+                    }
+                    let runnable = !state.topology_jobs.is_empty()
+                        || state.exclusion_update.as_ref().is_some_and(|update| {
+                            update.phase != ExclusionUpdatePhase::WaitingForTopology
+                        });
+                    self.subscriptions.insert(subscription_id, state);
+                    self.publish_deferred_interest_count();
+                    if runnable {
+                        self.schedule_topology(subscription_id);
+                    }
+                }
                 Command::Shutdown { acknowledgement } => {
                     self.shutting_down = true;
                     self.shutdown_all_subscriptions();
@@ -762,10 +943,7 @@ impl Worker {
     }
 
     fn process_native_turn(&mut self) -> bool {
-        if self.subscriptions.values().any(|state| {
-            state.topology_barriers > 0
-                && state.pending_paths.len() >= state.options.max_batch_paths
-        }) {
+        if self.has_blocking_topology_pressure() {
             return false;
         }
         let mut did_work = false;
@@ -776,10 +954,7 @@ impl Worker {
                 did_work = true;
                 events += 1;
                 self.handle_native_event(event);
-                if self.subscriptions.values().any(|state| {
-                    state.topology_barriers > 0
-                        && state.pending_paths.len() >= state.options.max_batch_paths
-                }) {
+                if self.has_blocking_topology_pressure() {
                     break;
                 }
                 continue;
@@ -816,6 +991,14 @@ impl Worker {
             self.pending_native_offset = 0;
         }
         did_work
+    }
+
+    fn has_blocking_topology_pressure(&self) -> bool {
+        self.subscriptions.values().any(|state| {
+            state.exclusion_update.is_none()
+                && state.topology_barriers > 0
+                && state.pending_paths.len() >= state.options.max_batch_paths
+        })
     }
 
     fn next_native_event(&mut self) -> Option<ParsedEvent> {
@@ -911,6 +1094,9 @@ impl Worker {
         name: Option<&std::ffi::OsStr>,
     ) {
         let event_path = name.map_or_else(|| directory.to_path_buf(), |name| directory.join(name));
+        if state.is_excluded(&event_path) {
+            return;
+        }
         if mask & libc::IN_UNMOUNT != 0 {
             state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
             return;
@@ -924,7 +1110,16 @@ impl Worker {
         } else if mask & libc::IN_MOVE_SELF != 0 && directory == state.root {
             state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
         }
-        state.queue_path(event_path.clone());
+        if state.exclusion_update.is_some()
+            && state.topology_barriers > 0
+            && state.pending_paths.len() >= state.options.max_batch_paths
+            && !state.pending_paths.contains(&event_path)
+            && !state.pending_paths.contains(&state.root)
+        {
+            state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
+        } else {
+            state.queue_path(event_path.clone());
+        }
         if mask & libc::IN_ISDIR != 0 {
             if mask & (libc::IN_MOVED_FROM | libc::IN_DELETE) != 0 {
                 self.remove_subscription_subtree(state, &event_path);
@@ -960,7 +1155,9 @@ impl Worker {
                 } else if !expected {
                     state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
                 }
-                state.publish_resource_counts();
+                if state.exclusion_update.is_none() {
+                    state.publish_resource_counts();
+                }
             }
         }
         self.publish_native_watch_count();
@@ -980,12 +1177,16 @@ impl Worker {
             let Some(mut state) = self.subscriptions.remove(&id) else {
                 continue;
             };
+            if state.exclusion_update.is_some() {
+                self.subscriptions.insert(id, state);
+                continue;
+            }
             let candidate = self.next_promotable_path(&mut state);
             let Some(path) = candidate else {
                 self.subscriptions.insert(id, state);
                 continue;
             };
-            let opened = self.open_topology_directory(&mut state, path.clone(), true);
+            let opened = self.open_topology_directory(&mut state, path.clone(), true, false);
             let mut scheduled = false;
             if let Some(opened) = opened
                 && state.watched_paths.contains_key(&path)
@@ -1026,6 +1227,10 @@ impl Worker {
             let Some(path) = state.deferred_order.pop_front() else {
                 break;
             };
+            if state.is_excluded(&path) {
+                state.deferred_directories.remove(&path);
+                continue;
+            }
             let Some(deferred) = state.deferred_directories.get(&path) else {
                 continue;
             };
@@ -1090,7 +1295,12 @@ impl Worker {
                 };
                 directories += 1;
                 let allow_new_native_watch = job.promotion_root.is_none();
-                match self.open_topology_directory(&mut state, directory, allow_new_native_watch) {
+                match self.open_topology_directory(
+                    &mut state,
+                    directory,
+                    allow_new_native_watch,
+                    !job.require_watch_before_read,
+                ) {
                     Some(opened) => {
                         native_allocations += usize::from(opened.created_native_watch);
                         job.active = Some(opened.active);
@@ -1109,7 +1319,9 @@ impl Worker {
                         entries += 1;
                         match entry.file_type() {
                             Ok(file_type) if file_type.is_dir() && !file_type.is_symlink() => {
-                                job.directories.push_back(entry.path());
+                                if !state.is_excluded(&entry.path()) {
+                                    job.directories.push_back(entry.path());
+                                }
                             }
                             Ok(_) => {}
                             Err(error) => state.defer_error(active.path.clone(), &error),
@@ -1156,8 +1368,15 @@ impl Worker {
             self.discard_unestablished(state);
             return true;
         }
-        state.publish_resource_counts();
-        let runnable = !state.topology_jobs.is_empty();
+        self.progress_exclusion_update(&mut state);
+        if state.exclusion_update.is_none() {
+            state.publish_resource_counts();
+        }
+        let runnable = !state.topology_jobs.is_empty()
+            || state
+                .exclusion_update
+                .as_ref()
+                .is_some_and(|update| update.phase != ExclusionUpdatePhase::WaitingForTopology);
         self.subscriptions.insert(id, state);
         self.publish_deferred_interest_count();
         if runnable {
@@ -1171,7 +1390,12 @@ impl Worker {
         state: &mut SubscriptionState,
         directory: PathBuf,
         allow_new_native_watch: bool,
+        read_without_watch: bool,
     ) -> Option<OpenedDirectory> {
+        if state.is_excluded(&directory) {
+            state.remove_deferred_subtree(&directory);
+            return None;
+        }
         let mut deferred_at_limit = false;
         let mut created_native_watch = false;
         if !state.watched_paths.contains_key(&directory) {
@@ -1188,6 +1412,9 @@ impl Worker {
                             PartialReason::ResourceLimit,
                             DeferredCause::SubscriptionLimit,
                         );
+                        if !read_without_watch {
+                            return None;
+                        }
                     }
                     Ok(_) => {
                         state.remove_deferred_subtree(&directory);
@@ -1214,6 +1441,9 @@ impl Worker {
                             PartialReason::ResourceLimit,
                             DeferredCause::RuntimeBudget,
                         );
+                        if !read_without_watch {
+                            return None;
+                        }
                     }
                     Err(error) => {
                         if path_is_stale_or_not_directory(&error) {
@@ -1243,6 +1473,140 @@ impl Worker {
                 state.defer_error(directory, &error);
                 None
             }
+        }
+    }
+
+    fn progress_exclusion_update(&mut self, state: &mut SubscriptionState) {
+        let ready_to_start = state.exclusion_update.as_ref().is_some_and(|update| {
+            update.phase == ExclusionUpdatePhase::WaitingForTopology
+                && state.topology_jobs.is_empty()
+                && state.topology_barriers == 0
+        });
+        if ready_to_start {
+            state.flush();
+            let boundary_dropped = !state.pending_paths.is_empty();
+            if boundary_dropped {
+                state.pending_paths.clear();
+                state.pending_started = None;
+                state.pending_generation = None;
+            }
+
+            let (generation, exclusions) = {
+                let update = state
+                    .exclusion_update
+                    .as_mut()
+                    .expect("ready exclusion update must exist");
+                update.phase = ExclusionUpdatePhase::RemovingExcluded;
+                (update.generation, update.exclusions.clone())
+            };
+            state.exclusions = exclusions;
+            state.selection_generation = generation;
+            state.topology_barriers = 1;
+            if boundary_dropped {
+                state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
+            }
+        }
+
+        let removing = state
+            .exclusion_update
+            .as_ref()
+            .is_some_and(|update| update.phase == ExclusionUpdatePhase::RemovingExcluded);
+        if removing {
+            let mut work = 0;
+            while work < MAX_TOPOLOGY_DIRECTORIES_PER_TURN {
+                let Some(prefix) = state
+                    .exclusion_update
+                    .as_ref()
+                    .and_then(|update| update.newly_excluded.front())
+                    .cloned()
+                else {
+                    break;
+                };
+                let watched = state
+                    .watched_paths
+                    .range(prefix.clone()..)
+                    .next()
+                    .filter(|(path, _)| path.starts_with(&prefix))
+                    .map(|(path, descriptor)| (path.clone(), *descriptor));
+                if let Some((path, descriptor)) = watched {
+                    state.watched_paths.remove(&path);
+                    self.remove_interest(state.id, &path, descriptor);
+                    work += 1;
+                    continue;
+                }
+                let deferred = state
+                    .deferred_directories
+                    .range(prefix.clone()..)
+                    .next()
+                    .filter(|(path, _)| path.starts_with(&prefix))
+                    .map(|(path, _)| path.clone());
+                if let Some(path) = deferred {
+                    state.deferred_directories.remove(&path);
+                    work += 1;
+                    continue;
+                }
+                let promotion = state
+                    .pending_promotions
+                    .range(prefix.clone()..)
+                    .next()
+                    .filter(|path| path.starts_with(&prefix))
+                    .cloned();
+                if let Some(path) = promotion {
+                    state.pending_promotions.remove(&path);
+                    work += 1;
+                    continue;
+                }
+                state
+                    .exclusion_update
+                    .as_mut()
+                    .expect("removing exclusion update must exist")
+                    .newly_excluded
+                    .pop_front();
+                work += 1;
+            }
+            let removal_complete = state
+                .exclusion_update
+                .as_ref()
+                .is_some_and(|update| update.newly_excluded.is_empty());
+            if removal_complete {
+                let newly_included = {
+                    let update = state
+                        .exclusion_update
+                        .as_mut()
+                        .expect("removing exclusion update must exist");
+                    update.phase = ExclusionUpdatePhase::ScanningIncluded;
+                    update.newly_included.clone()
+                };
+                for path in newly_included {
+                    state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
+                    state.topology_jobs.push_back(TopologyJob::inclusion(path));
+                    state.topology_barriers += 1;
+                }
+            }
+        }
+
+        let ready_to_commit = state.exclusion_update.as_ref().is_some_and(|update| {
+            update.phase == ExclusionUpdatePhase::ScanningIncluded
+                && state.topology_jobs.is_empty()
+                && state.topology_barriers == 1
+        });
+        if ready_to_commit {
+            let update = state
+                .exclusion_update
+                .take()
+                .expect("committing exclusion update must exist");
+            state.topology_barriers = state.topology_barriers.saturating_sub(1);
+            state.exclusion_generation = update.generation;
+            for path in update.newly_included {
+                state.queue_path(path);
+            }
+            state.publish_resource_counts();
+            self.publish_deferred_interest_count_with(state);
+            let coverage = state.coverage();
+            let _ = update.acknowledgement.send(CommandAcknowledgement {
+                generation: update.generation,
+                value: Ok(coverage),
+            });
         }
     }
 
@@ -1383,7 +1747,9 @@ impl Worker {
             self.remove_interest(state.id, &watched_path, descriptor);
         }
         state.remove_deferred_subtree(path);
-        state.publish_resource_counts();
+        if state.exclusion_update.is_none() {
+            state.publish_resource_counts();
+        }
     }
 
     fn remove_interest(&mut self, id: SubscriptionId, path: &Path, descriptor: i32) {
@@ -1417,7 +1783,9 @@ impl Worker {
         let Some(mut state) = self.subscriptions.remove(&id) else {
             return;
         };
-        let interests: Vec<_> = state.watched_paths.drain().collect();
+        let interests: Vec<_> = std::mem::take(&mut state.watched_paths)
+            .into_iter()
+            .collect();
         for (path, descriptor) in interests {
             self.remove_interest(id, &path, descriptor);
         }
@@ -1435,6 +1803,15 @@ impl Worker {
                 )),
             });
         }
+        if let Some(update) = state.exclusion_update.take() {
+            let _ = update.acknowledgement.send(CommandAcknowledgement {
+                generation: update.generation,
+                value: Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "subscription disposed during exclusion update",
+                )),
+            });
+        }
         self.counters
             .subscriptions
             .store(self.subscriptions.len(), Ordering::Release);
@@ -1447,7 +1824,9 @@ impl Worker {
             .retain(|candidate| *candidate != state.id);
         self.allocator_order
             .retain(|candidate| *candidate != state.id);
-        let interests: Vec<_> = state.watched_paths.drain().collect();
+        let interests: Vec<_> = std::mem::take(&mut state.watched_paths)
+            .into_iter()
+            .collect();
         for (path, descriptor) in interests {
             self.remove_interest(state.id, &path, descriptor);
         }
@@ -1599,6 +1978,65 @@ fn path_is_stale_or_not_directory(error: &io::Error) -> bool {
         error.raw_os_error(),
         Some(libc::ENOENT | libc::ENOTDIR | libc::ELOOP)
     )
+}
+
+fn validate_exclusion_prefixes(
+    root: &Path,
+    prefixes: Vec<PathBuf>,
+) -> io::Result<BTreeSet<PathBuf>> {
+    let mut absolute = BTreeSet::new();
+    for prefix in prefixes {
+        if prefix.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "exclusion prefix must be root-relative: {}",
+                    prefix.display()
+                ),
+            ));
+        }
+        if prefix.as_os_str().as_bytes().contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "exclusion prefix contains NUL",
+            ));
+        }
+        let mut normalized = PathBuf::new();
+        for component in prefix.components() {
+            match component {
+                Component::Normal(value) => normalized.push(value),
+                Component::CurDir
+                | Component::ParentDir
+                | Component::RootDir
+                | Component::Prefix(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "exclusion prefix is not a normalized root-relative path: {}",
+                            prefix.display()
+                        ),
+                    ));
+                }
+            }
+        }
+        if normalized.as_os_str().as_bytes() != prefix.as_os_str().as_bytes() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("exclusion prefix is not normalized: {}", prefix.display()),
+            ));
+        }
+        absolute.insert(root.join(normalized));
+    }
+    let candidates: Vec<_> = absolute.into_iter().collect();
+    Ok(candidates
+        .iter()
+        .filter(|candidate| {
+            !candidates
+                .iter()
+                .any(|ancestor| *candidate != ancestor && candidate.starts_with(ancestor))
+        })
+        .cloned()
+        .collect())
 }
 
 fn directory_identity(path: &Path) -> io::Result<RootIdentity> {

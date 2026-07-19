@@ -59,8 +59,10 @@ export async function loadAdapter() {
     staticExclusions: false,
     dynamicExclusions: {
       supported: nativeCapabilities.dynamicExclusions,
-      atomic: false,
-      reason: "Generation-based atomic exclusions are deferred to the next milestone",
+      atomic: nativeCapabilities.dynamicExclusions,
+      reason: nativeCapabilities.dynamicExclusions
+        ? null
+        : "Generation-based atomic exclusions are unavailable",
     },
     explicitCoverage: true,
     explicitWatchLimits: nativeCapabilities.explicitWatchLimits,
@@ -94,6 +96,7 @@ export async function loadAdapter() {
               batch.pathEncodingCollapsed || batch.coverage.state === "uncertain",
             rawEventCount: batch.invalidatedPaths.length,
             coverage: batch.coverage,
+            exclusionGeneration: batch.exclusionGeneration,
           });
         },
         {
@@ -104,9 +107,17 @@ export async function loadAdapter() {
         },
       );
 
+      let exclusionGeneration = 0n;
       return {
         coverage: subscription.initialCoverage,
         dispose: () => subscription.dispose(),
+        async updateExclusions(relativeDirectories) {
+          exclusionGeneration += 1n;
+          return subscription.replaceExclusions(
+            exclusionGeneration,
+            relativeDirectories,
+          );
+        },
         async stats() {
           const stats = subscription.stats();
           return {

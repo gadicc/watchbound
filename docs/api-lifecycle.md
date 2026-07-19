@@ -61,6 +61,9 @@ absolute filesystem paths in the Rust prototype. They are conservative
 invalidations, not promises of one precise low-level event per path.
 
 Sequences begin at one and increase only for successfully delivered batches.
+Every batch also has an `exclusion_generation`; all paths in that batch were
+selected under exactly that committed exclusion set. Generation zero is used
+before the first successful replacement.
 If a bounded consumer queue fills, the undelivered detail is replaced by a root
 invalidation and uncertain coverage when delivery can resume.
 
@@ -103,17 +106,52 @@ subscription for callback delivery; dropping it permits best-effort GC cleanup,
 including when the callback captures the subscription. Explicit `dispose()` is
 the only deterministic cleanup guarantee.
 
-## Future exclusion generations
+## Exclusion configuration and lifetime
 
-Dynamic exclusions are deliberately not faked by unsubscribe/resubscribe and
-remain disabled. The shared runtime command envelope already reserves a
-generation value and every lifecycle command has an acknowledgement boundary.
-Their planned contract is a full exclusion-set replacement tagged with a
-monotonic generation. The engine worker will apply removal, addition, and the
-necessary conservative invalidation as one serialized topology transition and
-acknowledge the generation only afterward. Batches will identify the generation
-under which paths were selected, and stale or concurrent generations will fail
-explicitly. Inputs are byte-exact, normalized root-relative directory prefixes;
-Git, glob, workspace, and UI policy remain consumer concerns. The shared-runtime
-ordering and transaction design are recorded in `docs/architecture.md` and must
-land before this capability is advertised.
+Rust exposes `replace_exclusions(generation, Vec<PathBuf>)` on `Subscription`
+and its cloneable `ExclusionHandle`; both return the coverage snapshot committed
+by the acknowledgement. `exclusion_generation()` reports the last acknowledged
+value. The Node proof exposes the same operation asynchronously with `Buffer`
+prefixes and bigint generations. The JavaScript wrapper accepts strings or
+`Uint8Array`s and exposes a live bigint `exclusionGeneration` getter. The
+`dynamicExclusions` capability is true on all three implemented surfaces.
+
+Each call supplies the complete replacement set. Prefixes are normalized,
+root-relative directory namespaces and are compared using exact Linux bytes.
+The empty prefix denotes the root; `.` is non-normal and rejected. Absolute,
+parent-traversing, repeated-separator, trailing-separator, and NUL-containing
+inputs are rejected. A nonexistent prefix is valid and filters a directory
+created there later. Duplicate and descendant-redundant entries have the same
+meaning as their minimal prefix set. The engine does not interpret Git ignores,
+globs, workspace mapping, or application defaults.
+
+Generations start at zero and successful requested values must be strictly
+greater than the committed value; they need not be consecutive. Duplicate,
+stale, and lower values are rejected without changing state. Only one update
+may be in flight per subscription, so a conflicting concurrent request is
+rejected rather than queued or reordered. Other subscriptions retain their own
+generation and allocator state.
+
+The worker first completes that subscription's active topology work and closes
+the old-generation pending-batch boundary. It then removes newly excluded
+logical interests in bounded chunks, returns final native-watch tokens between
+allocator turns, and scans newly included regions using watch-before-read
+discovery in bounded scheduler turns. A scan
+that cannot obtain a subscription slot or runtime token records truthful partial
+coverage and enters ordinary fair deferred promotion. Re-included prefixes are
+conservatively invalidated only after their topology barrier completes because
+changes made while excluded cannot be reconstructed.
+
+Acknowledgement publishes the new generation only after the exclusion set,
+topology, allocator accounting, and coverage snapshot are committed. It does
+not wait for the JavaScript callback to consume the resulting invalidation.
+Disposal and updates serialize through the subscription lifecycle: an active
+update completes or is explicitly interrupted before joined disposal returns,
+and a new update cannot begin after disposal. Exclusion configuration lives only
+for that subscription and is released with its topology, deferred records,
+watches, descriptors, and final worker shutdown.
+
+Remaining gaps are reconciliation after overflow or other sticky uncertainty,
+automatic retry for non-budget native failures, and same-path root replacement
+recovery. Exclusions deliberately do not add Git/glob policy, detailed event
+kinds, rename reconstruction, or cross-platform support.

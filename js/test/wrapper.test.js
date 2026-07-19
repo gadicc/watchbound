@@ -22,12 +22,46 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     while (batches.length === 0 && Date.now() < deadline) await delay(10);
 
     assert.equal(capabilities.recursive, true);
+    assert.equal(capabilities.dynamicExclusions, true);
     assert.equal(subscription.initialCoverage.state, "complete");
+    assert.equal(subscription.exclusionGeneration, 0n);
     assert.ok(batches.some((batch) => batch.invalidatedPaths.includes(changed)));
     assert.equal(typeof batches[0].sequence, "bigint");
+    assert.equal(batches[0].exclusionGeneration, 0n);
     assert.equal(batches[0].pathEncodingCollapsed, false);
     await Promise.all([subscription.dispose(), subscription.dispose()]);
     assert.equal(subscription.stats().disposed, true);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wrapper replaces exclusions atomically and validates its representation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-exclusions-"));
+  const hidden = path.join(root, "hidden");
+  fs.mkdirSync(hidden);
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await subscribe(root, (batch) => batches.push(batch), {
+      batchWindowMs: 8,
+    });
+    await assert.rejects(subscription.replaceExclusions(1n, ["../outside"]), /normalized/);
+    assert.equal(subscription.exclusionGeneration, 0n);
+    await subscription.replaceExclusions(1n, ["hidden"]);
+    fs.writeFileSync(path.join(hidden, "ignored"), "value");
+    await delay(30);
+    assert.equal(batches.length, 0);
+
+    await subscription.replaceExclusions(2n, []);
+    const deadline = Date.now() + 3_000;
+    while (batches.length === 0 && Date.now() < deadline) await delay(10);
+    assert.ok(batches.some((batch) => batch.invalidatedPaths.includes(hidden)));
+    assert.ok(batches.every((batch) => batch.exclusionGeneration === 2n));
+    assert.equal(subscription.exclusionGeneration, 2n);
+    assert.throws(() => subscription.replaceExclusions(3, []), /bigint/);
+    assert.throws(() => subscription.replaceExclusions(3n, null), /array/);
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });

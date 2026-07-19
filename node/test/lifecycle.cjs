@@ -38,6 +38,40 @@ test("native bridge catches callback exceptions and remains usable", async () =>
   }
 });
 
+test("native exclusion replacement preserves byte prefixes and generation boundaries", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-exclusions-"));
+  let subscription;
+  try {
+    const batches = [];
+    const relative = Buffer.from([0x68, 0x69, 0x64, 0x64, 0x65, 0x6e, 0xff]);
+    const directory = Buffer.concat([Buffer.from(`${root}${path.sep}`), relative]);
+    fs.mkdirSync(directory);
+    subscription = await binding.subscribe(root, { batchWindowMs: 8 }, (batch) => {
+      batches.push(batch);
+    });
+    assert.equal(subscription.exclusionGeneration, 0n);
+    assert.equal(binding.capabilities().dynamicExclusions, true);
+
+    const coverage = await subscription.replaceExclusions(1n, [relative]);
+    assert.deepEqual(coverage, { state: "complete" });
+    assert.equal(subscription.exclusionGeneration, 1n);
+    fs.writeFileSync(Buffer.concat([directory, Buffer.from(`${path.sep}ignored`)]), "value");
+    await delay(30);
+    assert.equal(batches.length, 0);
+
+    await subscription.replaceExclusions(2n, []);
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.some((value) => value.equals(directory))),
+      "re-included byte path was not invalidated",
+    );
+    assert.ok(batches.every((batch) => typeof batch.exclusionGeneration === "bigint"));
+    assert.equal(batches.at(-1).exclusionGeneration, 2n);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("concurrent native dispose calls join once and resolve together", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-dispose-"));
   const subscription = await binding.subscribe(root, {}, () => {});

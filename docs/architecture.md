@@ -1,8 +1,8 @@
 # Feasibility architecture and decision record
 
-Status: first Linux feasibility milestone complete; the second-milestone
-directory-burst correctness gate, shared process-wide runtime, and bounded
-native-watch allocator with fair promotion are implemented in targeted stress,
+Status: the Linux feasibility engine now includes the directory-burst
+correctness gate, shared process-wide runtime, bounded fair native-watch
+allocator, and generation-based atomic dynamic exclusions in targeted stress,
 without product integration or publication.
 
 ## Decision
@@ -16,8 +16,8 @@ The completed measurement gate supports continuing the Linux engine: at 10,000
 directories Watchbound was faster and used less incremental RSS than Parcel in
 this tmpfs series, while exposing overflow and coverage loss that Parcel hid.
 This is not yet approval to integrate it. The directory-topology race and
-shared-runtime gap are addressed in targeted tests here; dynamic exclusions and
-the remaining allocator work are still deliberate gaps. See
+shared-runtime, allocator, and dynamic-exclusion gaps are addressed in targeted
+tests here. See
 `docs/benchmark-results.md`.
 
 Watchbound is justified only by a stronger contract than “recursively report
@@ -76,8 +76,10 @@ Coverage is one of:
   consumer backpressure.
 
 Each delivered batch has a monotonically increasing subscription-local
-sequence and conservative invalidated paths. Detailed create/update/delete or
-rename claims are deliberately absent from the first public engine surface.
+sequence, the committed exclusion generation under which all of its paths were
+selected, and conservative invalidated paths. Initial subscriptions and their
+batches use generation zero. Detailed create/update/delete or rename claims are
+deliberately absent from the first public engine surface.
 
 The output channel and each batch are bounded. If the consumer queue fills, the
 engine discards the over-detailed batch, changes coverage to uncertain, and
@@ -163,10 +165,8 @@ stronger typed reasons.
 
 ## Shared runtime assessment
 
-Shared scheduling and reference-counted native allocation now precede dynamic
-exclusions. Exclusion updates still need a serialized topology transaction and
-acknowledgement boundary, but can extend the runtime's existing command envelope
-instead of replacing its lifecycle.
+Shared scheduling and reference-counted native allocation also provide the
+resource and acknowledgement boundaries used by dynamic exclusions.
 
 ### Shared process-wide runtime and allocator
 
@@ -174,8 +174,8 @@ The engine uses one process runtime, one inotify descriptor, one eventfd command
 wakeup, and one joined worker. `Engine` and `Subscription` remain opaque handles
 to it. The worker owns all filesystem state; establishment and disposal are
 ordered commands with completion acknowledgements rather than concurrent
-mutations of watcher maps. The command envelope already carries a generation
-field reserved for exclusion updates, while dynamic exclusions remain disabled.
+mutations of watcher maps. The same command envelope carries the requested
+generation for exclusion updates and returns it on the acknowledgement.
 
 Scheduler turns are explicitly bounded to 16 commands, two native reads and 64
 decoded native events, 64 topology directories or 256 directory entries, and
@@ -257,31 +257,66 @@ final runtime/allocator teardown.
 
 ### Generation-based atomic exclusions
 
-The caller should supply a complete set of root-relative directory prefixes and
-a strictly increasing generation. The engine validates that the byte-exact
-paths are normalized, relative, and contained by the root; it does not interpret
-Git ignores, globs, workspace mappings, or UI policy. Coverage means coverage of
-the included filesystem topology, and batches carry the exclusion generation
-under which their paths were selected.
+`Subscription::replace_exclusions(generation, prefixes)` replaces the complete
+set; it is not an incremental add/remove API and does not resubscribe. The Rust
+surface accepts `PathBuf`s, the native Node surface accepts `Buffer`s, and the
+JavaScript wrapper accepts strings or exact-byte `Uint8Array`s. Linux path bytes
+remain unchanged at the native boundary, including non-UTF-8 names.
+
+Each prefix is a byte-exact, normalized, root-relative directory namespace.
+Absolute paths, `.`, `..`, repeated or trailing separators, NUL, and any other
+non-normal component are rejected before state changes. Because accepted paths
+contain only normal relative components, joining them to the established root
+cannot escape it. The empty path is the one explicit root prefix: excluding it
+removes every logical interest, while replacing it with an empty set re-includes
+the root. A prefix need not exist and remains effective when a future directory
+of that name is created. Redundant duplicate or descendant prefixes are folded
+to their equivalent minimal set. There is no filesystem canonicalization and no
+UTF-8 conversion.
+
+Generation zero denotes the initial empty exclusion set. A requested generation
+may skip values but must be greater than the committed value. Duplicate, stale,
+and lower values fail with `InvalidInput`; a second call while one transaction is
+active fails with `WouldBlock`. Failed validation or a rejected concurrent call
+does not consume a generation. `exclusion_generation()` and the JavaScript
+`exclusionGeneration` getter change only after acknowledgement.
 
 An update is one subscription-local scheduler transaction:
 
-1. finish the active event/topology step and flush pending paths tagged with the
-   old generation;
-2. remove logical watch interests below newly excluded prefixes;
-3. scan newly included prefixes with the same watch-before-read and resource
-   accounting rules as ordinary topology discovery;
-4. conservatively invalidate the changed prefixes, split across bounded batches
-   or the root if detail cannot be retained;
-5. publish and acknowledge the new generation only after the topology and
-   coverage snapshot are committed.
+1. finish already-runnable topology work for that subscription and flush its
+   pending paths as an old-generation batch; if backpressure prevents that
+   enqueue, retain the existing conservative root/uncertainty behavior;
+2. install the new selection generation privately, remove logical interests and
+   deferred/promotion state below newly excluded prefixes in bounded chunks,
+   and return any final native-watch tokens to the fair allocator between
+   chunks;
+3. scan newly included prefixes in bounded turns, installing or sharing each
+   watch before reading that directory and skipping prefixes still excluded by
+   the replacement set;
+4. when a subscription or runtime limit prevents that watch-before-read step,
+   retain the nearest directory as an explicit deferred interest for ordinary
+   round-robin promotion instead of reading ahead and claiming coverage;
+5. after every inclusion topology barrier finishes, queue conservative
+   invalidations for the newly included prefixes, commit the coverage/resource
+   snapshot and generation, and only then acknowledge the caller.
 
-The transaction may yield to other subscriptions but not expose a mixed
-generation for its own root. Mutations racing a newly included region cannot be
-reconstructed, so the changed prefix is invalidated even when its scan succeeds.
-Events already queued for a newly excluded watch are suppressed after the
-generation boundary; unexpected watch loss still degrades coverage. Concurrent
-or stale-generation requests fail explicitly rather than being reordered.
+Pending paths carry their selection generation separately from the committed
+generation. The transaction may yield to other subscriptions but its topology
+barrier prevents a new-generation batch from flushing early; no batch can
+contain paths selected under two generations. Mutations racing a newly included
+region cannot be reconstructed, so its prefix is invalidated even when its scan
+succeeds. Events selected before removal can only leave as an old-generation
+batch. Once interests are removed, queued kernel events have no interest for the
+updated subscription and cannot leak into a new-generation batch. An overlapping
+subscription keeps its interest, watch, generation, coverage, and delivery.
+
+The acknowledgement means the worker has committed the new filter, topology,
+logical and unique-watch accounting, deferred allocator state, coverage
+snapshot, and generation. It does not mean the consumer callback has already
+run; the conservative inclusion invalidation may still be pending in the
+bounded output path. Disposal serializes with an active update, cancels and
+acknowledges worker-held update state if necessary, and retains the existing
+joined/idempotent no-later-enqueue guarantee.
 
 This design keeps exclusion decisions with consumers while keeping enforcement,
 native resource reclamation, and truthful included-topology coverage in the
@@ -330,7 +365,6 @@ work but duplicating the surrounding cross-platform product is not sustainable.
   allocation failures that were not caused by the configured budgets;
 - event-driven root-parent anchoring and same-path replacement recovery (the
   prototype currently detects lexical root identity loss by polling);
-- generation-based atomic exclusion updates;
 - reconciliation that returns uncertain coverage to complete after overflow;
 - runtime descendant mount insertion/reconciliation and a one-filesystem mode;
 - detailed change kinds and rename pairing;

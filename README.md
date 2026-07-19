@@ -53,8 +53,8 @@ the next-milestone decision.
 
 ## Prototype gaps
 
-The current engine is deliberately one subscription/worker/inotify instance at
-a time. It reports root replacement as uncertain but does not reattach to the
-replacement. Atomic dynamic exclusions, process-wide fair multi-root
-allocation, post-overflow topology rebuild, and published prebuilds remain for
-later milestones.
+The current Linux engine shares one process-wide worker and inotify instance,
+allocates unique native watches fairly across subscriptions, and implements
+generation-based atomic dynamic exclusions. It reports root replacement as
+uncertain but does not reattach to the replacement. Post-overflow topology
+rebuild, non-Linux backends, and published prebuilds remain for later milestones.

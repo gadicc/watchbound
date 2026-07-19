@@ -48,6 +48,8 @@ pub enum UncertainReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangeBatch {
     pub sequence: u64,
+    /// Exclusion-set generation under which every path in this batch was selected.
+    pub exclusion_generation: u64,
     pub invalidated_paths: Vec<PathBuf>,
     pub coverage: Coverage,
 }
@@ -218,7 +220,7 @@ impl Engine {
             moved_in_tree_discovery: true,
             explicit_watch_limits: true,
             overflow_reporting: true,
-            dynamic_exclusions: false,
+            dynamic_exclusions: true,
             root_replacement_recovery: false,
         }
     }
@@ -266,11 +268,16 @@ impl Engine {
             initial_coverage: established.initial_coverage,
             receiver: Mutex::new(established.receiver),
             stats,
-            lifecycle: Mutex::new(Lifecycle::Active {
-                runtime,
-                subscription_id: established.id,
+            control: Arc::new(SubscriptionControl {
+                lifecycle: Mutex::new(Lifecycle::Active {
+                    runtime,
+                    subscription_id: established.id,
+                }),
+                disposed: Condvar::new(),
+                exclusion_generation: AtomicU64::new(0),
+                exclusion_update_in_flight: AtomicBool::new(false),
+                exclusion_update_finished: Condvar::new(),
             }),
-            disposed: Condvar::new(),
         })
     }
 }
@@ -279,8 +286,15 @@ pub struct Subscription {
     initial_coverage: Coverage,
     receiver: Mutex<Receiver<ChangeBatch>>,
     stats: Arc<SharedStats>,
+    control: Arc<SubscriptionControl>,
+}
+
+struct SubscriptionControl {
     lifecycle: Mutex<Lifecycle>,
     disposed: Condvar,
+    exclusion_generation: AtomicU64,
+    exclusion_update_in_flight: AtomicBool,
+    exclusion_update_finished: Condvar,
 }
 
 enum Lifecycle {
@@ -321,12 +335,38 @@ impl Subscription {
         }
     }
 
+    /// Returns the last exclusion generation whose topology transaction was
+    /// committed and acknowledged by the shared worker.
+    pub fn exclusion_generation(&self) -> u64 {
+        self.control.exclusion_generation.load(Ordering::Acquire)
+    }
+
+    /// Returns a cloneable command handle for bindings that move the receiving
+    /// subscription onto a delivery thread.
+    pub fn exclusion_handle(&self) -> ExclusionHandle {
+        ExclusionHandle {
+            control: Arc::clone(&self.control),
+        }
+    }
+
+    /// Atomically replaces the complete set of root-relative directory-prefix
+    /// exclusions and returns the committed coverage snapshot.
+    pub fn replace_exclusions(
+        &self,
+        generation: u64,
+        prefixes: Vec<PathBuf>,
+    ) -> io::Result<Coverage> {
+        self.exclusion_handle()
+            .replace_exclusions(generation, prefixes)
+    }
+
     /// Joins removal of this subscription from the shared worker. Once this
     /// returns, the engine can no longer enqueue a batch for this subscription.
     /// Disposing the final subscription also joins the worker thread.
     pub fn dispose(&self) -> io::Result<()> {
         let (runtime, subscription_id) = {
             let mut lifecycle = self
+                .control
                 .lifecycle
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -344,6 +384,7 @@ impl Subscription {
                     }
                     Lifecycle::Disposing => {
                         lifecycle = self
+                            .control
                             .disposed
                             .wait(lifecycle)
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -373,12 +414,90 @@ impl Subscription {
             .err()
             .map(|error| (error.kind(), error.to_string()));
         let mut lifecycle = self
+            .control
             .lifecycle
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while self
+            .control
+            .exclusion_update_in_flight
+            .load(Ordering::Acquire)
+        {
+            lifecycle = self
+                .control
+                .exclusion_update_finished
+                .wait(lifecycle)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
         *lifecycle = Lifecycle::Disposed(stored_error);
-        self.disposed.notify_all();
+        self.control.disposed.notify_all();
         result
+    }
+}
+
+/// A cloneable exclusion command handle. It does not keep the subscription's
+/// batch receiver alive and dropping it does not dispose the subscription.
+#[derive(Clone)]
+pub struct ExclusionHandle {
+    control: Arc<SubscriptionControl>,
+}
+
+impl ExclusionHandle {
+    pub fn exclusion_generation(&self) -> u64 {
+        self.control.exclusion_generation.load(Ordering::Acquire)
+    }
+
+    pub fn replace_exclusions(
+        &self,
+        generation: u64,
+        prefixes: Vec<PathBuf>,
+    ) -> io::Result<Coverage> {
+        if self
+            .control
+            .exclusion_update_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "an exclusion update is already in progress for this subscription",
+            ));
+        }
+        let _in_flight = InFlightExclusionUpdate(&self.control);
+        let pending = {
+            let lifecycle = self
+                .control
+                .lifecycle
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Lifecycle::Active {
+                runtime,
+                subscription_id,
+            } = &*lifecycle
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "subscription is disposing or disposed",
+                ));
+            };
+            runtime.queue_replace_exclusions(*subscription_id, generation, prefixes)?
+        };
+        let coverage = pending.wait()?;
+        self.control
+            .exclusion_generation
+            .store(generation, Ordering::Release);
+        Ok(coverage)
+    }
+}
+
+struct InFlightExclusionUpdate<'a>(&'a SubscriptionControl);
+
+impl Drop for InFlightExclusionUpdate<'_> {
+    fn drop(&mut self) {
+        self.0
+            .exclusion_update_in_flight
+            .store(false, Ordering::Release);
+        self.0.exclusion_update_finished.notify_all();
     }
 }
 

@@ -15,6 +15,8 @@ not corrupt the report's JSON.
 
 ```sh
 node benches/conformance.mjs --pretty
+node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
+pnpm test:reconciliation-stress
 node --expose-gc benches/benchmark.mjs --pretty
 node --expose-gc benches/benchmark.mjs --quick --pretty
 ```
@@ -41,7 +43,7 @@ the report records a deterministic source-input digest and Git state as well.
 The suite covers ordinary deep changes, populated moved-in trees followed by a deep modification,
 root move/same-path replacement followed by a deep modification, forced inotify queue overflow,
 an explicit low watch limit, explicit native-to-JavaScript bridge backpressure, dynamic exclusions, file and
-directory creation bursts, rename bursts, and post-disposal mutation. Cold startup is the first
+directory creation bursts, in-place post-loss reconciliation, rename bursts, and post-disposal mutation. Cold startup is the first
 subscription in a fresh child, with module loading measured separately. Warm startup creates and
 disposes one subscription in that fresh child before measuring the second subscription. Both trials
 measure subscription and disposal separately.
@@ -58,7 +60,7 @@ measurement rather than inferred as zero.
 Parcel has no public active-subscription exclusion update. Watchbound exercises its
 generation-based atomic exclusions, while the Codex adapter exercises its Git-ignore-derived
 refresh, which is dynamic but not atomic; if `git` cannot run, that trial is an explicit runtime
-skip. The harness does not yet contain a standalone reconciliation scenario.
+skip.
 
 RSS is allocator/high-water-state data and can be noisy even with `--expose-gc`. Use repeated runs
 and the aggregates rather than treating a single RSS delta as precise implementation ownership.
@@ -75,3 +77,32 @@ The bridge-backpressure case is likewise conformance-only: it blocks the first J
 keeps producing mutations, and requires both a native output-queue drop and a typed root-dominant
 `consumer-backpressure` invalidation. Adapters without that public contract are excluded rather than
 credited with a pass.
+
+The reconciliation case uses the same deterministic callback-blocking mechanism to make recoverable
+`consumer-backpressure` uncertainty observable without overflowing the kernel queue. It calls
+`reconcile()` on the existing Watchbound subscription after the output path drains; it never
+unsubscribes and resubscribes. The scenario records the committed result, unchanged exclusion
+generation, ordered batches and coverage transitions, the single conservative root boundary,
+post-reconciliation sentinel delivery, peer-subscription progress, timings, errors, and final
+resource state. Current and future excluded prefixes must remain excluded, and mutations made while
+coverage is uncertain or reconciliation is scanning are represented by the root boundary rather
+than reconstructed as guaranteed detail.
+
+Capability gating is strict: the adapter must expose the complete public existing-subscription
+method together with explicit coverage, typed consumer backpressure, and atomic exclusions.
+Unsupported adapters are excluded with a reason and receive no pass credit. A successful
+acknowledgement means the matching result coverage and root batch have entered the bounded native
+output path; it does not mean the JavaScript callback has already run. Joined disposal must release
+both subscriptions, watches, descriptors, bridge state, and the final worker without allowing a
+later callback or reconciliation.
+
+The quick strict command above runs this scenario but still omits forced overflow. For modest repeat
+coverage, use `pnpm test:reconciliation-stress`, which expands to:
+
+```sh
+node benches/conformance.mjs --adapter watchbound --scenario reconciliation --runs 5 --burst-count 100 --strict
+```
+
+The repeat command intentionally omits `--quick`, because that preset selects one run. Both commands
+are ordinary-development evidence only. They do not prove recovery from a real inotify overflow; the
+separately supervised forced-overflow run remains gated on explicit host-preparation confirmation.

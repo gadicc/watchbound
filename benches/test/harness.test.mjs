@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import {
+  advertisesReconciliation,
+  reconcileExistingSubscription,
+} from "../adapters/watchbound.mjs";
 import { parseOptions, strictSummaryFailed } from "../lib/cli.mjs";
 import { aggregateResults } from "../lib/controller.mjs";
 import { outcomeFromChecks } from "../lib/outcomes.mjs";
@@ -84,6 +88,46 @@ test("capability-gated contracts cannot pass from diagnostic evidence", () => {
   assert.equal(scenarioRequirement("bridge-backpressure"), "consumerBackpressure");
 });
 
+test("Watchbound advertises reconciliation only for the complete public operation", () => {
+  const completeOperation = { reconcile() {} };
+  assert.equal(
+    advertisesReconciliation({ reconciliation: true }, completeOperation),
+    true,
+  );
+  assert.equal(
+    advertisesReconciliation({ reconciliation: false }, completeOperation),
+    false,
+  );
+  assert.equal(advertisesReconciliation({ reconciliation: true }, {}), false);
+  assert.equal(
+    advertisesReconciliation({ reconciliation: true }, { reconcile: null }),
+    false,
+  );
+});
+
+test("Watchbound reconciliation calls the existing subscription and normalizes its generation", async () => {
+  const calls = [];
+  const subscription = {
+    async reconcile() {
+      calls.push(this);
+      return {
+        exclusionGeneration: 9n,
+        coverage: { state: "complete" },
+      };
+    },
+  };
+
+  assert.deepEqual(await reconcileExistingSubscription(subscription), {
+    exclusionGeneration: "9",
+    coverage: { state: "complete" },
+  });
+  assert.deepEqual(calls, [subscription]);
+  await assert.rejects(
+    reconcileExistingSubscription({}),
+    /does not expose reconciliation/u,
+  );
+});
+
 test("performance aggregates use passing trials while retaining all correctness samples", () => {
   const observation = (missedPathCount, latency) => ({
     callbackCount: 1,
@@ -136,4 +180,61 @@ test("recorder reports first-seen completion instead of the last duplicate", asy
   assert.equal(summary.missedPathCount, 0);
   assert.equal(summary.finalExpectedLatencyMs, summary.allExpectedLatencyMs);
   assert.ok(summary.lastExpectedCallbackLatencyMs > summary.allExpectedLatencyMs);
+});
+
+test("recorder retains ordered reconciliation batch evidence with JSON-safe counters", () => {
+  const recorder = createRecorder("/tmp/watchbound-recorder-reconciliation");
+  recorder.onBatch({
+    sequence: 4n,
+    exclusionGeneration: 2n,
+    paths: ["before"],
+    coverage: { state: "uncertain", reason: "consumer-backpressure" },
+  });
+  const checkpoint = recorder.checkpoint();
+  recorder.onBatch({
+    sequence: 5n,
+    exclusionGeneration: 2n,
+    paths: ["/tmp/watchbound-recorder-reconciliation"],
+    coverage: { state: "complete" },
+  });
+  recorder.onBatch({
+    sequence: 6n,
+    exclusionGeneration: 2n,
+    paths: ["after"],
+    coverage: { state: "complete" },
+  });
+
+  const summary = recorder.summary(checkpoint);
+  assert.deepEqual(summary.sequences, ["5", "6"]);
+  assert.deepEqual(summary.exclusionGenerations, ["2"]);
+  assert.equal(summary.allSequencesPresent, true);
+  assert.equal(summary.sequencesStrictlyMonotonic, true);
+  assert.equal(summary.allExclusionGenerationsPresent, true);
+  assert.equal(summary.rootBoundaryCount, 1);
+  const evidence = recorder.batchesSince(checkpoint);
+  assert.deepEqual(summary.rootBoundaries, [{
+    atMs: evidence[0].atMs,
+    sequence: "5",
+    exclusionGeneration: "2",
+    coverage: { state: "complete" },
+  }]);
+  assert.deepEqual(
+    evidence.map((batch) => batch.paths),
+    [
+      ["/tmp/watchbound-recorder-reconciliation"],
+      ["/tmp/watchbound-recorder-reconciliation/after"],
+    ],
+  );
+  assert.doesNotThrow(() => JSON.stringify(summary));
+});
+
+test("recorder reports missing and non-monotonic public batch counters", () => {
+  const recorder = createRecorder("/tmp/watchbound-recorder-order");
+  const checkpoint = recorder.checkpoint();
+  recorder.onBatch({ sequence: 3n, exclusionGeneration: 0n, paths: ["one"] });
+  recorder.onBatch({ sequence: 3n, paths: ["two"] });
+  const summary = recorder.summary(checkpoint);
+  assert.equal(summary.allSequencesPresent, true);
+  assert.equal(summary.sequencesStrictlyMonotonic, false);
+  assert.equal(summary.allExclusionGenerationsPresent, false);
 });

@@ -8,6 +8,28 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { capabilities, subscribe } from "../index.js";
 
+async function waitFor(predicate, message, timeoutMs = 3_000, intervalMs = 10) {
+  const deadline = Date.now() + timeoutMs;
+  let matched = await predicate();
+  while (!matched && Date.now() < deadline) {
+    await delay(intervalMs);
+    matched = await predicate();
+  }
+  assert.ok(matched, message);
+}
+
+async function waitForQuiet(batchCount, quietMs = 75, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  let previous = batchCount();
+  while (Date.now() < deadline) {
+    await delay(quietMs);
+    const current = batchCount();
+    if (current === previous) return;
+    previous = current;
+  }
+  assert.fail("callbacks did not quiesce before the bounded deadline");
+}
+
 test("wrapper delivers string paths and idempotent disposal", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-"));
   let subscription;
@@ -72,12 +94,23 @@ test("wrapper reconciles in place under the committed exclusion generation", asy
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-"));
   let subscription;
   try {
+    const hidden = path.join(root, "hidden");
+    fs.mkdirSync(path.join(hidden, "current", "deep"), { recursive: true });
     const batches = [];
     subscription = await subscribe(root, (batch) => batches.push(batch), {
       batchWindowMs: 8,
     });
     await subscription.replaceExclusions(2n, ["hidden"]);
     fs.mkdirSync(path.join(root, "created", "deep"), { recursive: true });
+    fs.mkdirSync(path.join(hidden, "future", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(hidden, "current", "deep", "ignored.txt"), "ignored");
+    fs.writeFileSync(path.join(hidden, "future", "deep", "ignored.txt"), "ignored");
+    await delay(30);
+    assert.ok(
+      batches.every((batch) =>
+        batch.invalidatedPaths.every((changedPath) => !changedPath.startsWith(hidden))),
+      "current or future excluded prefixes leaked into a callback",
+    );
 
     const result = await subscription.reconcile();
     assert.deepEqual(result, {
@@ -89,8 +122,256 @@ test("wrapper reconciles in place under the committed exclusion generation", asy
     while (!batches.some((batch) => batch.invalidatedPaths.includes(root)) && Date.now() < deadline) {
       await delay(10);
     }
+    const rootBatch = batches.find((batch) => batch.invalidatedPaths.includes(root));
+    assert.ok(rootBatch, "reconciliation did not deliver a root invalidation");
+    assert.equal(rootBatch.exclusionGeneration, 2n);
+    assert.deepEqual(rootBatch.coverage, result.coverage);
+    assert.equal(subscription.exclusionGeneration, 2n);
+
+    const sentinel = path.join(root, "created", "deep", "sentinel.txt");
+    fs.writeFileSync(sentinel, "after reconciliation");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(sentinel)),
+      "deep change was not delivered after reconciliation",
+    );
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wrapper reconciles observable consumer backpressure on the same subscription", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-backpressure-reconcile-"));
+  let subscription;
+  try {
+    const burstRoot = path.join(root, "burst");
+    const deepRoot = path.join(root, "deep", "watched");
+    fs.mkdirSync(burstRoot);
+    fs.mkdirSync(deepRoot, { recursive: true });
+    const targets = [];
+    for (let index = 0; index < 64; index += 1) {
+      const target = path.join(burstRoot, `file-${String(index).padStart(3, "0")}.txt`);
+      fs.writeFileSync(target, "before\n");
+      targets.push(target);
+    }
+
+    const batches = [];
+    const waitCell = new Int32Array(new SharedArrayBuffer(4));
+    let callbackWasBlocked = false;
+    const uncertainIntervalMutation = path.join(deepRoot, "during-uncertainty.txt");
+    subscription = await subscribe(
+      root,
+      (batch) => {
+        if (!callbackWasBlocked) {
+          callbackWasBlocked = true;
+          for (let round = 0; round < 32; round += 1) {
+            for (const target of targets) fs.appendFileSync(target, "pressure\n");
+          }
+          fs.writeFileSync(uncertainIntervalMutation, "created while callback was blocked");
+          Atomics.wait(waitCell, 0, 0, 200);
+        }
+        batches.push(batch);
+      },
+      {
+        batchWindowMs: 1,
+        maxBatchPaths: 4_096,
+        outputQueueCapacity: 2,
+      },
+    );
+
+    assert.equal(subscription.exclusionGeneration, 0n);
+    for (const target of targets) fs.appendFileSync(target, "trigger\n");
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.coverage.state === "uncertain" &&
+        batch.coverage.reason === "consumer-backpressure"),
+      "consumer-backpressure uncertainty was not publicly observable",
+      5_000,
+    );
+    await waitFor(
+      () => subscription.stats().batchesDropped > 0n,
+      "native output pressure did not drop a bounded batch",
+    );
+    await waitForQuiet(() => batches.length);
+
+    const recoveryBatchIndex = batches.length;
+    const reconcilePromise = subscription.reconcile();
+    fs.appendFileSync(uncertainIntervalMutation, "\nmutated while reconciliation was requested");
+    const result = await reconcilePromise;
+    assert.deepEqual(result, {
+      exclusionGeneration: 0n,
+      coverage: { state: "complete" },
+    });
+    assert.equal(subscription.exclusionGeneration, 0n);
+
+    await waitFor(
+      () => batches.slice(recoveryBatchIndex).some((batch) =>
+        batch.invalidatedPaths.includes(root) &&
+        batch.exclusionGeneration === result.exclusionGeneration),
+      "successful reconciliation did not deliver its committed root boundary",
+    );
+    await waitForQuiet(() => batches.length);
+    const recoveryRootBatches = batches.slice(recoveryBatchIndex).filter((batch) =>
+      batch.invalidatedPaths.includes(root));
+    assert.equal(recoveryRootBatches.length, 1, "reconciliation emitted multiple recovery boundaries");
+    assert.deepEqual(recoveryRootBatches[0].coverage, result.coverage);
+    assert.equal(callbackWasBlocked, true);
+
+    for (let index = 1; index < batches.length; index += 1) {
+      assert.ok(
+        batches[index].sequence > batches[index - 1].sequence,
+        "subscription-local sequences were not strictly monotonic",
+      );
+      assert.equal(batches[index].exclusionGeneration, 0n);
+    }
+
+    const sentinel = path.join(deepRoot, "after-reconciliation.txt");
+    const sentinelBatchIndex = batches.length;
+    fs.writeFileSync(sentinel, "sentinel");
+    await waitFor(
+      () => batches.slice(sentinelBatchIndex).some((batch) =>
+        batch.invalidatedPaths.includes(sentinel)),
+      "post-reconciliation deep sentinel was not delivered",
+    );
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wrapper rejects concurrent reconciliation and exclusion transactions explicitly", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-conflicts-"));
+  let subscription;
+  try {
+    for (let index = 0; index < 768; index += 1) {
+      fs.mkdirSync(path.join(root, "tree", `dir-${String(index).padStart(4, "0")}`), {
+        recursive: true,
+      });
+    }
+    subscription = await subscribe(root, () => {}, {
+      batchWindowMs: 5,
+      outputQueueCapacity: 16,
+    });
+
+    const concurrentReconciliations = await Promise.allSettled(
+      Array.from({ length: 8 }, () => subscription.reconcile()),
+    );
+    assert.ok(
+      concurrentReconciliations.some((result) => result.status === "fulfilled"),
+      "every concurrent reconciliation request failed",
+    );
+    const reconciliationConflict = concurrentReconciliations.find((result) =>
+      result.status === "rejected" && /topology transaction/i.test(result.reason.message)
+    );
+    assert.ok(reconciliationConflict, "both concurrent reconciliation requests succeeded");
+    assert.match(reconciliationConflict.reason.message, /topology transaction/i);
+
+    const conflictingTransactions = await Promise.allSettled([
+      subscription.reconcile(),
+      subscription.replaceExclusions(1n, ["tree"]),
+    ]);
+    assert.equal(
+      conflictingTransactions.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    const exclusionConflict = conflictingTransactions.find((result) => result.status === "rejected");
+    assert.ok(exclusionConflict, "reconciliation and exclusion update both committed concurrently");
+    assert.match(exclusionConflict.reason.message, /topology transaction/i);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wrapper does not report root-replaced uncertainty as recovered", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-root-loss-"));
+  const root = path.join(parent, "root");
+  const movedRoot = path.join(parent, "moved-root");
+  fs.mkdirSync(path.join(root, "deep"), { recursive: true });
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await subscribe(root, (batch) => batches.push(batch), { batchWindowMs: 5 });
+    fs.renameSync(root, movedRoot);
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.coverage.state === "uncertain" && batch.coverage.reason === "root-replaced"),
+      "root replacement uncertainty was not publicly observable",
+    );
+    await assert.rejects(
+      subscription.reconcile(),
+      /root-replaced|root identity changed/i,
+    );
     assert.ok(batches.some((batch) =>
-      batch.invalidatedPaths.includes(root) && batch.exclusionGeneration === 2n));
+      batch.coverage.state === "uncertain" && batch.coverage.reason === "root-replaced"));
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("wrapper joins disposal around reconciliation and rejects later work", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-dispose-"));
+  let subscription;
+  try {
+    for (let index = 0; index < 768; index += 1) {
+      fs.mkdirSync(path.join(root, `dir-${String(index).padStart(4, "0")}`));
+    }
+    let callbackCount = 0;
+    subscription = await subscribe(root, () => {
+      callbackCount += 1;
+    }, { batchWindowMs: 5 });
+
+    const topologyScansBeforeReconciliation = subscription.stats().topologyScans;
+    let reconciliationSettled = false;
+    const reconciliationRequest = subscription.reconcile().then(
+      (value) => {
+        reconciliationSettled = true;
+        return value;
+      },
+      (error) => {
+        reconciliationSettled = true;
+        throw error;
+      },
+    );
+    const reconciliation = Promise.allSettled([reconciliationRequest]);
+    let reconciliationProgressObserved = false;
+    await waitFor(
+      () => {
+        reconciliationProgressObserved =
+          !reconciliationSettled &&
+          subscription.stats().topologyScans > topologyScansBeforeReconciliation;
+        return reconciliationProgressObserved || reconciliationSettled;
+      },
+      "reconciliation neither began scanning nor settled",
+      3_000,
+      1,
+    );
+    assert.equal(
+      reconciliationProgressObserved,
+      true,
+      "reconciliation settled before active scan progress could overlap disposal",
+    );
+    const disposal = subscription.dispose();
+    await Promise.all([disposal, subscription.dispose()]);
+    const reconciliationResult = await reconciliation;
+    if (reconciliationResult[0].status === "rejected") {
+      assert.match(
+        reconciliationResult[0].reason.message,
+        /disposed|disposing|interrupted|no longer active/i,
+      );
+    }
+    assert.equal(subscription.stats().disposed, true);
+    await subscription.dispose();
+
+    const callbacksAtDisposal = callbackCount;
+    fs.writeFileSync(path.join(root, "after-disposal.txt"), "after");
+    await delay(50);
+    assert.equal(callbackCount, callbacksAtDisposal, "callback began after disposal resolved");
+    await assert.rejects(
+      subscription.reconcile(),
+      /disposed|disposing|no longer active/i,
+    );
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });

@@ -9,8 +9,39 @@ const subscriptionOptions = Object.freeze({
   maxBatchPaths: 1_024,
   outputQueueCapacity: 64,
 });
+const publicSubscriptionOperations = Object.freeze({
+  reconcile: reconcileExistingSubscription,
+});
 
 export const id = "watchbound";
+
+function jsonCounter(value) {
+  if (typeof value === "bigint") return value.toString();
+  if (Number.isSafeInteger(value) && value >= 0) return String(value);
+  return null;
+}
+
+export function advertisesReconciliation(wrapperCapabilities, operations) {
+  return (
+    wrapperCapabilities?.reconciliation === true &&
+    typeof operations?.reconcile === "function"
+  );
+}
+
+export async function reconcileExistingSubscription(subscription) {
+  if (typeof subscription?.reconcile !== "function") {
+    throw new TypeError("The public subscription does not expose reconciliation");
+  }
+  const result = await subscription.reconcile();
+  const exclusionGeneration = jsonCounter(result?.exclusionGeneration);
+  if (exclusionGeneration == null || result?.coverage == null) {
+    throw new TypeError("The public reconciliation result is incomplete");
+  }
+  return {
+    exclusionGeneration,
+    coverage: result.coverage,
+  };
+}
 
 export async function loadAdapter() {
   let implementation;
@@ -68,7 +99,10 @@ export async function loadAdapter() {
     explicitWatchLimits: nativeCapabilities.explicitWatchLimits,
     overflowReporting: nativeCapabilities.overflowReporting,
     consumerBackpressureReporting: true,
-    reconciliation: nativeCapabilities.reconciliation,
+    reconciliation: advertisesReconciliation(
+      nativeCapabilities,
+      publicSubscriptionOperations,
+    ),
   };
 
   return {
@@ -88,6 +122,7 @@ export async function loadAdapter() {
         path.resolve(root),
         (batch) => {
           onBatch({
+            sequence: jsonCounter(batch.sequence),
             paths: batch.invalidatedPaths,
             details: batch.invalidatedPaths.map((changedPath) => ({
               path: changedPath,
@@ -97,7 +132,7 @@ export async function loadAdapter() {
               batch.pathEncodingCollapsed || batch.coverage.state === "uncertain",
             rawEventCount: batch.invalidatedPaths.length,
             coverage: batch.coverage,
-            exclusionGeneration: batch.exclusionGeneration,
+            exclusionGeneration: jsonCounter(batch.exclusionGeneration),
           });
         },
         {
@@ -108,10 +143,33 @@ export async function loadAdapter() {
         },
       );
 
+      if (
+        capabilities.reconciliation &&
+        !advertisesReconciliation(nativeCapabilities, subscription)
+      ) {
+        await subscription.dispose();
+        throw new TypeError(
+          "Watchbound advertised reconciliation but the public subscription method is unavailable",
+        );
+      }
+
       let exclusionGeneration = 0n;
+      const operationEvidence = {
+        publicSubscriptionCreations: 1,
+        reconciliationCalls: 0,
+        reconciliationCallsOnOriginalSubscription: 0,
+        disposalRequests: 0,
+      };
       return {
         coverage: subscription.initialCoverage,
-        dispose: () => subscription.dispose(),
+        operationEvidence: () => ({ ...operationEvidence }),
+        get exclusionGeneration() {
+          return jsonCounter(subscription.exclusionGeneration);
+        },
+        dispose() {
+          operationEvidence.disposalRequests += 1;
+          return subscription.dispose();
+        },
         async updateExclusions(relativeDirectories) {
           exclusionGeneration += 1n;
           return subscription.replaceExclusions(
@@ -119,7 +177,11 @@ export async function loadAdapter() {
             relativeDirectories,
           );
         },
-        reconcile: () => subscription.reconcile(),
+        reconcile() {
+          operationEvidence.reconciliationCalls += 1;
+          operationEvidence.reconciliationCallsOnOriginalSubscription += 1;
+          return reconcileExistingSubscription(subscription);
+        },
         async stats() {
           const stats = subscription.stats();
           return {

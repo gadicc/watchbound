@@ -6,8 +6,22 @@ function normalizedPath(root, value) {
   return path.resolve(root, value);
 }
 
+function normalizedCounter(value) {
+  if (typeof value === "bigint") return value.toString();
+  if (Number.isSafeInteger(value) && value >= 0) return String(value);
+  if (typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)) {
+    return BigInt(value).toString();
+  }
+  return null;
+}
+
+function coverageSnapshot(coverage) {
+  return coverage == null ? null : { ...coverage };
+}
+
 export function createRecorder(root) {
   const batches = [];
+  const resolvedRoot = path.resolve(root);
 
   function onBatch(batch) {
     const atMs = nowMs();
@@ -20,6 +34,8 @@ export function createRecorder(root) {
     }));
     batches.push({
       atMs,
+      sequence: normalizedCounter(batch?.sequence),
+      exclusionGeneration: normalizedCounter(batch?.exclusionGeneration),
       paths,
       details,
       invalidated: Boolean(batch?.invalidated),
@@ -29,7 +45,7 @@ export function createRecorder(root) {
       error: batch?.error
         ? { code: batch.error.code ?? null, message: batch.error.message ?? String(batch.error) }
         : null,
-      coverage: batch?.coverage ?? null,
+      coverage: coverageSnapshot(batch?.coverage),
     });
   }
 
@@ -39,6 +55,24 @@ export function createRecorder(root) {
 
   function selected(checkpointValue) {
     return batches.slice(checkpointValue.batchIndex);
+  }
+
+  function evidence(batch) {
+    return {
+      atMs: batch.atMs,
+      sequence: batch.sequence,
+      exclusionGeneration: batch.exclusionGeneration,
+      paths: [...batch.paths],
+      details: batch.details.map((detail) => ({ ...detail })),
+      invalidated: batch.invalidated,
+      rawEventCount: batch.rawEventCount,
+      error: batch.error == null ? null : { ...batch.error },
+      coverage: coverageSnapshot(batch.coverage),
+    };
+  }
+
+  function batchesSince(checkpointValue) {
+    return selected(checkpointValue).map(evidence);
   }
 
   function pathCountSince(checkpointValue, expectedPath) {
@@ -63,6 +97,25 @@ export function createRecorder(root) {
 
   function summary(checkpointValue, expectedPaths = []) {
     const observed = selected(checkpointValue);
+    const presentSequences = observed
+      .map((batch) => batch.sequence)
+      .filter((value) => value != null);
+    const presentExclusionGenerations = observed
+      .map((batch) => batch.exclusionGeneration)
+      .filter((value) => value != null);
+    const sequencesStrictlyMonotonic =
+      presentSequences.length === observed.length &&
+      presentSequences.every((value, index) =>
+        index === 0 || BigInt(value) > BigInt(presentSequences[index - 1])
+      );
+    const rootBoundaries = observed
+      .filter((batch) => batch.paths.includes(resolvedRoot))
+      .map((batch) => ({
+        atMs: batch.atMs,
+        sequence: batch.sequence,
+        exclusionGeneration: batch.exclusionGeneration,
+        coverage: coverageSnapshot(batch.coverage),
+      }));
     const resolvedExpected = [...new Set(expectedPaths.map((value) => path.resolve(root, value)))];
     const counts = new Map(resolvedExpected.map((value) => [value, 0]));
     const firstSeenAt = new Map(resolvedExpected.map((value) => [value, null]));
@@ -101,6 +154,14 @@ export function createRecorder(root) {
       0,
     );
     return {
+      sequences: presentSequences,
+      allSequencesPresent: presentSequences.length === observed.length,
+      sequencesStrictlyMonotonic,
+      exclusionGenerations: [...new Set(presentExclusionGenerations)],
+      allExclusionGenerationsPresent:
+        presentExclusionGenerations.length === observed.length,
+      rootBoundaryCount: rootBoundaries.length,
+      rootBoundaries,
       expectedPathCount: resolvedExpected.length,
       detectedPathCount: resolvedExpected.length - missedPaths.length,
       missedPathCount: missedPaths.length,
@@ -133,6 +194,7 @@ export function createRecorder(root) {
   return {
     onBatch,
     checkpoint,
+    batchesSince,
     pathCountSince,
     waitForQuiet,
     summary,

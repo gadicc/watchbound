@@ -9,6 +9,7 @@ import {
   memoryDelta,
   nowMs,
   processSample,
+  serializeError,
   sleep,
   waitFor,
 } from "./metrics.mjs";
@@ -24,6 +25,7 @@ export const scenarioNames = Object.freeze([
   "bridge-backpressure",
   "queue-overflow",
   "dynamic-exclusions",
+  "reconciliation",
   "burst-files",
   "burst-directories",
   "burst-renames",
@@ -43,6 +45,7 @@ export class SkipScenarioError extends Error {
 export function scenarioRequirement(name) {
   if (name === "dynamic-exclusions") return "dynamicExclusions";
   if (name === "bridge-backpressure") return "consumerBackpressure";
+  if (name === "reconciliation") return "reconciliation";
   return null;
 }
 
@@ -141,6 +144,43 @@ export function prepareScenario(name, config, runDirectory) {
     fs.writeFileSync(target, "before\n");
     return { root, target, excludedDirectory: "excluded" };
   }
+  if (name === "reconciliation") {
+    const pressureRoot = path.join(root, "pressure");
+    const excludedRoot = path.join(root, "excluded");
+    const peerRoot = path.join(runDirectory, "peer-root");
+    fs.mkdirSync(pressureRoot);
+    fs.mkdirSync(path.join(excludedRoot, "current", "deep"), { recursive: true });
+    fs.mkdirSync(peerRoot);
+    const targetCount = Math.max(64, Math.min(config.burstCount, 256));
+    const pressureTargets = [];
+    for (let index = 0; index < targetCount; index += 1) {
+      const target = path.join(pressureRoot, `file-${numbered(index)}.txt`);
+      fs.writeFileSync(target, "before\n");
+      pressureTargets.push(target);
+    }
+    const scanCount = Math.max(128, Math.min(config.burstCount * 2, 256));
+    const recoveredRoot = path.join(root, "recovered");
+    return {
+      root,
+      peerRoot,
+      pressureTargets,
+      scanDirectories: Array.from(
+        { length: scanCount },
+        (_value, index) => path.join(recoveredRoot, `directory-${numbered(index)}`, "deep"),
+      ),
+      intervalTarget: path.join(recoveredRoot, "interval", "deep", "during.txt"),
+      postReconciliationTarget: path.join(
+        recoveredRoot,
+        `directory-${numbered(scanCount - 1)}`,
+        "deep",
+        "after.txt",
+      ),
+      excludedDirectory: "excluded",
+      excludedCurrentTarget: path.join(excludedRoot, "current", "deep", "ignored.txt"),
+      excludedFutureTarget: path.join(excludedRoot, "future", "deep", "ignored.txt"),
+      peerTarget: path.join(peerRoot, "during-reconciliation.txt"),
+    };
+  }
   if (name === "burst-files") {
     const burstRoot = path.join(root, "burst");
     fs.mkdirSync(burstRoot);
@@ -191,6 +231,80 @@ async function safeStats(session) {
     return (await session.stats?.()) ?? null;
   } catch (error) {
     return { error: { code: error?.code ?? null, message: error?.message ?? String(error) } };
+  }
+}
+
+function normalizedGeneration(value) {
+  if (typeof value === "bigint" || typeof value === "number") return String(value);
+  return typeof value === "string" ? value : null;
+}
+
+function sameCoverage(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function compactBatchEvidence(batch, relevantPaths = []) {
+  const relevant = new Set(relevantPaths.map((value) => path.resolve(value)));
+  return {
+    atMs: batch.atMs,
+    sequence: batch.sequence,
+    exclusionGeneration: batch.exclusionGeneration,
+    pathCount: batch.paths.length,
+    relevantPaths: batch.paths.filter((value) => relevant.has(value)),
+    invalidated: batch.invalidated,
+    rawEventCount: batch.rawEventCount,
+    error: batch.error,
+    coverage: batch.coverage,
+  };
+}
+
+function watchboundThreadSample() {
+  if (process.platform !== "linux") {
+    return { supported: false, reason: "Linux /proc task metadata is required" };
+  }
+  try {
+    const threads = fs.readdirSync("/proc/self/task")
+      .filter((entry) => /^\d+$/u.test(entry))
+      .map((entry) => ({
+        tid: Number(entry),
+        name: fs.readFileSync(`/proc/self/task/${entry}/comm`, "utf8").trim(),
+      }))
+      .filter((thread) => thread.name.startsWith("watchbound-"))
+      .sort((left, right) => left.tid - right.tid);
+    return { supported: true, count: threads.length, threads };
+  } catch (error) {
+    return {
+      supported: false,
+      reason: `Could not inspect /proc/self/task: ${error?.code ?? error?.message ?? String(error)}`,
+    };
+  }
+}
+
+function eventfdSample() {
+  if (process.platform !== "linux") {
+    return { supported: false, reason: "Linux /proc descriptor metadata is required" };
+  }
+  try {
+    const descriptors = [];
+    for (const entry of fs.readdirSync("/proc/self/fd")) {
+      if (!/^\d+$/u.test(entry)) continue;
+      let target;
+      try {
+        target = fs.readlinkSync(`/proc/self/fd/${entry}`);
+      } catch {
+        continue;
+      }
+      if (target === "anon_inode:[eventfd]") {
+        descriptors.push(Number(entry));
+      }
+    }
+    descriptors.sort((left, right) => left - right);
+    return { supported: true, count: descriptors.length, descriptors };
+  } catch (error) {
+    return {
+      supported: false,
+      reason: `Could not inspect /proc/self/fd: ${error?.code ?? error?.message ?? String(error)}`,
+    };
   }
 }
 
@@ -983,6 +1097,532 @@ async function runBridgeBackpressure(adapter, prepared, config) {
   }
 }
 
+async function runReconciliation(adapter, prepared, config) {
+  const recorder = createRecorder(prepared.root);
+  const peerRecorder = createRecorder(prepared.peerRoot);
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  const lifecycleStartedAt = processSample();
+  const threadsAtStart = watchboundThreadSample();
+  const eventfdsAtStart = eventfdSample();
+  let blockNextCallback = false;
+  let callbackWasBlocked = false;
+  let callbackWorkloadDurationMs = null;
+  const callbackWorkloadRounds = Math.ceil(2_048 / prepared.pressureTargets.length);
+  const callbackWorkloadOperations = callbackWorkloadRounds * prepared.pressureTargets.length;
+  const primary = await subscribeMeasured(adapter, prepared, config, recorder, {
+    batchWindowMs: 1,
+    maxBatchPaths: 4_096,
+    outputQueueCapacity: 2,
+    onBatch(batch) {
+      if (blockNextCallback && !callbackWasBlocked) {
+        callbackWasBlocked = true;
+        const workloadStartedAtMs = nowMs();
+        for (let round = 0; round < callbackWorkloadRounds; round += 1) {
+          for (const target of prepared.pressureTargets) {
+            fs.appendFileSync(target, "pressure\n");
+          }
+        }
+        callbackWorkloadDurationMs = nowMs() - workloadStartedAtMs;
+        Atomics.wait(waitCell, 0, 0, 200);
+      }
+      recorder.onBatch(batch);
+    },
+  });
+  let peer;
+  let primaryDisposal = null;
+  let peerDisposal = null;
+  let cleanupFinished = false;
+  try {
+    peer = await subscribeMeasured(
+      adapter,
+      { root: prepared.peerRoot },
+      config,
+      peerRecorder,
+      { batchWindowMs: 1 },
+    );
+    let threadsWhileSubscribed = watchboundThreadSample();
+    let eventfdsWhileSubscribed = eventfdSample();
+    await waitFor(() => {
+      threadsWhileSubscribed = watchboundThreadSample();
+      eventfdsWhileSubscribed = eventfdSample();
+      const threadsReady = !threadsAtStart.supported || !threadsWhileSubscribed.supported ||
+        threadsWhileSubscribed.count >= threadsAtStart.count + 3;
+      const eventfdReady = !eventfdsAtStart.supported || !eventfdsWhileSubscribed.supported ||
+        eventfdsWhileSubscribed.count >= eventfdsAtStart.count + 1;
+      return threadsReady && eventfdReady;
+    }, Math.min(config.timeoutMs, 1_000));
+    await requirePhaseQuiescence(recorder, config, "primary subscription startup");
+    await requirePhaseQuiescence(peerRecorder, config, "peer subscription startup");
+
+    const peerGenerationZeroCheckpoint = peerRecorder.checkpoint();
+    const peerReconcileStartedAtMs = nowMs();
+    const peerReconciliation = await peer.session.reconcile();
+    const peerReconcileAcknowledgedAtMs = nowMs();
+    const peerRootObserved = await waitFor(
+      () => peerRecorder.batchesSince(peerGenerationZeroCheckpoint).some((batch) =>
+        batch.paths.includes(path.resolve(prepared.peerRoot)) &&
+        batch.exclusionGeneration === "0" &&
+        sameCoverage(batch.coverage, peerReconciliation.coverage)
+      ),
+      config.timeoutMs,
+    );
+    const peerGenerationZeroQuiesced = await waitForQuiescence(peerRecorder, config);
+    const peerGenerationZeroObservation = {
+      quiesced: peerGenerationZeroQuiesced,
+      ...peerRecorder.summary(peerGenerationZeroCheckpoint),
+    };
+
+    const exclusionCoverage = await primary.session.updateExclusions([
+      prepared.excludedDirectory,
+    ]);
+    const committedGeneration = primary.session.exclusionGeneration;
+    await requirePhaseQuiescence(recorder, config, "exclusion commit");
+
+    blockNextCallback = true;
+    const pressureCheckpoint = recorder.checkpoint();
+    const pressureStartedAtMs = nowMs();
+    for (const target of prepared.pressureTargets) {
+      fs.appendFileSync(target, "trigger\n");
+    }
+    const pressureMutationEndedAtMs = nowMs();
+    const uncertaintyObserved = await waitFor(
+      () => recorder
+        .summary(pressureCheckpoint)
+        .uncertainReasons
+        .includes("consumer-backpressure"),
+      config.timeoutMs,
+    );
+    const pressureQuiesced = await waitForQuiescence(recorder, config);
+    const pressureObservation = {
+      quiesced: pressureQuiesced,
+      ...recorder.summary(pressureCheckpoint, [prepared.root]),
+    };
+    const pressureBatches = recorder.batchesSince(pressureCheckpoint);
+    const statsAfterPressure = await safeStats(primary.session);
+
+    const intervalCheckpoint = recorder.checkpoint();
+    const intervalMutationStartedAtMs = nowMs();
+    for (const directory of prepared.scanDirectories) {
+      fs.mkdirSync(directory, { recursive: true });
+    }
+    fs.mkdirSync(path.dirname(prepared.intervalTarget), { recursive: true });
+    fs.writeFileSync(prepared.intervalTarget, "during uncertainty\n");
+    fs.writeFileSync(prepared.excludedCurrentTarget, "ignored current\n");
+    fs.mkdirSync(path.dirname(prepared.excludedFutureTarget), { recursive: true });
+    fs.writeFileSync(prepared.excludedFutureTarget, "ignored future\n");
+    const intervalMutationEndedAtMs = nowMs();
+    await requirePhaseQuiescence(recorder, config, "uncertain-interval mutations");
+    const intervalObservation = recorder.summary(intervalCheckpoint, [
+      prepared.intervalTarget,
+      prepared.excludedCurrentTarget,
+      prepared.excludedFutureTarget,
+    ]);
+    const intervalBatches = recorder.batchesSince(intervalCheckpoint);
+
+    const reconciliationCheckpoint = recorder.checkpoint();
+    const statsBeforeReconciliation = await safeStats(primary.session);
+    const reconciliationStartedAtMs = nowMs();
+    let reconciliationSettled = false;
+    const reconciliationPromise = primary.session.reconcile().then(
+      (result) => {
+        reconciliationSettled = true;
+        return result;
+      },
+      (error) => {
+        reconciliationSettled = true;
+        throw error;
+      },
+    );
+    let statsAtScanProgress = null;
+    let scanProgressObserved = false;
+    await waitFor(async () => {
+      statsAtScanProgress = await safeStats(primary.session);
+      scanProgressObserved = !reconciliationSettled &&
+        Number(statsAtScanProgress?.topologyScans ?? 0) >
+          Number(statsBeforeReconciliation?.topologyScans ?? 0);
+      return scanProgressObserved || reconciliationSettled;
+    }, config.timeoutMs, 1);
+    const peerMutationStartedAtMs = nowMs();
+    fs.writeFileSync(prepared.peerTarget, "peer delivery\n");
+    const peerMutationEndedAtMs = nowMs();
+    let reconciliationResult = null;
+    let reconciliationError = null;
+    try {
+      reconciliationResult = await reconciliationPromise;
+    } catch (error) {
+      reconciliationError = serializeError(error);
+    }
+    const reconciliationAcknowledgedAtMs = nowMs();
+    const recoveryRootObserved = reconciliationResult != null && await waitFor(
+      () => recorder.batchesSince(reconciliationCheckpoint).some((batch) =>
+        batch.paths.includes(path.resolve(prepared.root)) &&
+        batch.exclusionGeneration === committedGeneration &&
+        sameCoverage(batch.coverage, reconciliationResult.coverage)
+      ),
+      config.timeoutMs,
+    );
+    const peerDelivered = await waitFor(
+      () => peerRecorder.pathCountSince(peerGenerationZeroCheckpoint, prepared.peerTarget) > 0,
+      config.timeoutMs,
+    );
+    const recoveryQuiesced = await waitForQuiescence(recorder, config);
+    const peerQuiesced = await waitForQuiescence(peerRecorder, config);
+    const reconciliationObservation = {
+      quiesced: recoveryQuiesced,
+      ...recorder.summary(reconciliationCheckpoint),
+    };
+    const reconciliationBatches = recorder.batchesSince(reconciliationCheckpoint);
+    const peerObservation = {
+      detectedBeforeTimeout: peerDelivered,
+      quiesced: peerQuiesced,
+      ...peerRecorder.summary(peerGenerationZeroCheckpoint, [prepared.peerTarget]),
+    };
+    const peerBatches = peerRecorder.batchesSince(peerGenerationZeroCheckpoint);
+    const peerDeliveryBatch = peerBatches.find((batch) =>
+      batch.paths.includes(path.resolve(prepared.peerTarget))
+    );
+    const resolvedPrimaryRoot = path.resolve(prepared.root);
+    const recoveryRootBatches = reconciliationBatches.filter((batch) =>
+      batch.paths.includes(resolvedPrimaryRoot)
+    );
+    const matchingRecoveryBoundaries = reconciliationResult == null
+      ? []
+      : recoveryRootBatches.filter((batch) =>
+        batch.paths.length === 1 &&
+        batch.paths[0] === resolvedPrimaryRoot &&
+        batch.exclusionGeneration === committedGeneration &&
+        sameCoverage(batch.coverage, reconciliationResult.coverage)
+      );
+
+    const postReconciliationCheckpoint = recorder.checkpoint();
+    fs.writeFileSync(prepared.postReconciliationTarget, "post reconciliation\n");
+    const postReconciliationObservation = await observeExpected(
+      recorder,
+      postReconciliationCheckpoint,
+      [prepared.postReconciliationTarget],
+      config,
+    );
+    const postReconciliationBatches = recorder.batchesSince(postReconciliationCheckpoint);
+    const primaryPostCommitObservation = recorder.summary(pressureCheckpoint);
+    const resolvedExcludedRoot = path.resolve(prepared.root, prepared.excludedDirectory);
+    const isExcludedPath = (candidate) =>
+      candidate === resolvedExcludedRoot ||
+      candidate.startsWith(`${resolvedExcludedRoot}${path.sep}`);
+    const excludedPathsObserved = pressureBatches
+      .concat(intervalBatches)
+      .concat(reconciliationBatches)
+      .concat(postReconciliationBatches)
+      .some((batch) => batch.paths.some(isExcludedPath));
+    const primaryOperationEvidenceBeforeDisposal = primary.session.operationEvidence?.() ?? null;
+    const finalStatsBeforeDisposal = await safeStats(primary.session);
+    const peerFinalStatsBeforeDisposal = await safeStats(peer.session);
+
+    const postDisposalPrimaryCheckpoint = recorder.checkpoint();
+    const postDisposalPeerCheckpoint = peerRecorder.checkpoint();
+    [primaryDisposal, peerDisposal] = await Promise.all([
+      disposeMeasured(primary.session),
+      disposeMeasured(peer.session),
+    ]);
+    await Promise.all([primary.session.dispose(), peer.session.dispose()]);
+    cleanupFinished = true;
+    const finalStats = await safeStats(primary.session);
+    const peerFinalStats = await safeStats(peer.session);
+    let postDisposalReconciliationError = null;
+    try {
+      await primary.session.reconcile();
+    } catch (error) {
+      postDisposalReconciliationError = serializeError(error);
+    }
+    const postDisposalReconciliationRejectedByLifecycle =
+      /disposing|disposed|not connected|no longer active/iu.test(
+        postDisposalReconciliationError?.message ?? "",
+      );
+    fs.appendFileSync(prepared.pressureTargets[0], "after disposal\n");
+    fs.appendFileSync(prepared.peerTarget, "after disposal\n");
+    await sleep(config.disposalObservationMs);
+    const postDisposalObservation = {
+      primary: recorder.summary(postDisposalPrimaryCheckpoint),
+      peer: peerRecorder.summary(postDisposalPeerCheckpoint),
+    };
+    const primaryOperationEvidenceAfterDisposal = primary.session.operationEvidence?.() ?? null;
+    const lifecycleFinishedAt = processSample();
+    const threadsAtEnd = watchboundThreadSample();
+    const eventfdsAtEnd = eventfdSample();
+    const inotifyRestored =
+      lifecycleStartedAt.inotify.supported && lifecycleFinishedAt.inotify.supported
+        ? lifecycleStartedAt.inotify.instances === lifecycleFinishedAt.inotify.instances &&
+          lifecycleStartedAt.inotify.watches === lifecycleFinishedAt.inotify.watches
+        : null;
+    const threadsRestored = threadsAtStart.supported && threadsAtEnd.supported
+      ? threadsAtStart.count === threadsAtEnd.count
+      : null;
+    const activeThreadsObserved = threadsAtStart.supported && threadsWhileSubscribed.supported
+      ? threadsWhileSubscribed.count >= threadsAtStart.count + 3
+      : null;
+    const eventfdsRestored = eventfdsAtStart.supported && eventfdsAtEnd.supported
+      ? eventfdsAtStart.count === eventfdsAtEnd.count
+      : null;
+    const runtimeEventfdObserved = eventfdsAtStart.supported && eventfdsWhileSubscribed.supported
+      ? eventfdsWhileSubscribed.count >= eventfdsAtStart.count + 1
+      : null;
+    const allPrimaryPostCommitBatchesUseGeneration = pressureBatches
+      .concat(intervalBatches)
+      .concat(reconciliationBatches)
+      .concat(postReconciliationBatches)
+      .every((batch) => batch.exclusionGeneration === committedGeneration);
+    const peerCoverageStayedComplete = peerBatches.every(
+      (batch) => batch.coverage?.state === "complete",
+    );
+    const isRootBatch = (batch, root) => batch.paths.includes(path.resolve(root));
+
+    return {
+      subscriptionLifecycle: {
+        beforeDisposal: primaryOperationEvidenceBeforeDisposal,
+        afterDisposal: primaryOperationEvidenceAfterDisposal,
+      },
+      subscriptionOptions: {
+        batchWindowMs: 1,
+        maxBatchPaths: 4_096,
+        outputQueueCapacity: 2,
+      },
+      callbackBlockMs: 200,
+      callbackWasBlocked,
+      callbackWorkloadDurationMs,
+      callbackWorkloadOperations,
+      pressureMutationDurationMs: pressureMutationEndedAtMs - pressureStartedAtMs,
+      intervalMutationDurationMs: intervalMutationEndedAtMs - intervalMutationStartedAtMs,
+      peerMutationDurationMs: peerMutationEndedAtMs - peerMutationStartedAtMs,
+      subscription: primary.measurement,
+      peerSubscription: peer.measurement,
+      committedExclusion: {
+        generation: committedGeneration,
+        coverage: exclusionCoverage,
+      },
+      pressureObservation,
+      statsAfterPressure,
+      intervalObservation,
+      relevantBatches: {
+        uncertainty: pressureBatches.filter((batch) =>
+          batch.coverage?.state === "uncertain" || isRootBatch(batch, prepared.root)
+        ).map((batch) => compactBatchEvidence(batch, [prepared.root])),
+        uncertainInterval: intervalBatches.filter((batch) =>
+          batch.coverage?.state === "uncertain" || isRootBatch(batch, prepared.root)
+        ).map((batch) => compactBatchEvidence(batch, [
+          prepared.root,
+          prepared.intervalTarget,
+          prepared.excludedCurrentTarget,
+          prepared.excludedFutureTarget,
+        ])),
+        recovery: reconciliationBatches.filter((batch) =>
+          isRootBatch(batch, prepared.root)
+        ).map((batch) => compactBatchEvidence(batch, [prepared.root])),
+        postReconciliation: postReconciliationBatches.map((batch) =>
+          compactBatchEvidence(batch, [prepared.postReconciliationTarget])
+        ),
+        peer: peerBatches.filter((batch) =>
+          isRootBatch(batch, prepared.peerRoot) ||
+          batch.paths.includes(path.resolve(prepared.peerTarget))
+        ).map((batch) => compactBatchEvidence(batch, [
+          prepared.peerRoot,
+          prepared.peerTarget,
+        ])),
+      },
+      reconciliation: {
+        startedAtMs: reconciliationStartedAtMs,
+        acknowledgedAtMs: reconciliationAcknowledgedAtMs,
+        statsBefore: statsBeforeReconciliation,
+        scanProgressObserved,
+        statsAtScanProgress,
+        result: reconciliationResult,
+        error: reconciliationError,
+        callbackRootObserved: recoveryRootObserved,
+        matchingRootBoundaries: matchingRecoveryBoundaries,
+        callbackAfterAcknowledgement:
+          matchingRecoveryBoundaries[0]?.atMs > reconciliationAcknowledgedAtMs,
+      },
+      peerGenerationZero: {
+        startedAtMs: peerReconcileStartedAtMs,
+        acknowledgedAtMs: peerReconcileAcknowledgedAtMs,
+        result: peerReconciliation,
+        callbackRootObserved: peerRootObserved,
+        observation: peerGenerationZeroObservation,
+      },
+      peerObservation,
+      postReconciliationObservation,
+      primaryPostCommitObservation,
+      finalStatsBeforeDisposal,
+      peerFinalStatsBeforeDisposal,
+      finalStats,
+      peerFinalStats,
+      disposal: primaryDisposal,
+      peerDisposal,
+      postDisposalReconciliationError,
+      postDisposalReconciliationRejectedByLifecycle,
+      postDisposalObservation,
+      cleanup: {
+        inotifyAtStart: lifecycleStartedAt.inotify,
+        inotifyAtEnd: lifecycleFinishedAt.inotify,
+        inotifyRestored,
+        eventfdsAtStart,
+        eventfdsWhileSubscribed,
+        eventfdsAtEnd,
+        runtimeEventfdObserved,
+        eventfdsRestored,
+        threadsAtStart,
+        threadsWhileSubscribed,
+        threadsAtEnd,
+        activeThreadsObserved,
+        threadsRestored,
+      },
+      observation: postReconciliationObservation,
+      checks: [
+        check(
+          "reconciliation-used-existing-subscription",
+          primaryOperationEvidenceBeforeDisposal?.publicSubscriptionCreations === 1 &&
+          primaryOperationEvidenceBeforeDisposal?.reconciliationCalls === 1 &&
+          primaryOperationEvidenceBeforeDisposal?.reconciliationCallsOnOriginalSubscription === 1 &&
+          primaryOperationEvidenceBeforeDisposal?.disposalRequests === 0,
+          { evidence: primaryOperationEvidenceBeforeDisposal },
+        ),
+        check("generation-zero-result-remained-zero", peerReconciliation.exclusionGeneration === "0"),
+        check("generation-zero-root-remained-zero", peerGenerationZeroObservation.rootBoundaries.some(
+          (batch) => batch.exclusionGeneration === "0",
+        )),
+        check("nonzero-exclusion-generation-committed", committedGeneration === "1"),
+        check(
+          "consumer-backpressure-reported-before-reconciliation",
+          uncertaintyObserved && pressureObservation.uncertainReasons.includes("consumer-backpressure"),
+        ),
+        check("consumer-backpressure-output-path-drained", pressureQuiesced),
+        check("native-output-batch-dropped", Number(statsAfterPressure?.batchesDropped ?? 0) > 0, {
+          batchesDropped: statsAfterPressure?.batchesDropped ?? null,
+        }),
+        check("reconciliation-succeeded", reconciliationResult != null && reconciliationError == null, {
+          error: reconciliationError,
+        }),
+        check(
+          "reconciliation-generation-unchanged",
+          reconciliationResult?.exclusionGeneration === committedGeneration,
+        ),
+        check("recovery-root-entered-public-callback-path", recoveryRootObserved),
+        check(
+          "recovery-commit-has-result-and-root-evidence",
+          reconciliationResult != null && recoveryRootObserved,
+        ),
+        check("one-root-only-conservative-recovery-boundary",
+          recoveryRootBatches.length === 1 && matchingRecoveryBoundaries.length === 1,
+          {
+            rootBatchCount: recoveryRootBatches.length,
+            matchingRootOnlyCount: matchingRecoveryBoundaries.length,
+            pathCounts: recoveryRootBatches.map((batch) => batch.paths.length),
+          },
+        ),
+        check("reconciliation-scan-progress-observed", scanProgressObserved, {
+          before: statsBeforeReconciliation?.topologyScans ?? null,
+          during: statsAtScanProgress?.topologyScans ?? null,
+        }),
+        check(
+          "reconciliation-result-matches-root-coverage",
+          matchingRecoveryBoundaries.length === 1 &&
+          sameCoverage(matchingRecoveryBoundaries[0].coverage, reconciliationResult?.coverage),
+        ),
+        check(
+          "interval-mutations-have-conservative-root-boundary",
+          recoveryRootBatches.length === 1 && matchingRecoveryBoundaries.length === 1,
+          { detailedIntervalPathObserved: intervalObservation.detectedPathCount > 0 },
+        ),
+        check(
+          "coverage-stayed-uncertain-through-interval-mutations",
+          intervalObservation.uncertainReasons.includes("consumer-backpressure"),
+        ),
+        check("current-and-future-excluded-prefixes-stayed-excluded", !excludedPathsObserved),
+        check("post-reconciliation-deep-change-delivered", deliverySucceeded(postReconciliationObservation)),
+        check("primary-sequences-monotonic", primaryPostCommitObservation.sequencesStrictlyMonotonic),
+        check("primary-batch-counters-complete", pressureObservation.allSequencesPresent &&
+          pressureObservation.allExclusionGenerationsPresent &&
+          reconciliationObservation.allSequencesPresent &&
+          reconciliationObservation.allExclusionGenerationsPresent),
+        check("no-primary-batch-crossed-the-committed-generation", allPrimaryPostCommitBatchesUseGeneration),
+        check("peer-generation-zero-reconciliation-root-delivered", peerRootObserved),
+        check(
+          "peer-has-one-generation-zero-reconciliation-boundary",
+          peerGenerationZeroObservation.rootBoundaryCount === 1,
+          { count: peerGenerationZeroObservation.rootBoundaryCount },
+        ),
+        check(
+          "peer-change-delivered-during-primary-reconciliation-phase",
+          scanProgressObserved && peerDelivered &&
+          peerDeliveryBatch?.atMs >= reconciliationStartedAtMs &&
+          peerDeliveryBatch?.atMs <= reconciliationAcknowledgedAtMs,
+          {
+            reconciliationStartedAtMs,
+            reconciliationAcknowledgedAtMs,
+            peerDeliveredAtMs: peerDeliveryBatch?.atMs ?? null,
+          },
+        ),
+        check("peer-coverage-remained-complete", peerCoverageStayedComplete),
+        check("peer-sequences-monotonic", peerObservation.sequencesStrictlyMonotonic),
+        check("peer-batches-remained-generation-zero", peerObservation.allExclusionGenerationsPresent &&
+          peerObservation.exclusionGenerations.length === 1 &&
+          peerObservation.exclusionGenerations[0] === "0"),
+        check("joined-disposal-marked-both-subscriptions-disposed", finalStats?.disposed === true &&
+          peerFinalStats?.disposed === true),
+        check("post-disposal-reconciliation-rejected-by-lifecycle", postDisposalReconciliationRejectedByLifecycle, {
+          error: postDisposalReconciliationError,
+        }),
+        check("no-primary-callback-after-disposal", postDisposalObservation.primary.batchCount === 0),
+        check("no-peer-callback-after-disposal", postDisposalObservation.peer.batchCount === 0),
+        inotifyRestored == null
+          ? unavailableCheck(
+              "final-disposal-restored-inotify-resources",
+              lifecycleFinishedAt.inotify.reason ?? lifecycleStartedAt.inotify.reason,
+            )
+          : check("final-disposal-restored-inotify-resources", inotifyRestored),
+        runtimeEventfdObserved == null
+          ? unavailableCheck(
+              "shared-runtime-eventfd-was-observed",
+              eventfdsWhileSubscribed.reason ?? eventfdsAtStart.reason,
+            )
+          : check("shared-runtime-eventfd-was-observed", runtimeEventfdObserved, {
+              baseline: eventfdsAtStart.count,
+              active: eventfdsWhileSubscribed.count,
+            }),
+        eventfdsRestored == null
+          ? unavailableCheck(
+              "final-disposal-restored-eventfd-resources",
+              eventfdsAtEnd.reason ?? eventfdsAtStart.reason,
+            )
+          : check("final-disposal-restored-eventfd-resources", eventfdsRestored),
+        activeThreadsObserved == null
+          ? unavailableCheck(
+              "native-runtime-and-bridge-threads-were-observed",
+              threadsWhileSubscribed.reason ?? threadsAtStart.reason,
+            )
+          : check("native-runtime-and-bridge-threads-were-observed", activeThreadsObserved, {
+              baseline: threadsAtStart.count,
+              active: threadsWhileSubscribed.count,
+            }),
+        threadsRestored == null
+          ? unavailableCheck(
+              "final-disposal-joined-native-threads",
+              threadsAtEnd.reason ?? threadsAtStart.reason,
+            )
+          : check("final-disposal-joined-native-threads", threadsRestored),
+        ...observationHealthChecks("reconciliation", reconciliationObservation),
+        ...observationHealthChecks("post-reconciliation", postReconciliationObservation),
+        ...observationHealthChecks("peer", peerObservation),
+      ],
+    };
+  } finally {
+    if (!cleanupFinished) {
+      await Promise.allSettled([
+        primary.session.dispose(),
+        peer?.session.dispose(),
+      ].filter(Boolean));
+    }
+  }
+}
+
 function runOverflowMutator(payload) {
   return new Promise((resolve, reject) => {
     const child = fork(overflowMutatorPath, [JSON.stringify(payload)], {
@@ -1177,6 +1817,7 @@ export async function runScenario(name, adapter, prepared, config) {
   }
   if (name === "queue-overflow") return runQueueOverflow(adapter, prepared, config);
   if (name === "dynamic-exclusions") return runDynamicExclusions(adapter, prepared, config);
+  if (name === "reconciliation") return runReconciliation(adapter, prepared, config);
   if (name === "burst-files") return runBurst(adapter, prepared, config, "files");
   if (name === "burst-directories") return runBurst(adapter, prepared, config, "directories");
   if (name === "burst-renames") return runBurst(adapter, prepared, config, "renames");

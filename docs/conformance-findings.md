@@ -32,6 +32,26 @@ All-path delivery ranged from 6.20 to 17.96 ms, but the host was not prepared or
 sampled for final performance work (load average 3.20 to 3.19 on 24 logical
 CPUs, `powersave`, tmpfs), so that range is functionality context only.
 
+## Public reconciliation conformance update
+
+The next targeted milestone adds a dedicated Watchbound reconciliation
+scenario through the Node/JavaScript public subscription and benchmark adapter.
+It induces recoverable `consumer-backpressure` deterministically by blocking a
+callback while bounded native output is pressured, waits for the path to drain,
+and calls `reconcile()` on the same subscription. The checks retain the
+uncertain interval, unchanged exclusion generation, ordered batches and
+coverage transitions, one root-only conservative recovery boundary, matching
+result/root coverage, post-reconciliation delivery, peer-subscription
+isolation, errors, and joined native cleanup. Unsupported adapters are excluded
+by strict capability checks rather than credited with a pass.
+
+This is ordinary-development correctness and stress evidence. No new final
+conformance or benchmark readings are recorded here, and the historical series
+below is unchanged. Callback-blocking does not induce a real kernel queue
+overflow, so it is not evidence for native-overflow recovery; the supervised
+forced-overflow run remains separately gated on explicit host preparation.
+Automatic recovery policy and recovery of a replaced root identity remain open.
+
 ## Exact Codex JavaScript helper
 
 The baseline imports
@@ -122,9 +142,11 @@ Linux backend does not surface.
 - One of seven measured directory bursts reported `topology-race`, invalidated
   the root, and missed 864 detailed paths. The final three conformance repeats
   passed. The failure was explicit but remains next-milestone work.
-- Dynamic exclusions and process-wide multi-root fairness are not implemented.
+- At the time of the first final series, dynamic exclusions and process-wide
+  multi-root fairness were not implemented. Later engine milestones added both;
+  the statement is retained here as historical context for those readings.
 
-## Direction
+## Original first-series direction (historical)
 
 Continue Watchbound to a second Linux engine milestone rather than switching to
 a Parcel wrapper. The reproduced moved-in-tree, root-lifecycle, and silent
@@ -133,3 +155,9 @@ silently claim more coverage than exists.” Benchmark startup and memory are
 close enough to Parcel that performance is not a stop signal. Do not integrate
 or publish until the intermittent topology race, shared multi-root scheduling,
 and exclusion design are resolved.
+
+The shared-runtime scheduling, dynamic-exclusion, and explicit bounded
+reconciliation gaps named in that decision have since been implemented and are
+covered by targeted tests. That later work does not replace the recorded first-
+series measurements or remove the remaining automatic-recovery and
+root-replacement gaps.

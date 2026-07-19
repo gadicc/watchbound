@@ -13,6 +13,7 @@ const DEFAULT_CONFORMANCE_SCENARIOS = [
   "bridge-backpressure",
   "queue-overflow",
   "dynamic-exclusions",
+  "reconciliation",
   "burst-files",
   "burst-directories",
   "burst-renames",

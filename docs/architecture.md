@@ -385,6 +385,35 @@ same subscription and final-runtime barriers as ordinary disposal. No new
 reconciliation can enter after lifecycle disposal begins or after disposal has
 resolved.
 
+### Public reconciliation conformance
+
+The standalone harness exercises this barrier through the Node/JavaScript
+public subscription and the Watchbound adapter rather than through an engine
+test handle. It deterministically blocks a JavaScript callback long enough to
+fill the bounded native output path and observes typed
+`consumer-backpressure`; after the path drains, it calls `reconcile()` on that
+same subscription. Capability gating requires the complete public method,
+explicit coverage, typed backpressure, and atomic exclusions. Codex and Parcel
+are excluded with reasons rather than asked to approximate semantics their
+public APIs do not expose.
+
+The scenario keeps a committed nonzero exclusion generation unchanged, checks
+that no batch mixes generations, mutates included and excluded topology during
+the uncertain/reconciliation interval, and requires exactly one root-only
+conservative recovery boundary whose final coverage matches the public result.
+The acknowledgement can precede JavaScript observation of that boundary: it
+proves the root batch entered the bounded native path, not that its callback
+already ran. A second subscription must retain complete generation-zero
+coverage and deliver while the primary scan is in progress. A later deep
+sentinel and joined final disposal prove continued delivery and cleanup of
+watches, descriptors, bridge state, and the worker.
+
+This is deterministic ordinary-development evidence for post-consumer-loss
+reconciliation. It does not induce or prove recovery from a real inotify queue
+overflow. The supervised forced-overflow scenario remains separately gated on
+host preparation. Root-replacement recovery and an automatic reconciliation
+policy also remain deliberate gaps.
+
 ## Binding decision
 
 Use Node-API rather than direct V8 or libuv calls. The concrete crate choice is

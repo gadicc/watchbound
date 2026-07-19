@@ -42,9 +42,15 @@ to its root.
 
 ```sh
 node benches/conformance.mjs --quick --pretty
+node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 node benches/conformance.mjs --help
 node --expose-gc benches/benchmark.mjs --help
 ```
+
+The targeted reconciliation command is an ordinary-development conformance
+check. It uses deterministic native-to-JavaScript consumer backpressure and
+does not induce a real inotify queue overflow. The I/O-heavy forced-overflow
+evidence run remains separately gated on quiet-host preparation.
 
 The first final feasibility series is complete. See
 `docs/conformance-findings.md` for correctness evidence and
@@ -55,8 +61,10 @@ the next-milestone decision.
 
 The current Linux engine shares one process-wide worker and inotify instance,
 allocates unique native watches fairly across subscriptions, and implements
-generation-based atomic dynamic exclusions. It reports root replacement as
-uncertain but does not reattach to the replacement. Explicit bounded
-post-overflow/topology-race reconciliation is implemented; automatic recovery
-policy, root-replacement recovery, non-Linux backends, and published prebuilds
-remain for later milestones.
+generation-based atomic dynamic exclusions. Its public conformance scenario
+exercises bounded reconciliation in place on an existing subscription,
+including an unchanged exclusion generation, a conservative root boundary,
+peer-subscription isolation, post-recovery delivery, and joined cleanup. It
+reports root replacement as uncertain but does not reattach to the replacement.
+Automatic recovery policy, root-replacement recovery, non-Linux backends, and
+published prebuilds remain for later milestones.

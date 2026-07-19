@@ -162,7 +162,7 @@ function planForOptions(kind, options) {
   return plans;
 }
 
-function exclusionReason(plan, probe) {
+export function scenarioExclusionReason(plan, probe) {
   if (!probe || probe.status !== "available") {
     return probe?.reason ?? "Adapter capability probe did not succeed";
   }
@@ -176,6 +176,24 @@ function exclusionReason(plan, probe) {
   if (requirement === "consumerBackpressure") {
     if (!probe.adapter.capabilities.consumerBackpressureReporting) {
       return "Explicit consumer-backpressure reporting is not supported";
+    }
+  }
+  if (requirement === "reconciliation") {
+    const capabilities = probe.adapter.capabilities;
+    if (capabilities.reconciliation !== true) {
+      return "Public existing-subscription reconciliation is not supported";
+    }
+    if (!capabilities.explicitCoverage) {
+      return "Reconciliation requires explicit coverage reporting";
+    }
+    if (!capabilities.consumerBackpressureReporting) {
+      return "Reconciliation requires explicit consumer-backpressure reporting";
+    }
+    if (
+      !capabilities.dynamicExclusions?.supported ||
+      !capabilities.dynamicExclusions?.atomic
+    ) {
+      return "Reconciliation requires atomic dynamic exclusions";
     }
   }
   return null;
@@ -483,7 +501,7 @@ export async function runSuite(kind, options) {
   const excludedRuns = [];
   const runnablePlans = [];
   for (const plan of plans) {
-    const reason = exclusionReason(plan, probes[plan.adapterId]);
+    const reason = scenarioExclusionReason(plan, probes[plan.adapterId]);
     if (reason) {
       excludedRuns.push({
         adapterId: plan.adapterId,

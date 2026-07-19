@@ -195,3 +195,29 @@ Disposal interrupts or joins an active barrier, releases reconciliation and
 deferred state, and preserves idempotent final-runtime shutdown and the rule
 that no enqueue, callback, update, or reconciliation can begin after disposal
 resolves.
+
+The public conformance scenario reaches this lifecycle through the existing
+Node/JavaScript subscription. It creates observable recoverable uncertainty by
+blocking one callback until the bounded native output queue reports
+`consumer-backpressure`, waits for the output path to drain, and invokes the
+same subscription's `reconcile()` method. It does not unsubscribe, resubscribe,
+or reconstruct lost detail. Strict capability gating excludes adapters that do
+not expose the complete reconciliation, explicit-coverage, typed-backpressure,
+and atomic-exclusion contract.
+
+The scenario verifies generation zero and a committed nonzero exclusion
+generation separately, requires single-generation ordered batches, and matches
+the reconciliation result's final coverage to the one conservative root batch.
+Acknowledgement establishes that this batch entered the bounded output path;
+the callback can run later. Mutations during uncertainty or scanning are
+covered by that root boundary, current and future exclusions remain effective,
+a peer subscription continues independently, and a later deep mutation is
+delivered. Joined disposal then rejects later reconciliation and verifies that
+callbacks, watches, descriptors, bridge state, and the final worker do not
+survive the lifecycle boundary.
+
+This deterministic callback-backpressure case is suitable for ordinary
+development, but is not evidence for real kernel-overflow recovery. The
+I/O-heavy supervised overflow scenario remains separately gated on host
+preparation. Automatic recovery policy and root-replacement recovery remain out
+of scope.

@@ -41,6 +41,13 @@ Conformance exercises:
   consumer-backpressure report, and root invalidation (only for adapters
   exposing that contract); the per-batch path limit is held above the
   workload's unique-path cardinality so it cannot satisfy this check;
+- in-place reconciliation of an existing subscription after deterministic
+  consumer backpressure, requiring an unchanged exclusion generation, one
+  conservative root recovery boundary whose coverage matches the public
+  result, continued peer-subscription delivery, a later deep sentinel, and
+  joined cleanup; adapters without the complete public reconciliation,
+  explicit-coverage, typed-backpressure, and atomic-exclusion surface are
+  excluded with a reason rather than credited with a pass;
 - a forced native queue overflow and post-overflow sentinel;
 - active dynamic exclusions where the adapter truly supports them;
 - file, directory, and rename bursts;
@@ -90,6 +97,16 @@ Every phase records whether callbacks reached the configured quiet window.
 Multi-phase scenarios do not begin a later mutation after a phase fails to
 quiesce. The fixed topology delay is a discovery/recovery observation window;
 the report keeps it explicit rather than treating it as an unreported constant.
+
+The reconciliation scenario records the uncertainty and reconciliation
+intervals separately, including the public result, coverage transitions,
+ordered subscription-local sequences, exclusion generations, relevant batches,
+root boundary, acknowledgement and callback times, peer delivery, errors,
+post-reconciliation sentinel, and final native-resource state. The successful
+acknowledgement establishes that the root invalidation entered the bounded
+native output path and that its coverage matches the result; callback
+observation is a later, separately bounded phase. Mutations during uncertainty
+or traversal are not counted as reconstructed detailed delivery.
 
 RSS is allocator and high-water-state evidence, not precise ownership. Small
 differences and any single sample are not treated as meaningful. CPU time does
@@ -146,6 +163,35 @@ omitted) is allowed before host preparation:
 ```sh
 node benches/conformance.mjs --quick --output benches/results/conformance-smoke.json --quiet
 ```
+
+Targeted public reconciliation check, also without forced overflow or a saved
+result:
+
+```sh
+node benches/conformance.mjs \
+  --adapter watchbound \
+  --scenario reconciliation \
+  --quick \
+  --strict \
+  --pretty
+```
+
+Modest repeat coverage for ordinary development is available as
+`pnpm test:reconciliation-stress`. Its underlying command uses `--runs` without
+`--quick`, because the quick preset deliberately selects one run:
+
+```sh
+node benches/conformance.mjs \
+  --adapter watchbound \
+  --scenario reconciliation \
+  --runs 5 \
+  --burst-count 100 \
+  --strict
+```
+
+These deterministic callback-block/backpressure checks are not evidence that a
+real inotify queue overflow was induced or recovered. The forced-overflow run
+below remains separately gated on explicit quiet-host preparation.
 
 Final correctness run, including the I/O-heavy forced-overflow case, after the
 user confirms the host is ready:

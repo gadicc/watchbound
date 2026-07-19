@@ -3,6 +3,35 @@
 Status: final first-milestone Linux findings as of 2026-07-19. Performance
 ranges and the continuation decision are in `docs/benchmark-results.md`.
 
+## Second-milestone correctness update
+
+The benchmark's intermittent directory-burst `topology-race` was reproduced
+deterministically by expiring a batch deadline during serialized subtree
+discovery. The engine had treated the expired delivery window as proof of a
+filesystem race, invalidated the root, and discarded otherwise valid detailed
+paths. The worker now completes the watch-before-read topology transition and
+lets the event loop perform the already-bounded flush immediately afterward.
+
+The regression first failed with the measured root-collapse behavior. It now
+passes together with eight live 1,000-directory rounds using a 1 ms batch
+window, a 64-path batch maximum, and a bounded 64-batch output queue. Every
+round retained complete coverage, all 1,000 detailed paths, monotonic sequence
+numbers, 1,001 live directory watches, and the configured batch bound. This was
+a targeted stress check, not a replacement final conformance or benchmark run.
+
+The rebuilt release Node-API proof then passed all eight serial focused harness
+trials with zero missed or duplicate paths, invalidations, drops, asynchronous
+errors, or cleanup errors. The raw schema-2 report is
+`benches/results/conformance-second-milestone-directory-burst-targeted.json`
+(SHA-256 `11ce5527f1f2f7a7747070b7dcf71e4e939cb4acfcf0a0eaef4ec29bb899629a`),
+with source digest
+`254b88cd4055af4e365f6524c7e7e658595686ee3e51fb47664cc430370c2c32`
+and native artifact SHA-256
+`43a39a898613560d7ed34042288ee2535dabe6ac20000921a7c5ce1f74d87eaf`.
+All-path delivery ranged from 6.20 to 17.96 ms, but the host was not prepared or
+sampled for final performance work (load average 3.20 to 3.19 on 24 logical
+CPUs, `powersave`, tmpfs), so that range is functionality context only.
+
 ## Exact Codex JavaScript helper
 
 The baseline imports
@@ -64,10 +93,11 @@ Linux backend does not surface.
 
 ## Watchbound prototype
 
-- Thirteen filesystem integration tests cover initial recursive coverage,
+- Fourteen filesystem integration tests cover initial recursive coverage,
   newly created topology, moved-in populated trees with a later deep write,
-  bounded batching and sequence order, current watch-limit/deferred accounting,
-  symlink ancestry, direct and ancestor root replacement, and joined disposal.
+  bounded file and repeated directory bursts with sequence order, current
+  watch-limit/deferred accounting, symlink ancestry, direct and ancestor root
+  replacement, and joined disposal.
   Ten backend unit tests cover overflow, full-consumer-queue bounds, unmount and
   unexpected watch loss, symlink/descriptor-alias defenses, uncertainty
   precedence, stale root establishment, and interruptible runtime scanning.

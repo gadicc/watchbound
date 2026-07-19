@@ -69,5 +69,9 @@ Dynamic exclusions are deliberately not faked by unsubscribe/resubscribe.
 Their planned contract is a full exclusion-set replacement tagged with a
 monotonic generation. The engine worker will apply removal, addition, and the
 necessary conservative invalidation as one serialized topology transition and
-acknowledge the generation only afterward. The details remain unstabilized
-until multi-root scheduling is designed.
+acknowledge the generation only afterward. Batches will identify the generation
+under which paths were selected, and stale or concurrent generations will fail
+explicitly. Inputs are byte-exact, normalized root-relative directory prefixes;
+Git, glob, workspace, and UI policy remain consumer concerns. The shared-runtime
+ordering and transaction design are recorded in `docs/architecture.md` and must
+land before this capability is advertised.

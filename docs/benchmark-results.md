@@ -2,6 +2,25 @@
 
 Status: first Linux feasibility measurement complete on 2026-07-19.
 
+## Second-milestone follow-up (not a benchmark replacement)
+
+The intermittent directory-burst failure was traced to an engine-side false
+positive rather than an inotify loss signal. Runtime subtree discovery used the
+batch deadline as a checkpoint; if the deadline expired while installing a
+directory watch, the worker labelled that scheduling delay `topology-race`,
+collapsed accumulated detail to the root, and continued. That exactly explains
+the measured sample's small detailed prefix followed by two root invalidations.
+
+The second-milestone change keeps discovery serialized with its triggering
+event and flushes immediately after the scan. Disposal can still interrupt the
+scan, and native overflow, unexpected watch loss, unmount, descriptor aliasing,
+and real topology failures still report uncertainty. A deterministic deadline
+regression and an eight-round, 1,000-directory live stress test with a 1 ms
+batch window and 64-path batches now pass with complete detailed coverage.
+
+These are targeted correctness checks. The final JSON, hashes, ranges, and
+decision below remain the first-milestone evidence and have not been replaced.
+
 ## Decision
 
 Proceed to a second Linux engineering milestone for Watchbound. Do not switch

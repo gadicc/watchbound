@@ -72,7 +72,6 @@ impl RootIdentity {
 
 #[derive(Clone, Copy)]
 struct RuntimeControl<'a> {
-    sender: &'a SyncSender<ChangeBatch>,
     stop: &'a AtomicBool,
 }
 
@@ -269,7 +268,7 @@ impl InitializedWatcher {
                 event.wd,
                 event.mask,
                 name.as_deref(),
-                Some(RuntimeControl { sender, stop }),
+                Some(RuntimeControl { stop }),
             );
             self.stats.raw_events.fetch_add(1, Ordering::Relaxed);
             if self.pending_paths.len() >= self.options.max_batch_paths || self.batch_is_due() {
@@ -536,18 +535,15 @@ impl InitializedWatcher {
             .max_by_key(|reason| partial_priority(*reason))
     }
 
-    fn runtime_checkpoint(&mut self, control: Option<RuntimeControl<'_>>) -> bool {
+    fn runtime_checkpoint(&self, control: Option<RuntimeControl<'_>>) -> bool {
         let Some(control) = control else {
             return true;
         };
-        if control.stop.load(Ordering::Acquire) {
-            return false;
-        }
-        if self.batch_is_due() {
-            self.mark_uncertain(UncertainReason::TopologyRace, self.root.clone());
-            self.flush(control.sender);
-        }
-        true
+        // A topology scan is part of handling the event that discovered it.
+        // The caller flushes immediately after that event, once every
+        // discovered directory is watched. Crossing the batch deadline here
+        // is therefore latency, not evidence that filesystem coverage raced.
+        !control.stop.load(Ordering::Acquire)
     }
 
     fn ensure_root_accounted(&self) -> io::Result<()> {
@@ -916,16 +912,9 @@ mod tests {
         let mut watcher = watcher(&root);
         let watched_before = watcher.by_path.len();
         fs::create_dir_all(incoming.join("nested")).unwrap();
-        let (sender, _receiver) = mpsc::sync_channel(1);
         let stop = AtomicBool::new(true);
 
-        watcher.scan_subtree_with_control(
-            &incoming,
-            Some(RuntimeControl {
-                sender: &sender,
-                stop: &stop,
-            }),
-        );
+        watcher.scan_subtree_with_control(&incoming, Some(RuntimeControl { stop: &stop }));
 
         assert_eq!(watcher.by_path.len(), watched_before);
         assert!(
@@ -940,7 +929,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_scan_reports_uncertainty_when_it_crosses_the_batch_deadline() {
+    fn runtime_scan_keeps_detail_when_it_crosses_the_batch_deadline() {
         let root = temporary_root("scan-deadline");
         let incoming = root.join("incoming");
         let mut watcher = watcher(&root);
@@ -950,22 +939,20 @@ mod tests {
         watcher.queue_path(incoming.clone());
         watcher.pending_started = Some(Instant::now() - watcher.options.batch_window);
 
-        watcher.scan_subtree_with_control(
-            &incoming,
-            Some(RuntimeControl {
-                sender: &sender,
-                stop: &stop,
-            }),
-        );
+        watcher.scan_subtree_with_control(&incoming, Some(RuntimeControl { stop: &stop }));
 
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert_eq!(watcher.coverage(), Coverage::Complete);
+        assert!(watcher.by_path.contains_key(&incoming));
+        assert!(watcher.by_path.contains_key(&incoming.join("nested")));
+
+        watcher.flush(&sender);
         let batch = receiver.recv().unwrap();
-        assert_eq!(batch.invalidated_paths, vec![root.clone()]);
-        assert_eq!(
-            batch.coverage,
-            Coverage::Uncertain {
-                reason: UncertainReason::TopologyRace
-            }
-        );
+        assert_eq!(batch.invalidated_paths, vec![incoming]);
+        assert_eq!(batch.coverage, Coverage::Complete);
 
         drop(watcher);
         fs::remove_dir_all(root).unwrap();

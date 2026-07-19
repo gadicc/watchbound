@@ -163,6 +163,65 @@ fn batches_a_file_burst_with_monotonic_sequences() {
 }
 
 #[test]
+fn preserves_complete_detailed_coverage_across_repeated_directory_bursts() {
+    const ROUNDS: usize = 8;
+    const DIRECTORIES_PER_ROUND: usize = 1_000;
+
+    for round in 0..ROUNDS {
+        let root = TestDir::new(&format!("directory-burst-{round}"));
+        let engine = Engine::new();
+        let mut burst_options = options();
+        burst_options.batch_window = Duration::from_millis(1);
+        burst_options.max_batch_paths = 64;
+        burst_options.output_queue_capacity = 64;
+        let mut subscription = engine.subscribe(root.path(), burst_options).unwrap();
+        let expected: BTreeSet<_> = (0..DIRECTORIES_PER_ROUND)
+            .map(|index| root.path().join(format!("directory-{index:04}")))
+            .collect();
+
+        for path in &expected {
+            fs::create_dir(path).unwrap();
+        }
+
+        let deadline = Instant::now() + TIMEOUT;
+        let mut observed = BTreeSet::new();
+        let mut previous_sequence = None;
+        while observed != expected && Instant::now() < deadline {
+            let batch = subscription
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("directory burst batch");
+            assert_eq!(batch.coverage, Coverage::Complete, "round {round}");
+            assert!(
+                batch.invalidated_paths.len() <= 64,
+                "round {round} exceeded the batch path bound"
+            );
+            assert!(
+                !batch.invalidated_paths.contains(&root.path().to_path_buf()),
+                "round {round} collapsed detailed coverage to the root"
+            );
+            if let Some(previous) = previous_sequence {
+                assert!(batch.sequence > previous, "round {round}");
+            }
+            previous_sequence = Some(batch.sequence);
+            observed.extend(
+                batch
+                    .invalidated_paths
+                    .into_iter()
+                    .filter(|path| expected.contains(path)),
+            );
+        }
+
+        assert_eq!(observed, expected, "round {round}");
+        assert_eq!(
+            subscription.stats().watched_directories,
+            DIRECTORIES_PER_ROUND + 1,
+            "round {round}"
+        );
+        subscription.dispose().unwrap();
+    }
+}
+
+#[test]
 fn reports_partial_coverage_when_the_watch_limit_is_reached() {
     let root = TestDir::new("limit");
     for index in 0..5 {

@@ -1,7 +1,8 @@
 # Feasibility architecture and decision record
 
-Status: first Linux feasibility milestone complete; continue to a second
-engine milestone without product integration or publication.
+Status: first Linux feasibility milestone complete; the second-milestone
+directory-burst correctness gate is fixed in targeted stress, without product
+integration or publication.
 
 ## Decision
 
@@ -98,7 +99,10 @@ resolves.
 3. Read native events on a dedicated thread and deduplicate conservative paths
    during a short batch window.
 4. On a created or moved-in directory, scan the populated subtree before the
-   corresponding batch is made observable.
+   corresponding batch is made observable. The topology transition is a
+   serialization barrier: an expired batch window delays that flush until the
+   scan finishes, but does not by itself imply uncertain coverage. Path-count
+   and output-queue bounds remain enforced when the event handler returns.
 5. On a moved-out or deleted directory, remove known descendant watches.
 6. On native queue overflow, invalidate the root and report uncertain coverage.
 7. On root move/delete, invalidate the root and report uncertain coverage. A
@@ -119,8 +123,97 @@ assumption. Root identity replacement is detected by the periodic check above.
 The first prototype uses one inotify instance and worker per subscription. This
 keeps the state machine inspectable while testing semantics. Process-wide fair
 allocation and a shared event thread remain the largest deliberate architecture
-gap; they must be designed together in the next milestone rather than simulated
-by a public abstraction now.
+gap; they must be implemented together rather than simulated by a public
+abstraction.
+
+## Second-milestone topology-race resolution
+
+The measured directory-burst invalidations were caused by conflating a batch
+deadline with a topology-integrity deadline. While handling a directory create,
+the worker queues its path, installs the new watch, and reads the directory. If
+that work crossed the batch window, the prototype previously marked coverage
+uncertain and collapsed all pending paths to the root even though event handling
+was serialized and no native loss signal had occurred.
+
+Topology discovery is now allowed to finish before the caller performs the due
+flush. This preserves the watch-before-read invariant for populated moved-in
+trees, keeps the configured maximum paths per batch and bounded output channel,
+and retains interruptible joined disposal. `topology-race` remains reserved for
+actual evidence: unmount, unexpected `IN_IGNORED`, descriptor aliasing, malformed
+or failed native reads, and poll failures. Event overflow and root replacement
+keep their stronger typed reasons.
+
+## Next architecture assessment
+
+Shared scheduling and allocation must precede dynamic exclusions. Exclusion
+updates need a serialized topology transaction and acknowledgement boundary;
+building that protocol on the current thread-per-subscription shape would create
+a second command/lifecycle design that the shared runtime would immediately
+replace.
+
+### Shared process-wide runtime
+
+The next engine shape should use one process runtime, one inotify descriptor,
+one command wakeup descriptor, and one joined worker. `Engine` and
+`Subscription` remain opaque handles to it. The worker owns all filesystem
+state; subscribe, exclusion update, and disposal are commands with completion
+acknowledgements rather than concurrent mutations of watcher maps.
+
+The scheduler needs explicit turn bounds for native reads, topology directories,
+and commands, with runnable subscriptions visited round-robin. A large initial
+scan or moved-in tree may yield between directories so other roots can deliver
+events, while the affected subscription keeps its topology transition private
+until that scan completes. Per-subscription batch and output-queue bounds remain
+unchanged.
+
+Watch allocation has two levels: the existing subscription limit and a new
+runtime-wide native-watch budget. A unique kernel watch consumes one global
+token. Because one inotify descriptor can return the same watch descriptor for
+overlapping roots or aliased inodes, the descriptor registry must hold
+reference-counted logical `(subscription, path)` interests and remove the
+kernel watch only after the last interest leaves. Each subscription separately
+reports watched and deferred directories. Allocation and promotion requests are
+served round-robin; resource exhaustion produces partial coverage for the
+affected roots rather than allowing the first large root to monopolize tokens.
+
+Joined disposal becomes a worker command that removes a subscription's logical
+interests, flushes or drops its pending delivery according to the existing
+contract, acknowledges only after no later enqueue can begin, and shuts down the
+process runtime after its final handle is gone. Tests must cover overlapping
+roots, concurrent establishment, fair exhaustion and promotion, slow topology
+scans, per-root backpressure isolation, and disposal during queued work.
+
+### Generation-based atomic exclusions
+
+The caller should supply a complete set of root-relative directory prefixes and
+a strictly increasing generation. The engine validates that the byte-exact
+paths are normalized, relative, and contained by the root; it does not interpret
+Git ignores, globs, workspace mappings, or UI policy. Coverage means coverage of
+the included filesystem topology, and batches carry the exclusion generation
+under which their paths were selected.
+
+An update is one subscription-local scheduler transaction:
+
+1. finish the active event/topology step and flush pending paths tagged with the
+   old generation;
+2. remove logical watch interests below newly excluded prefixes;
+3. scan newly included prefixes with the same watch-before-read and resource
+   accounting rules as ordinary topology discovery;
+4. conservatively invalidate the changed prefixes, split across bounded batches
+   or the root if detail cannot be retained;
+5. publish and acknowledge the new generation only after the topology and
+   coverage snapshot are committed.
+
+The transaction may yield to other subscriptions but not expose a mixed
+generation for its own root. Mutations racing a newly included region cannot be
+reconstructed, so the changed prefix is invalidated even when its scan succeeds.
+Events already queued for a newly excluded watch are suppressed after the
+generation boundary; unexpected watch loss still degrades coverage. Concurrent
+or stale-generation requests fail explicitly rather than being reordered.
+
+This design keeps exclusion decisions with consumers while keeping enforcement,
+native resource reclamation, and truthful included-topology coverage in the
+Rust engine.
 
 ## Binding decision
 

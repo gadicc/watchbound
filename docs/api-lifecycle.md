@@ -279,5 +279,7 @@ has exercised this same lifecycle after supervised genuine `event-overflow`;
 its raw correctness evidence is recorded in `docs/benchmark-results.md` and is
 not a performance reading.
 
-Same-path root replacement remains a separate milestone; see
-`docs/root-replacement-follow-up.md`.
+Same-path root replacement remains unimplemented. Its proposed distinct,
+explicit root-recovery operation and required identity-policy decision are in
+`docs/root-replacement-follow-up.md`; neither manual nor automatic
+reconciliation adopts a replacement identity.

@@ -519,8 +519,9 @@ work but duplicating the surrounding cross-platform product is not sustainable.
 - event-driven root-parent anchoring and same-path replacement recovery (the
   prototype currently detects lexical root identity loss by polling);
 - recovery of a replaced root identity (reconciliation deliberately rejects
-  or retains `root-replaced` rather than attaching to a replacement; the open
-  identity and lifecycle questions are in `docs/root-replacement-follow-up.md`);
+  or retains `root-replaced` rather than attaching to a replacement; the
+  proposed distinct explicit-operation decision and implementation gate are in
+  `docs/root-replacement-follow-up.md`);
 - reconstructed detail for events lost before/during reconciliation (manual and
   automatic recovery both remain root-only);
 - runtime descendant mount insertion/reconciliation and a one-filesystem mode;

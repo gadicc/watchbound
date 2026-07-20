@@ -64,6 +64,10 @@ Sequences begin at one and increase only for successfully delivered batches.
 Every batch also has an `exclusion_generation`; all paths in that batch were
 selected under exactly that committed exclusion set. Generation zero is used
 before the first successful replacement.
+Every batch also carries fixed-size `root_state`: the last explicitly accepted
+Linux `(device, inode)`, a root generation, `attached` or `lost`, and bounded
+loss evidence. Root generation starts at zero and advances once per committed
+root recovery, independently of the exclusion generation.
 If a bounded consumer queue fills, the undelivered detail is replaced by a root
 invalidation and uncertain coverage when delivery can resume.
 
@@ -151,8 +155,8 @@ and a new update cannot begin after disposal. Exclusion configuration lives only
 for that subscription and is released with its topology, deferred records,
 watches, descriptors, and final worker shutdown.
 
-Remaining gaps are automatic retry for non-budget native failures and
-same-path root replacement recovery. Exclusions deliberately do not add
+Remaining gaps include automatic retry for non-budget native failures.
+Exclusions deliberately do not add
 Git/glob policy, detailed event kinds, rename reconstruction, or cross-platform
 support.
 
@@ -190,7 +194,8 @@ The acknowledgement does not imply that a JavaScript callback has already run.
 
 Known `root-replaced` uncertainty is rejected, and a root identity change found
 at either validation point fails reconciliation while retaining
-`root-replaced`. Same-path replacement attachment remains out of scope.
+`root-replaced`. Same-path replacement attachment belongs only to the distinct
+explicit operation below.
 Disposal interrupts or joins an active barrier, releases reconciliation and
 deferred state, and preserves idempotent final-runtime shutdown and the rule
 that no enqueue, callback, update, or reconciliation can begin after disposal
@@ -234,6 +239,50 @@ confirmation. Its heavy path was not run while being implemented; a later
 explicitly confirmed targeted trial passed the lifecycle contract recorded in
 `docs/benchmark-results.md`.
 
+## Explicit root replacement recovery
+
+Rust exposes synchronous `recover_root(RootIdentityPolicy)` plus cloneable
+`RootRecoveryHandle` and `RootStateHandle`. Node exposes asynchronous
+`recoverRoot(policy)`, while the public wrapper requires
+`recoverRoot({ identityPolicy })`. The policies are `original-only`, which
+accepts only the initial identity returning to the lexical root, and
+`accept-replacement`, which accepts exactly the real-directory identity
+captured for that call. There is no default and no alternate path argument.
+`reconcile()` never adopts an identity, and the automatic policy never calls
+root recovery.
+
+Root loss is latched independently of coverage priority. While lost, topology
+growth, deferred promotion, exclusion replacement, and reconciliation are
+blocked even if stronger `event-overflow` coverage is visible. Recovery removes
+the old subscription topology in bounded turns, preserves peer interests and
+the committed exclusion generation, installs or shares each candidate watch
+before reading, and revalidates ancestry and root identity before commit. A
+changed candidate, symlink ancestry, missing/non-directory path, policy
+refusal, or unavailable root watch returns a structured `not-attached` result.
+
+A successful attachment increments root generation and attempts one singleton
+lexical-root boundary under the unchanged exclusion generation. Complete or
+partial coverage with a non-null `boundarySequence` means that exact boundary
+entered the bounded engine queue. If output pressure prevents it, the identity
+can still be attached while the result remains uncertain with a null boundary;
+ordinary reconciliation may then restore coverage. Wrapper root states and
+results are immutable and use bigint identity/counter fields.
+
+When automatic reconciliation is enabled, a user-started call temporarily
+enters one bounded `recovering-root` status. The policy retains only the
+strongest later ordered uncertainty, clears its root block only for an attached
+result, and schedules ordinary reconciliation only for a remaining recoverable
+reason. A rejected or `not-attached` call stays blocked. Disposal joins an
+already admitted recovery and prevents later callbacks, retries, or filesystem
+work.
+
+The ordinary `root-replacement-recovery` conformance scenario performs direct
+and ancestor replacement on one public subscription, proving policy refusal
+and explicit adoption, exact result/boundary matching, exclusion preservation,
+peer progress, monotonic sequence/root generations, a deep post-recovery
+sentinel, and joined cleanup. Its first strict quick trial passed all 15 checks
+with forced overflow disabled on 2026-07-20.
+
 ## Opt-in automatic reconciliation policy
 
 The JavaScript wrapper accepts `automaticReconciliation: true` or a bounded
@@ -242,7 +291,7 @@ disabled by default. Defaults are three attempts, 25 ms initial delay, and a
 1,000 ms cap; public validation limits attempts to 16 and delays to 10–60,000
 ms. The delay for attempt N is `min(initialDelayMs * 2^(N-1), maxDelayMs)`.
 
-The policy observes native batch coverage before invoking the user's callback.
+The policy observes native batches before invoking the user's callback.
 Only `event-overflow`, `topology-race`, and `consumer-backpressure` set its one
 pending-loss bit. Repeats before the timer fires are coalesced. A loss during a
 barrier requests exactly one later attempt after the active call settles. A
@@ -261,11 +310,12 @@ reconstructed or credited.
 `subscription.automaticReconciliation` is one immutable current snapshot, not
 an unbounded history. It reports scheduled/reconciling progress, successful
 coverage and generation, terminal incomplete coverage, bounded retry
-exhaustion with a capped error message, `root-replaced` as blocked, and disposal
-state. Exhaustion latches the automatic policy rather than restarting on every
-batch carrying sticky uncertainty; explicit manual reconciliation remains
-available. Root replacement cancels a pending timer and can never receive
-automatic recovery credit.
+exhaustion with a capped error message, `root-replaced` as blocked,
+`recovering-root` while a user-started explicit recovery owns the coordination
+slot, and disposal state. Exhaustion latches the automatic policy rather than
+restarting on every batch carrying sticky uncertainty; explicit manual
+reconciliation remains available. Root replacement cancels a pending timer and
+can never receive automatic recovery credit.
 
 `dispose()` closes policy admission and cancels its timer before beginning
 native disposal, then joins both native disposal and an active policy attempt.
@@ -279,7 +329,7 @@ has exercised this same lifecycle after supervised genuine `event-overflow`;
 its raw correctness evidence is recorded in `docs/benchmark-results.md` and is
 not a performance reading.
 
-Same-path root replacement remains unimplemented. Its proposed distinct,
-explicit root-recovery operation and required identity-policy decision are in
+The implemented distinct root-recovery operation and required identity-policy
+decision are in
 `docs/root-replacement-follow-up.md`; neither manual nor automatic
 reconciliation adopts a replacement identity.

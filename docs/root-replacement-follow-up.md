@@ -1,14 +1,16 @@
 # Root identity recovery decision
 
-Status: design decision proposed on 2026-07-20; implementation is not approved
-or present. `rootReplacementRecovery` remains false, `reconcile()` still rejects
-known `root-replaced`, and automatic reconciliation remains blocked.
+Status: approved and implemented on 2026-07-20. `rootReplacementRecovery` is
+true across the engine, Node binding, wrapper, and conformance adapter.
+`reconcile()` still rejects known `root-replaced`, automatic reconciliation
+still never adopts an identity, and explicit recovery requires a policy on
+every call.
 
 ## Decision
 
 Do not make `reconcile()` attach to whatever now occupies the same pathname.
-Add a distinct, explicit root-recovery operation only if implementation is
-approved. The caller must provide an identity policy on every call:
+The implemented API adds a distinct, explicit root-recovery operation. The
+caller must provide an identity policy on every call:
 
 - `original-only` permits recovery only when the originally accepted
   `(device, inode)` is back at the immutable lexical root;
@@ -90,10 +92,10 @@ interrupted explicitly. Existing old-identity interests may remain until root
 recovery or disposal, and overlapping subscriptions retain their independent
 interests.
 
-## Proposed operation and result
+## Implemented operation and result
 
-Tentative surface names are Rust `recover_root`, Node/JavaScript `recoverRoot`,
-and a cloneable Rust `RootRecoveryHandle`. Names can change before API
+The surfaces are Rust `recover_root`, Node/JavaScript `recoverRoot`, and a
+cloneable Rust `RootRecoveryHandle`. Names can still change before API
 stabilization, but the distinct operation and required policy cannot.
 
 ```ts
@@ -237,9 +239,9 @@ start after the disposal promise resolves, and wrapper timers cannot restart
 recovery afterward. Repeated disposal remains the same promise/idempotent
 result.
 
-## TDD and conformance gate
+## TDD and conformance evidence
 
-If implementation is approved, deterministic failing tests come first for:
+Deterministic tests cover:
 
 - direct-root replacement adoption and original-identity restoration;
 - ancestor/path mismatch recovery without ancestor watches or false cause
@@ -261,20 +263,21 @@ If implementation is approved, deterministic failing tests come first for:
 - interruption, concurrent idempotent disposal, final resource restoration,
   and no later enqueue, callback, retry, or root recovery.
 
-Add one ordinary, non-heavy public conformance scenario using temporary direct
+The ordinary, non-heavy public `root-replacement-recovery` conformance scenario uses temporary direct
 and ancestor replacement. It must prove one public subscription, no hidden
 unsubscribe/resubscribe, exact recovery result/boundary matching, exclusions,
 peer progress, a post-recovery deep sentinel, and joined cleanup. It does not
 need forced overflow; destructive or overflow stress remains separately gated.
 
-After focused tests, run `pnpm build:node`, `pnpm test`, and `pnpm check`, then
-review specifically for identity confusion, symlink escape, watch-after-read,
-generation mixing, hidden resubscription, reconstructed detail, unbounded work,
-peer starvation, and disposal leaks.
+Its first strict quick Watchbound trial passed all 15 checks on 2026-07-20 with
+forced overflow disabled. Final workspace verification is recorded in the
+Phase 3 commit handoff. The review specifically covers identity confusion,
+symlink escape, watch-after-read, generation mixing, hidden resubscription,
+reconstructed detail, bounded work, peer starvation, and disposal leaks.
 
 ## Recommendation
 
-Go on this explicit-operation design, subject to user approval, but no-go on
+The implemented decision is go on this explicit-operation design, but no-go on
 automatic identity adoption or extending `reconcile()` to accept a new
 identity. The first implementation slice must latch root loss independently
 and block every existing hidden topology-growth path before recovery is added.

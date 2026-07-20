@@ -31,6 +31,12 @@ subscription and joined disposal can run as Node-API asynchronous tasks on the
 existing worker pool. A dedicated bridge thread waits for Rust engine batches
 and crosses into JavaScript through one bounded thread-safe function.
 
+The same representation-only rule applies to root recovery. Node converts
+fixed-size `(device, inode)` and root-state fields to bigint/string objects,
+validates the two policy spellings, and runs the blocking `RootRecoveryHandle`
+as an asynchronous task. Candidate selection, ancestry checks, topology,
+coverage, exclusions, and boundary ordering remain entirely in the engine.
+
 ## Lifecycle requirements
 
 The bridge must preserve two independent bounds: the engine output channel and
@@ -40,6 +46,8 @@ per native event.
 Disposal is asynchronous so JavaScript remains able to drain or cancel native
 callbacks while the engine and bridge join. The disposal promise may resolve
 only after no queued or in-flight callback can newly enter JavaScript.
+An already admitted reconciliation, exclusion update, or root recovery is
+joined or explicitly interrupted by the same lifecycle boundary.
 
 One cleanup hook is registered per Node environment. Each subscription adds a
 removable weak registration; environment teardown signals all still-live

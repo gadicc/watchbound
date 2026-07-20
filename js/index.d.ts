@@ -25,7 +25,54 @@ export interface ChangeBatch {
   readonly invalidatedPaths: readonly string[];
   readonly invalidatedPathBytes: readonly Uint8Array[];
   readonly pathEncodingCollapsed: boolean;
+  readonly rootState: RootState;
   readonly coverage: Coverage;
+}
+
+export interface RootIdentity {
+  readonly device: bigint;
+  readonly inode: bigint;
+}
+
+export type RootAttachment = "attached" | "lost";
+
+export type RootLossEvidence =
+  | "root-self-event"
+  | "root-watch-loss"
+  | "path-identity-mismatch"
+  | "multiple";
+
+export interface RootState {
+  readonly generation: bigint;
+  readonly identity: RootIdentity;
+  readonly attachment: RootAttachment;
+  readonly lossEvidence?: RootLossEvidence;
+}
+
+export type RootIdentityPolicy = "original-only" | "accept-replacement";
+
+export type RootRecoveryAttachment =
+  | "original-restored"
+  | "replacement-adopted"
+  | "not-attached";
+
+export type RootRecoveryFailureReason =
+  | "replacement-not-accepted"
+  | "candidate-missing"
+  | "candidate-not-directory"
+  | "symlink-ancestry"
+  | "identity-unstable"
+  | "root-watch-unavailable";
+
+export interface RootRecoveryResult {
+  readonly attachment: RootRecoveryAttachment;
+  readonly reason?: RootRecoveryFailureReason;
+  readonly previousRootState: RootState;
+  readonly candidateIdentity?: RootIdentity;
+  readonly currentRootState: RootState;
+  readonly exclusionGeneration: bigint;
+  readonly coverage: Coverage;
+  readonly boundarySequence: bigint | null;
 }
 
 export interface SubscriptionOptions {
@@ -58,6 +105,7 @@ export interface Stats {
 export interface Subscription {
   readonly initialCoverage: Coverage;
   readonly exclusionGeneration: bigint;
+  readonly rootState: RootState;
   readonly automaticReconciliation: AutomaticReconciliationStatus;
   stats(): Stats;
   replaceExclusions(
@@ -65,6 +113,9 @@ export interface Subscription {
     prefixes: readonly (string | Uint8Array)[],
   ): Promise<Coverage>;
   reconcile(): Promise<ReconciliationResult>;
+  recoverRoot(options: {
+    identityPolicy: RootIdentityPolicy;
+  }): Promise<RootRecoveryResult>;
   dispose(): Promise<void>;
 }
 
@@ -104,7 +155,11 @@ export type AutomaticReconciliationStatus =
       readonly attempts: number;
       readonly error: string;
     }
-  | { readonly state: "blocked"; readonly reason: "root-replaced" };
+  | { readonly state: "blocked"; readonly reason: "root-replaced" }
+  | {
+      readonly state: "recovering-root";
+      readonly identityPolicy: RootIdentityPolicy;
+    };
 
 export interface Capabilities {
   recursive: true;

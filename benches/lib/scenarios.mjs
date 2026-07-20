@@ -21,6 +21,7 @@ export const scenarioNames = Object.freeze([
   "normal-deep-change",
   "moved-in-subtree",
   "root-replacement",
+  "root-replacement-recovery",
   "watch-limit",
   "bridge-backpressure",
   "queue-overflow",
@@ -49,6 +50,7 @@ export function scenarioRequirement(name) {
   if (name === "dynamic-exclusions") return "dynamicExclusions";
   if (name === "bridge-backpressure") return "consumerBackpressure";
   if (name === "reconciliation") return "reconciliation";
+  if (name === "root-replacement-recovery") return "rootReplacementRecovery";
   if (name === "automatic-reconciliation") return "automaticReconciliation";
   if (name === "overflow-reconciliation") return "overflowReconciliation";
   if (name === "automatic-overflow-reconciliation") {
@@ -113,6 +115,28 @@ export function prepareScenario(name, config, runDirectory) {
       root,
       movedRoot: path.join(runDirectory, "moved-root"),
       replacementTarget: path.join(root, "new", "deep", "target.txt"),
+    };
+  }
+  if (name === "root-replacement-recovery") {
+    const activeAncestor = path.join(runDirectory, "active");
+    const recoveryRoot = path.join(activeAncestor, "root");
+    const peerRoot = path.join(runDirectory, "peer-root");
+    fs.mkdirSync(path.join(recoveryRoot, "visible", "old"), { recursive: true });
+    fs.mkdirSync(path.join(recoveryRoot, "excluded", "current"), { recursive: true });
+    fs.mkdirSync(peerRoot);
+    return {
+      root: recoveryRoot,
+      activeAncestor,
+      peerRoot,
+      movedDirectRoot: path.join(runDirectory, "moved-direct-root"),
+      movedAncestor: path.join(runDirectory, "moved-ancestor"),
+      excludedDirectory: "excluded",
+      directDeepTarget: path.join(recoveryRoot, "visible", "direct", "deep", "target.txt"),
+      directExcludedTarget: path.join(recoveryRoot, "excluded", "future", "ignored.txt"),
+      ancestorDeepTarget: path.join(recoveryRoot, "visible", "ancestor", "deep", "target.txt"),
+      ancestorExcludedTarget: path.join(recoveryRoot, "excluded", "later", "ignored.txt"),
+      postRecoveryTarget: path.join(recoveryRoot, "visible", "ancestor", "deep", "after.txt"),
+      peerTarget: path.join(peerRoot, "during-recovery.txt"),
     };
   }
   if (name === "queue-overflow") {
@@ -857,6 +881,202 @@ async function runRootReplacement(adapter, prepared, config) {
     };
   } finally {
     disposal = await disposeMeasured(started.session);
+  }
+}
+
+async function runRootReplacementRecovery(adapter, prepared, config) {
+  const recorder = createRecorder(prepared.root);
+  const peerRecorder = createRecorder(prepared.peerRoot);
+  const primary = await subscribeMeasured(adapter, prepared, config, recorder);
+  const peer = await subscribeMeasured(
+    adapter,
+    { ...prepared, root: prepared.peerRoot },
+    config,
+    peerRecorder,
+  );
+  let disposed = false;
+  try {
+    await requirePhaseQuiescence(recorder, config, "primary subscription startup");
+    await requirePhaseQuiescence(peerRecorder, config, "peer subscription startup");
+    await primary.session.updateExclusions([prepared.excludedDirectory]);
+    await requirePhaseQuiescence(recorder, config, "exclusion update");
+
+    const originalRootState = primary.session.rootState;
+    const directCheckpoint = recorder.checkpoint();
+    fs.renameSync(prepared.root, prepared.movedDirectRoot);
+    fs.mkdirSync(path.dirname(prepared.directDeepTarget), { recursive: true });
+    fs.writeFileSync(prepared.directDeepTarget, "direct replacement\n");
+    fs.mkdirSync(path.dirname(prepared.directExcludedTarget), { recursive: true });
+    fs.writeFileSync(prepared.directExcludedTarget, "excluded\n");
+    const scanCount = Math.max(128, Math.min(config.burstCount * 2, 512));
+    for (let index = 0; index < scanCount; index += 1) {
+      fs.mkdirSync(path.join(prepared.root, "visible", "scan", numbered(index)), {
+        recursive: true,
+      });
+    }
+    const directLossObserved = await waitFor(
+      () => primary.session.rootState?.attachment === "lost",
+      config.timeoutMs,
+    );
+    await requirePhaseQuiescence(recorder, config, "direct root loss");
+    const directLossBatches = recorder.batchesSince(directCheckpoint);
+
+    const refused = await primary.session.recoverRoot("original-only");
+    const peerCheckpoint = peerRecorder.checkpoint();
+    const recoveryStartedAtMs = nowMs();
+    const directRecoveryPromise = primary.session.recoverRoot("accept-replacement");
+    fs.writeFileSync(prepared.peerTarget, "peer\n");
+    const peerDelivered = await waitFor(
+      () => peerRecorder.pathCountSince(peerCheckpoint, prepared.peerTarget) > 0,
+      config.timeoutMs,
+    );
+    const directRecovery = await directRecoveryPromise;
+    const recoveryAcknowledgedAtMs = nowMs();
+    const directBoundaryObserved = await waitFor(
+      () => recorder.batchesSince(directCheckpoint).some((batch) =>
+        batch.sequence === directRecovery.boundarySequence),
+      config.timeoutMs,
+    );
+    await requirePhaseQuiescence(recorder, config, "direct root recovery");
+    const directBatches = recorder.batchesSince(directCheckpoint);
+    const directBoundary = directBatches.find((batch) =>
+      batch.sequence === directRecovery.boundarySequence);
+    const peerBatch = peerRecorder.batchesSince(peerCheckpoint).find((batch) =>
+      batch.paths.includes(path.resolve(prepared.peerTarget)));
+
+    const ancestorCheckpoint = recorder.checkpoint();
+    fs.renameSync(prepared.activeAncestor, prepared.movedAncestor);
+    fs.mkdirSync(path.dirname(prepared.ancestorDeepTarget), { recursive: true });
+    fs.writeFileSync(prepared.ancestorDeepTarget, "ancestor replacement\n");
+    fs.mkdirSync(path.dirname(prepared.ancestorExcludedTarget), { recursive: true });
+    fs.writeFileSync(prepared.ancestorExcludedTarget, "excluded\n");
+    const ancestorLossObserved = await waitFor(
+      () => primary.session.rootState?.attachment === "lost",
+      config.timeoutMs,
+    );
+    await requirePhaseQuiescence(recorder, config, "ancestor root loss");
+    const ancestorRecovery = await primary.session.recoverRoot("accept-replacement");
+    const ancestorBoundaryObserved = await waitFor(
+      () => recorder.batchesSince(ancestorCheckpoint).some((batch) =>
+        batch.sequence === ancestorRecovery.boundarySequence),
+      config.timeoutMs,
+    );
+    await requirePhaseQuiescence(recorder, config, "ancestor root recovery");
+    const ancestorBatches = recorder.batchesSince(ancestorCheckpoint);
+    const ancestorBoundary = ancestorBatches.find((batch) =>
+      batch.sequence === ancestorRecovery.boundarySequence);
+
+    const sentinelCheckpoint = recorder.checkpoint();
+    fs.appendFileSync(prepared.postRecoveryTarget, "after recovery\n");
+    const sentinelObservation = await observeExpected(
+      recorder,
+      sentinelCheckpoint,
+      [prepared.postRecoveryTarget],
+      config,
+    );
+    const allPrimaryBatches = recorder.batchesSince({ batchIndex: 0, atMs: 0 });
+    const operationEvidence = primary.session.operationEvidence();
+
+    const [primaryDisposal, peerDisposal] = await Promise.all([
+      disposeMeasured(primary.session),
+      disposeMeasured(peer.session),
+    ]);
+    disposed = true;
+    const callbacksAtDisposal = recorder.batchCount + peerRecorder.batchCount;
+    fs.appendFileSync(prepared.postRecoveryTarget, "after disposal\n");
+    fs.appendFileSync(prepared.peerTarget, "after disposal\n");
+    await sleep(config.disposalObservationMs);
+    const callbacksAfterDisposal = recorder.batchCount + peerRecorder.batchCount;
+    const finalStats = await safeStats(primary.session);
+    const peerFinalStats = await safeStats(peer.session);
+
+    const boundaryMatches = (boundary, result, generation) =>
+      boundary?.paths.length === 1 &&
+      boundary.paths[0] === path.resolve(prepared.root) &&
+      boundary.sequence === result.boundarySequence &&
+      boundary.exclusionGeneration === "1" &&
+      boundary.rootState?.generation === generation &&
+      boundary.rootState?.attachment === "attached" &&
+      sameCoverage(boundary.coverage, result.coverage);
+    const excludedPathsStayedHidden = allPrimaryBatches.every((batch) =>
+      !batch.paths.includes(path.resolve(prepared.directExcludedTarget)) &&
+      !batch.paths.includes(path.resolve(prepared.ancestorExcludedTarget))
+    );
+    return {
+      subscription: primary.measurement,
+      peerSubscription: peer.measurement,
+      originalRootState,
+      directLossBatches,
+      refused,
+      directRecovery,
+      directBoundary,
+      ancestorRecovery,
+      ancestorBoundary,
+      sentinelObservation,
+      operationEvidence,
+      disposal: { primary: primaryDisposal, peer: peerDisposal },
+      finalStats,
+      peerFinalStats,
+      checks: [
+        check("direct-root-loss-observed", directLossObserved),
+        check(
+          "original-only-refused-replacement",
+          refused.attachment === "not-attached" &&
+            refused.reason === "replacement-not-accepted" &&
+            refused.boundarySequence == null,
+        ),
+        check(
+          "direct-replacement-adopted",
+          directRecovery.attachment === "replacement-adopted" &&
+            directRecovery.currentRootState?.generation === "1" &&
+            directRecovery.exclusionGeneration === "1" &&
+            directRecovery.coverage?.state === "complete",
+        ),
+        check(
+          "direct-singleton-boundary-matches-result",
+          directBoundaryObserved && boundaryMatches(directBoundary, directRecovery, "1"),
+        ),
+        check(
+          "peer-progressed-during-bounded-recovery",
+          peerDelivered &&
+            peerBatch?.atMs >= recoveryStartedAtMs &&
+            peerBatch?.atMs <= recoveryAcknowledgedAtMs,
+        ),
+        check("ancestor-root-loss-observed", ancestorLossObserved),
+        check(
+          "ancestor-replacement-adopted-with-path-evidence",
+          ancestorRecovery.attachment === "replacement-adopted" &&
+            ancestorRecovery.previousRootState?.lossEvidence === "path-identity-mismatch" &&
+            ancestorRecovery.currentRootState?.generation === "2",
+        ),
+        check(
+          "ancestor-singleton-boundary-matches-result",
+          ancestorBoundaryObserved && boundaryMatches(ancestorBoundary, ancestorRecovery, "2"),
+        ),
+        check("committed-exclusions-stayed-hidden", excludedPathsStayedHidden),
+        check(
+          "one-original-public-subscription-used",
+          operationEvidence.publicSubscriptionCreations === 1 &&
+            operationEvidence.rootRecoveryCalls === 3 &&
+            operationEvidence.rootRecoveryCallsOnOriginalSubscription === 3,
+        ),
+        check("primary-sequences-stayed-monotonic", countersStrictlyIncrease(allPrimaryBatches)),
+        check("post-recovery-deep-sentinel-delivered", deliverySucceeded(sentinelObservation)),
+        ...observationHealthChecks("post-root-recovery", sentinelObservation),
+        check(
+          "joined-disposal-released-both-subscriptions",
+          finalStats?.disposed === true &&
+            peerFinalStats?.disposed === true &&
+            Number(finalStats?.directoryWatches ?? 0) === 0 &&
+            Number(peerFinalStats?.directoryWatches ?? 0) === 0 &&
+            callbacksAfterDisposal === callbacksAtDisposal,
+        ),
+      ],
+    };
+  } finally {
+    if (!disposed) {
+      await Promise.allSettled([primary.session.dispose(), peer.session.dispose()]);
+    }
   }
 }
 
@@ -2158,6 +2378,9 @@ export async function runScenario(name, adapter, prepared, config) {
   if (name === "normal-deep-change") return runNormalDeepChange(adapter, prepared, config);
   if (name === "moved-in-subtree") return runMovedInSubtree(adapter, prepared, config);
   if (name === "root-replacement") return runRootReplacement(adapter, prepared, config);
+  if (name === "root-replacement-recovery") {
+    return runRootReplacementRecovery(adapter, prepared, config);
+  }
   if (name === "watch-limit") return runWatchLimit(adapter, prepared, config);
   if (name === "bridge-backpressure") {
     return runBridgeBackpressure(adapter, prepared, config);

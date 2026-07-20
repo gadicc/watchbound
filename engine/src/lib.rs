@@ -44,12 +44,78 @@ pub enum UncertainReason {
     ConsumerBackpressure,
 }
 
+/// The accepted Linux filesystem identity for a subscription root.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RootIdentity {
+    pub device: u64,
+    pub inode: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootAttachment {
+    Attached,
+    Lost,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootLossEvidence {
+    RootSelfEvent,
+    RootWatchLoss,
+    PathIdentityMismatch,
+    Multiple,
+}
+
+/// Fixed-size root identity evidence attached to every batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RootState {
+    pub generation: u64,
+    pub identity: RootIdentity,
+    pub attachment: RootAttachment,
+    pub loss_evidence: Option<RootLossEvidence>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootIdentityPolicy {
+    OriginalOnly,
+    AcceptReplacement,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootRecoveryAttachment {
+    OriginalRestored,
+    ReplacementAdopted,
+    NotAttached,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootRecoveryFailureReason {
+    ReplacementNotAccepted,
+    CandidateMissing,
+    CandidateNotDirectory,
+    SymlinkAncestry,
+    IdentityUnstable,
+    RootWatchUnavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RootRecoveryResult {
+    pub attachment: RootRecoveryAttachment,
+    pub reason: Option<RootRecoveryFailureReason>,
+    pub previous_root_state: RootState,
+    pub candidate_identity: Option<RootIdentity>,
+    pub current_root_state: RootState,
+    pub exclusion_generation: u64,
+    pub coverage: Coverage,
+    pub boundary_sequence: Option<u64>,
+}
+
 /// A conservative set of paths that a consumer should re-evaluate together.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangeBatch {
     pub sequence: u64,
     /// Exclusion-set generation under which every path in this batch was selected.
     pub exclusion_generation: u64,
+    pub root_state: RootState,
     pub invalidated_paths: Vec<PathBuf>,
     pub coverage: Coverage,
 }
@@ -230,7 +296,7 @@ impl Engine {
             overflow_reporting: true,
             dynamic_exclusions: true,
             reconciliation: true,
-            root_replacement_recovery: false,
+            root_replacement_recovery: true,
         }
     }
 
@@ -284,6 +350,7 @@ impl Engine {
                 }),
                 disposed: Condvar::new(),
                 exclusion_generation: AtomicU64::new(0),
+                root_state: established.root_state,
                 topology_transaction_in_flight: AtomicBool::new(false),
                 topology_transaction_finished: Condvar::new(),
             }),
@@ -302,6 +369,7 @@ struct SubscriptionControl {
     lifecycle: Mutex<Lifecycle>,
     disposed: Condvar,
     exclusion_generation: AtomicU64,
+    root_state: Arc<Mutex<RootState>>,
     topology_transaction_in_flight: AtomicBool,
     topology_transaction_finished: Condvar,
 }
@@ -350,6 +418,18 @@ impl Subscription {
         self.control.exclusion_generation.load(Ordering::Acquire)
     }
 
+    pub fn root_state(&self) -> RootState {
+        self.root_state_handle().root_state()
+    }
+
+    /// Returns a cloneable snapshot handle for bindings whose receiving
+    /// subscription is owned by a delivery thread.
+    pub fn root_state_handle(&self) -> RootStateHandle {
+        RootStateHandle {
+            shared: Arc::clone(&self.control.root_state),
+        }
+    }
+
     /// Returns a cloneable command handle for bindings that move the receiving
     /// subscription onto a delivery thread.
     pub fn exclusion_handle(&self) -> ExclusionHandle {
@@ -362,6 +442,12 @@ impl Subscription {
     /// subscription is owned by a delivery thread.
     pub fn reconciliation_handle(&self) -> ReconciliationHandle {
         ReconciliationHandle {
+            control: Arc::clone(&self.control),
+        }
+    }
+
+    pub fn root_recovery_handle(&self) -> RootRecoveryHandle {
+        RootRecoveryHandle {
             control: Arc::clone(&self.control),
         }
     }
@@ -382,6 +468,15 @@ impl Subscription {
     /// root invalidation and final coverage snapshot are committed.
     pub fn reconcile(&self) -> io::Result<ReconciliationResult> {
         self.reconciliation_handle().reconcile()
+    }
+
+    /// Explicitly recovers a lost lexical root under the required identity
+    /// acceptance policy. This never changes the root pathname.
+    pub fn recover_root(
+        &self,
+        identity_policy: RootIdentityPolicy,
+    ) -> io::Result<RootRecoveryResult> {
+        self.root_recovery_handle().recover_root(identity_policy)
     }
 
     /// Joins removal of this subscription from the shared worker. Once this
@@ -519,6 +614,66 @@ impl ExclusionHandle {
 #[derive(Clone)]
 pub struct ReconciliationHandle {
     control: Arc<SubscriptionControl>,
+}
+
+/// A cloneable explicit root-recovery command handle.
+#[derive(Clone)]
+pub struct RootRecoveryHandle {
+    control: Arc<SubscriptionControl>,
+}
+
+/// A cloneable read-only handle to the last root state published by the worker.
+#[derive(Clone)]
+pub struct RootStateHandle {
+    shared: Arc<Mutex<RootState>>,
+}
+
+impl RootStateHandle {
+    pub fn root_state(&self) -> RootState {
+        *self
+            .shared
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl RootRecoveryHandle {
+    pub fn recover_root(
+        &self,
+        identity_policy: RootIdentityPolicy,
+    ) -> io::Result<RootRecoveryResult> {
+        if self
+            .control
+            .topology_transaction_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "a topology transaction is already in progress for this subscription",
+            ));
+        }
+        let _in_flight = InFlightTopologyTransaction(&self.control);
+        let pending = {
+            let lifecycle = self
+                .control
+                .lifecycle
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Lifecycle::Active {
+                runtime,
+                subscription_id,
+            } = &*lifecycle
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "subscription is disposing or disposed",
+                ));
+            };
+            runtime.queue_root_recovery(*subscription_id, identity_policy)?
+        };
+        pending.wait()
+    }
 }
 
 impl ReconciliationHandle {

@@ -51,6 +51,10 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     assert.ok(batches.some((batch) => batch.invalidatedPaths.includes(changed)));
     assert.equal(typeof batches[0].sequence, "bigint");
     assert.equal(batches[0].exclusionGeneration, 0n);
+    assert.equal(batches[0].rootState.generation, 0n);
+    assert.equal(batches[0].rootState.attachment, "attached");
+    assert.equal(typeof batches[0].rootState.identity.device, "bigint");
+    assert.deepEqual(subscription.rootState, batches[0].rootState);
     assert.equal(batches[0].pathEncodingCollapsed, false);
     await Promise.all([subscription.dispose(), subscription.dispose()]);
     assert.equal(subscription.stats().disposed, true);
@@ -398,6 +402,86 @@ test("wrapper does not report root-replaced uncertainty as recovered", async () 
     );
     assert.ok(batches.some((batch) =>
       batch.coverage.state === "uncertain" && batch.coverage.reason === "root-replaced"));
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("wrapper explicitly recovers a replacement without automatic identity adoption", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-root-recovery-"));
+  const root = path.join(parent, "root");
+  const movedRoot = path.join(parent, "moved-root");
+  fs.mkdirSync(path.join(root, "old", "deep"), { recursive: true });
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await subscribe(root, (batch) => batches.push(batch), {
+      batchWindowMs: 5,
+      automaticReconciliation: true,
+    });
+    const original = subscription.rootState;
+    fs.renameSync(root, movedRoot);
+    fs.mkdirSync(path.join(root, "new", "deep"), { recursive: true });
+    await waitFor(
+      () => batches.some((batch) => batch.rootState.attachment === "lost"),
+      "lost root state was not observable",
+    );
+    assert.deepEqual(subscription.automaticReconciliation, {
+      state: "blocked",
+      reason: "root-replaced",
+    });
+
+    const refused = await subscription.recoverRoot({ identityPolicy: "original-only" });
+    assert.equal(refused.attachment, "not-attached");
+    assert.equal(refused.reason, "replacement-not-accepted");
+    assert.equal(refused.boundarySequence, null);
+    assert.equal(subscription.rootState.attachment, "lost");
+    assert.deepEqual(subscription.automaticReconciliation, {
+      state: "blocked",
+      reason: "root-replaced",
+    });
+
+    const recovered = await subscription.recoverRoot({
+      identityPolicy: "accept-replacement",
+    });
+    assert.equal(recovered.attachment, "replacement-adopted");
+    assert.notDeepEqual(recovered.currentRootState.identity, original.identity);
+    assert.equal(recovered.currentRootState.generation, 1n);
+    assert.equal(recovered.currentRootState.attachment, "attached");
+    assert.equal(recovered.exclusionGeneration, 0n);
+    assert.deepEqual(recovered.coverage, { state: "complete" });
+    assert.equal(typeof recovered.boundarySequence, "bigint");
+    assert.ok(Object.isFrozen(recovered));
+    assert.ok(Object.isFrozen(recovered.currentRootState));
+    assert.ok(Object.isFrozen(recovered.currentRootState.identity));
+    assert.deepEqual(subscription.automaticReconciliation, { state: "idle" });
+    await assert.rejects(
+      subscription.recoverRoot({ identityPolicy: "accept-replacement" }),
+      /root identity is still attached/i,
+    );
+    assert.deepEqual(subscription.automaticReconciliation, { state: "idle" });
+    await waitFor(
+      () => batches.some((batch) => batch.sequence === recovered.boundarySequence),
+      "recovery boundary sequence was not delivered",
+    );
+    const boundary = batches.find((batch) => batch.sequence === recovered.boundarySequence);
+    assert.deepEqual(boundary.invalidatedPaths, [root]);
+    assert.deepEqual(boundary.rootState, recovered.currentRootState);
+    assert.deepEqual(boundary.coverage, recovered.coverage);
+
+    const sentinel = path.join(root, "new", "deep", "sentinel.txt");
+    fs.writeFileSync(sentinel, "sentinel");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(sentinel)),
+      "post-recovery deep sentinel was not delivered",
+    );
+    assert.equal(capabilities.rootReplacementRecovery, true);
+    assert.throws(() => subscription.recoverRoot(null), /options must be an object/);
+    assert.throws(
+      () => subscription.recoverRoot({ identityPolicy: "automatic" }),
+      /identityPolicy/,
+    );
   } finally {
     await subscription?.dispose();
     fs.rmSync(parent, { recursive: true, force: true });

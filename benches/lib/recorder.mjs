@@ -19,6 +19,21 @@ function coverageSnapshot(coverage) {
   return coverage == null ? null : { ...coverage };
 }
 
+function rootStateSnapshot(state) {
+  if (state == null) return null;
+  return {
+    generation: normalizedCounter(state.generation),
+    identity: state.identity == null
+      ? null
+      : {
+          device: normalizedCounter(state.identity.device),
+          inode: normalizedCounter(state.identity.inode),
+        },
+    attachment: state.attachment ?? null,
+    lossEvidence: state.lossEvidence ?? null,
+  };
+}
+
 export function createRecorder(root) {
   const batches = [];
   const resolvedRoot = path.resolve(root);
@@ -46,6 +61,7 @@ export function createRecorder(root) {
         ? { code: batch.error.code ?? null, message: batch.error.message ?? String(batch.error) }
         : null,
       coverage: coverageSnapshot(batch?.coverage),
+      rootState: rootStateSnapshot(batch?.rootState),
     });
   }
 
@@ -68,6 +84,7 @@ export function createRecorder(root) {
       rawEventCount: batch.rawEventCount,
       error: batch.error == null ? null : { ...batch.error },
       coverage: coverageSnapshot(batch.coverage),
+      rootState: rootStateSnapshot(batch.rootState),
     };
   }
 

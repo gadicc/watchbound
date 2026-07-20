@@ -67,6 +67,9 @@ export async function subscribe(root, onBatch, options = {}) {
     get exclusionGeneration() {
       return nativeSubscription.exclusionGeneration;
     },
+    get rootState() {
+      return normalizeRootState(nativeSubscription.rootState);
+    },
     get automaticReconciliation() {
       return automaticPolicy?.status() ?? automaticReconciliationDisabled;
     },
@@ -86,6 +89,15 @@ export async function subscribe(root, onBatch, options = {}) {
       return nativeSubscription.replaceExclusions(generation, encoded);
     },
     reconcile: () => nativeSubscription.reconcile(),
+    recoverRoot: (recoveryOptions) => {
+      const identityPolicy = validateRootRecoveryOptions(recoveryOptions);
+      const recover = async () => normalizeRootRecoveryResult(
+        await nativeSubscription.recoverRoot(identityPolicy),
+      );
+      return automaticPolicy
+        ? automaticPolicy.recoverRoot(identityPolicy, recover)
+        : recover();
+    },
     dispose: () =>
       (disposePromise ??= (automaticPolicy
         ? automaticPolicy.dispose(() => nativeSubscription.dispose())
@@ -101,7 +113,7 @@ function createNativeCallback(weakCallbackHolder, resolvedRoot) {
     const holder = weakCallbackHolder.deref();
     if (holder) {
       const batch = normalizeBatch(resolvedRoot, nativeBatch);
-      holder.observeCoverage?.(batch.coverage);
+      holder.observeCoverage?.(batch);
       holder.onBatch(batch);
     }
   };
@@ -130,6 +142,54 @@ function normalizeBatch(root, batch) {
     invalidatedPaths: Object.freeze([...new Set(invalidatedPaths)]),
     invalidatedPathBytes: Object.freeze(invalidatedPathBytes),
     pathEncodingCollapsed,
-    coverage: batch.coverage,
+    rootState: normalizeRootState(batch.rootState),
+    coverage: normalizeCoverage(batch.coverage),
   });
+}
+
+function validateRootRecoveryOptions(options) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("recoverRoot options must be an object");
+  }
+  if (
+    options.identityPolicy !== "original-only" &&
+    options.identityPolicy !== "accept-replacement"
+  ) {
+    throw new TypeError(
+      'identityPolicy must be "original-only" or "accept-replacement"',
+    );
+  }
+  return options.identityPolicy;
+}
+
+function normalizeRootRecoveryResult(result) {
+  return Object.freeze({
+    attachment: result.attachment,
+    ...(result.reason === undefined ? {} : { reason: result.reason }),
+    previousRootState: normalizeRootState(result.previousRootState),
+    ...(result.candidateIdentity === undefined
+      ? {}
+      : { candidateIdentity: normalizeRootIdentity(result.candidateIdentity) }),
+    currentRootState: normalizeRootState(result.currentRootState),
+    exclusionGeneration: result.exclusionGeneration,
+    coverage: normalizeCoverage(result.coverage),
+    boundarySequence: result.boundarySequence ?? null,
+  });
+}
+
+function normalizeRootState(state) {
+  return Object.freeze({
+    generation: state.generation,
+    identity: normalizeRootIdentity(state.identity),
+    attachment: state.attachment,
+    ...(state.lossEvidence === undefined ? {} : { lossEvidence: state.lossEvidence }),
+  });
+}
+
+function normalizeRootIdentity(identity) {
+  return Object.freeze({ device: identity.device, inode: identity.inode });
+}
+
+function normalizeCoverage(coverage) {
+  return Object.freeze({ ...coverage });
 }

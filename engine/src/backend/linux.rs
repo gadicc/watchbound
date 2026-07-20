@@ -14,8 +14,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::{
-    ChangeBatch, Coverage, PartialReason, ReconciliationResult, RuntimeStats, SharedStats,
-    SubscriptionOptions, UncertainReason,
+    ChangeBatch, Coverage, PartialReason, ReconciliationResult, RootAttachment, RootIdentity,
+    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
+    RootRecoveryResult, RootState, RuntimeStats, SharedStats, SubscriptionOptions, UncertainReason,
 };
 
 const WATCH_MASK: u32 = libc::IN_ATTRIB
@@ -41,12 +42,6 @@ const MAX_ALLOCATOR_SUBSCRIPTIONS_PER_TURN: usize = 16;
 const MAX_DEFERRED_CANDIDATES_PER_TURN: usize = 64;
 
 type SubscriptionId = u64;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct RootIdentity {
-    device: u64,
-    inode: u64,
-}
 
 impl RootIdentity {
     fn capture(path: &Path) -> io::Result<Self> {
@@ -103,6 +98,7 @@ pub(crate) struct EstablishedSubscription {
     pub(crate) id: SubscriptionId,
     pub(crate) initial_coverage: Coverage,
     pub(crate) receiver: Receiver<ChangeBatch>,
+    pub(crate) root_state: Arc<Mutex<RootState>>,
 }
 
 pub(crate) struct Runtime {
@@ -206,6 +202,7 @@ impl Runtime {
             id: established.id,
             initial_coverage: established.coverage,
             receiver,
+            root_state: established.root_state,
         })
     }
 
@@ -265,6 +262,23 @@ impl Runtime {
         Ok(PendingReconciliationAcknowledgement { acknowledged })
     }
 
+    pub(crate) fn queue_root_recovery(
+        &self,
+        id: SubscriptionId,
+        identity_policy: RootIdentityPolicy,
+    ) -> io::Result<PendingRootRecoveryAcknowledgement> {
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        self.send(CommandEnvelope {
+            generation: 0,
+            command: Command::RecoverRoot {
+                subscription_id: id,
+                identity_policy,
+                acknowledgement,
+            },
+        })?;
+        Ok(PendingRootRecoveryAcknowledgement { acknowledged })
+    }
+
     pub(crate) fn stats(&self) -> RuntimeStats {
         RuntimeStats {
             native_watch_budget: self.native_watch_budget,
@@ -310,6 +324,25 @@ impl PendingExclusionAcknowledgement {
 
 pub(crate) struct PendingReconciliationAcknowledgement {
     acknowledged: Receiver<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+}
+
+pub(crate) struct PendingRootRecoveryAcknowledgement {
+    acknowledged: Receiver<CommandAcknowledgement<io::Result<RootRecoveryResult>>>,
+}
+
+impl PendingRootRecoveryAcknowledgement {
+    pub(crate) fn wait(self) -> io::Result<RootRecoveryResult> {
+        let acknowledged = self
+            .acknowledged
+            .recv()
+            .map_err(|_| io::Error::other("shared runtime stopped during root recovery"))?;
+        if acknowledged.generation != 0 {
+            return Err(io::Error::other(
+                "shared runtime acknowledged the wrong root recovery generation",
+            ));
+        }
+        acknowledged.value
+    }
 }
 
 impl PendingReconciliationAcknowledgement {
@@ -420,6 +453,11 @@ enum Command {
         subscription_id: SubscriptionId,
         acknowledgement: SyncSender<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
     },
+    RecoverRoot {
+        subscription_id: SubscriptionId,
+        identity_policy: RootIdentityPolicy,
+        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<RootRecoveryResult>>>,
+    },
     Shutdown {
         acknowledgement: SyncSender<CommandAcknowledgement<()>>,
     },
@@ -428,6 +466,7 @@ enum Command {
 struct Established {
     id: SubscriptionId,
     coverage: Coverage,
+    root_state: Arc<Mutex<RootState>>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -461,6 +500,10 @@ struct SubscriptionState {
     id: SubscriptionId,
     root: PathBuf,
     root_identity: RootIdentity,
+    root_generation: u64,
+    root_lost: bool,
+    root_loss_evidence: Option<RootLossEvidence>,
+    published_root_state: Arc<Mutex<RootState>>,
     next_root_identity_check: Option<Instant>,
     options: SubscriptionOptions,
     stats: Arc<SharedStats>,
@@ -479,6 +522,7 @@ struct SubscriptionState {
     exclusions: BTreeSet<PathBuf>,
     exclusion_update: Option<PendingExclusionUpdate>,
     reconciliation: Option<PendingReconciliation>,
+    root_recovery: Option<PendingRootRecovery>,
     topology_jobs: VecDeque<TopologyJob>,
     topology_barriers: usize,
     establishment: Option<PendingEstablishment>,
@@ -493,6 +537,7 @@ struct PendingEstablishment {
 struct PendingExclusionUpdate {
     generation: u64,
     exclusions: BTreeSet<PathBuf>,
+    previous_exclusions: BTreeSet<PathBuf>,
     newly_excluded: VecDeque<PathBuf>,
     newly_included: Vec<PathBuf>,
     acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Coverage>>>,
@@ -516,6 +561,23 @@ struct PendingReconciliation {
     starting_uncertainty_epoch: u64,
 }
 
+struct PendingRootRecovery {
+    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<RootRecoveryResult>>>,
+    phase: RootRecoveryPhase,
+    previous_root_state: RootState,
+    candidate_identity: RootIdentity,
+    starting_uncertainty: Option<UncertainReason>,
+    starting_uncertainty_epoch: u64,
+    candidate_unstable: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RootRecoveryPhase {
+    RemovingOld,
+    Scanning,
+    CleaningFailure(RootRecoveryFailureReason),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReconciliationPhase {
     WaitingForTopology,
@@ -537,10 +599,20 @@ impl SubscriptionState {
         establishment: PendingEstablishment,
     ) -> Self {
         stats.topology_scans.fetch_add(1, Ordering::Relaxed);
+        let initial_root_state = RootState {
+            generation: 0,
+            identity: root_identity,
+            attachment: RootAttachment::Attached,
+            loss_evidence: None,
+        };
         Self {
             id,
             root: root.clone(),
             root_identity,
+            root_generation: 0,
+            root_lost: false,
+            root_loss_evidence: None,
+            published_root_state: Arc::new(Mutex::new(initial_root_state)),
             next_root_identity_check: None,
             options,
             stats,
@@ -559,6 +631,7 @@ impl SubscriptionState {
             exclusions: BTreeSet::new(),
             exclusion_update: None,
             reconciliation: None,
+            root_recovery: None,
             topology_jobs: VecDeque::from([TopologyJob::new(root, true)]),
             topology_barriers: 1,
             establishment: Some(establishment),
@@ -572,6 +645,81 @@ impl SubscriptionState {
         } else {
             self.coverage_without_uncertainty()
         }
+    }
+
+    fn root_state(&self) -> RootState {
+        RootState {
+            generation: self.root_generation,
+            identity: self.root_identity,
+            attachment: if self.root_lost {
+                RootAttachment::Lost
+            } else {
+                RootAttachment::Attached
+            },
+            loss_evidence: self.root_loss_evidence,
+        }
+    }
+
+    fn publish_root_state(&self) {
+        *self
+            .published_root_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = self.root_state();
+    }
+
+    fn not_attached_result(
+        &self,
+        previous_root_state: RootState,
+        candidate_identity: Option<RootIdentity>,
+        reason: RootRecoveryFailureReason,
+    ) -> RootRecoveryResult {
+        RootRecoveryResult {
+            attachment: RootRecoveryAttachment::NotAttached,
+            reason: Some(reason),
+            previous_root_state,
+            candidate_identity,
+            current_root_state: self.root_state(),
+            exclusion_generation: self.exclusion_generation,
+            coverage: self.coverage(),
+            boundary_sequence: None,
+        }
+    }
+
+    fn mark_root_lost(&mut self, evidence: RootLossEvidence) {
+        self.root_loss_evidence = Some(match self.root_loss_evidence {
+            None => evidence,
+            Some(current) if current == evidence => current,
+            Some(_) => RootLossEvidence::Multiple,
+        });
+        self.root_lost = true;
+        if let Some(recovery) = self.root_recovery.as_mut() {
+            recovery.candidate_unstable = true;
+        } else {
+            self.topology_barriers = 0;
+            if let Some(update) = self.exclusion_update.take() {
+                self.exclusions = update.previous_exclusions;
+                self.selection_generation = self.exclusion_generation;
+                let _ = update.acknowledgement.send(CommandAcknowledgement {
+                    generation: update.generation,
+                    value: Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "root identity was lost during exclusion update",
+                    )),
+                });
+            }
+            if let Some(reconciliation) = self.reconciliation.take() {
+                let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+                    generation: 0,
+                    value: Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "root identity was lost during reconciliation",
+                    )),
+                });
+            }
+        }
+        self.mark_uncertain(UncertainReason::RootReplaced, self.root.clone());
+        self.publish_resource_counts();
+        self.publish_root_state();
     }
 
     fn coverage_without_uncertainty(&self) -> Coverage {
@@ -699,6 +847,7 @@ impl SubscriptionState {
                 .pending_generation
                 .take()
                 .unwrap_or(self.selection_generation),
+            root_state: self.root_state(),
             invalidated_paths: std::mem::take(&mut self.pending_paths)
                 .into_iter()
                 .collect(),
@@ -781,6 +930,18 @@ impl TopologyJob {
             yield_after_promoted_watch: false,
             require_watch_before_read: true,
             reconciliation: true,
+        }
+    }
+
+    fn root_recovery(active: ActiveDirectory) -> Self {
+        Self {
+            directories: VecDeque::new(),
+            active: Some(active),
+            establishment: false,
+            promotion_root: None,
+            yield_after_promoted_watch: true,
+            require_watch_before_read: true,
+            reconciliation: false,
         }
     }
 }
@@ -964,7 +1125,15 @@ impl Worker {
                                 state.exclusion_generation
                             ),
                         ))
-                    } else if state.exclusion_update.is_some() || state.reconciliation.is_some() {
+                    } else if state.root_lost {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "root identity is lost; recover the root before replacing exclusions",
+                        ))
+                    } else if state.exclusion_update.is_some()
+                        || state.reconciliation.is_some()
+                        || state.root_recovery.is_some()
+                    {
                         Err(io::Error::new(
                             io::ErrorKind::WouldBlock,
                             "a topology transaction is already in progress for this subscription",
@@ -996,6 +1165,7 @@ impl Worker {
                             state.exclusion_update = Some(PendingExclusionUpdate {
                                 generation,
                                 exclusions,
+                                previous_exclusions: state.exclusions.clone(),
                                 newly_excluded,
                                 newly_included,
                                 acknowledgement,
@@ -1028,7 +1198,10 @@ impl Worker {
                         });
                         continue;
                     };
-                    if state.exclusion_update.is_some() || state.reconciliation.is_some() {
+                    if state.exclusion_update.is_some()
+                        || state.reconciliation.is_some()
+                        || state.root_recovery.is_some()
+                    {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
                             value: Err(io::Error::new(
@@ -1036,7 +1209,7 @@ impl Worker {
                                 "a topology transaction is already in progress for this subscription",
                             )),
                         });
-                    } else if state.uncertain_reason == Some(UncertainReason::RootReplaced) {
+                    } else if state.root_lost {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
                             value: Err(io::Error::new(
@@ -1059,6 +1232,92 @@ impl Worker {
                     let runnable =
                         !state.topology_jobs.is_empty() || reconciliation_runnable(&state);
                     self.subscriptions.insert(subscription_id, state);
+                    if runnable {
+                        self.schedule_topology(subscription_id);
+                    }
+                }
+                Command::RecoverRoot {
+                    subscription_id,
+                    identity_policy,
+                    acknowledgement,
+                } => {
+                    let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "subscription is no longer active",
+                            )),
+                        });
+                        continue;
+                    };
+                    if state.exclusion_update.is_some()
+                        || state.reconciliation.is_some()
+                        || state.root_recovery.is_some()
+                    {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::WouldBlock,
+                                "a topology transaction is already in progress for this subscription",
+                            )),
+                        });
+                    } else if !state.root_lost {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "root identity is still attached",
+                            )),
+                        });
+                    } else {
+                        let previous_root_state = state.root_state();
+                        match capture_root_candidate(&state.root) {
+                            Err(reason) => {
+                                let result =
+                                    state.not_attached_result(previous_root_state, None, reason);
+                                let _ = acknowledgement.send(CommandAcknowledgement {
+                                    generation,
+                                    value: Ok(result),
+                                });
+                            }
+                            Ok(candidate_identity)
+                                if identity_policy == RootIdentityPolicy::OriginalOnly
+                                    && candidate_identity != state.root_identity =>
+                            {
+                                let result = state.not_attached_result(
+                                    previous_root_state,
+                                    Some(candidate_identity),
+                                    RootRecoveryFailureReason::ReplacementNotAccepted,
+                                );
+                                let _ = acknowledgement.send(CommandAcknowledgement {
+                                    generation,
+                                    value: Ok(result),
+                                });
+                            }
+                            Ok(candidate_identity) => {
+                                state.flush();
+                                state.pending_paths.clear();
+                                state.pending_started = None;
+                                state.pending_generation = None;
+                                state.topology_barriers = 1;
+                                state.root_recovery = Some(PendingRootRecovery {
+                                    acknowledgement,
+                                    phase: RootRecoveryPhase::RemovingOld,
+                                    previous_root_state,
+                                    candidate_identity,
+                                    starting_uncertainty: state.uncertain_reason,
+                                    starting_uncertainty_epoch: state.uncertainty_epoch,
+                                    candidate_unstable: false,
+                                });
+                                self.progress_root_recovery(&mut state);
+                            }
+                        }
+                    }
+                    let runnable =
+                        !state.topology_jobs.is_empty() || root_recovery_runnable(&state);
+                    self.subscriptions.insert(subscription_id, state);
+                    self.publish_deferred_interest_count();
                     if runnable {
                         self.schedule_topology(subscription_id);
                     }
@@ -1132,6 +1391,7 @@ impl Worker {
         self.subscriptions.values().any(|state| {
             state.exclusion_update.is_none()
                 && state.reconciliation.is_none()
+                && state.root_recovery.is_none()
                 && state.topology_barriers > 0
                 && state.pending_paths.len() >= state.options.max_batch_paths
         })
@@ -1239,14 +1499,16 @@ impl Worker {
         }
         if mask & libc::IN_DELETE_SELF != 0 {
             if directory == state.root {
-                state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+                state.mark_root_lost(RootLossEvidence::RootSelfEvent);
             } else {
                 self.expected_ignored.insert(descriptor);
             }
         } else if mask & libc::IN_MOVE_SELF != 0 && directory == state.root {
-            state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+            state.mark_root_lost(RootLossEvidence::RootSelfEvent);
         }
-        if (state.exclusion_update.is_some() || state.reconciliation.is_some())
+        if (state.exclusion_update.is_some()
+            || state.reconciliation.is_some()
+            || state.root_recovery.is_some())
             && state.topology_barriers > 0
             && state.pending_paths.len() >= state.options.max_batch_paths
             && !state.pending_paths.contains(&event_path)
@@ -1254,11 +1516,14 @@ impl Worker {
         {
             state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
         } else {
-            if state.reconciliation.is_some() {
+            if state.reconciliation.is_some() || state.root_recovery.is_some() || state.root_lost {
                 state.queue_path(state.root.clone());
             } else {
                 state.queue_path(event_path.clone());
             }
+        }
+        if state.root_lost && state.root_recovery.is_none() {
+            return;
         }
         if mask & libc::IN_ISDIR != 0 {
             if mask & (libc::IN_MOVED_FROM | libc::IN_DELETE) != 0 {
@@ -1272,13 +1537,13 @@ impl Worker {
                     reconciliation.sweep_after = None;
                 }
                 state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
-                state
-                    .topology_jobs
-                    .push_back(if state.reconciliation.is_some() {
+                state.topology_jobs.push_back(
+                    if state.reconciliation.is_some() || state.root_recovery.is_some() {
                         TopologyJob::reconciliation(event_path)
                     } else {
                         TopologyJob::new(event_path, false)
-                    });
+                    },
+                );
                 state.topology_barriers += 1;
                 self.schedule_topology(state.id);
             }
@@ -1287,6 +1552,13 @@ impl Worker {
             && state.topology_barriers == 0
         {
             state.flush();
+        }
+        if state
+            .root_recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.candidate_unstable)
+        {
+            self.schedule_topology(state.id);
         }
     }
 
@@ -1297,18 +1569,32 @@ impl Worker {
         };
         self.watch_identities
             .retain(|_, candidate| *candidate != descriptor);
+        let mut schedule = Vec::new();
         for interest in watch.interests {
             if let Some(state) = self.subscriptions.get_mut(&interest.subscription_id) {
                 state.watched_paths.remove(&interest.path);
                 if interest.path == state.root {
-                    state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+                    state.mark_root_lost(RootLossEvidence::RootWatchLoss);
                 } else if !expected {
                     state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
                 }
-                if state.exclusion_update.is_none() && state.reconciliation.is_none() {
+                if state.exclusion_update.is_none()
+                    && state.reconciliation.is_none()
+                    && state.root_recovery.is_none()
+                {
                     state.publish_resource_counts();
                 }
+                if state
+                    .root_recovery
+                    .as_ref()
+                    .is_some_and(|recovery| recovery.candidate_unstable)
+                {
+                    schedule.push(state.id);
+                }
             }
+        }
+        for id in schedule {
+            self.schedule_topology(id);
         }
         self.publish_native_watch_count();
         self.publish_deferred_interest_count();
@@ -1327,7 +1613,11 @@ impl Worker {
             let Some(mut state) = self.subscriptions.remove(&id) else {
                 continue;
             };
-            if state.exclusion_update.is_some() || state.reconciliation.is_some() {
+            if state.root_lost
+                || state.exclusion_update.is_some()
+                || state.reconciliation.is_some()
+                || state.root_recovery.is_some()
+            {
                 self.subscriptions.insert(id, state);
                 continue;
             }
@@ -1420,6 +1710,27 @@ impl Worker {
         let Some(mut state) = self.subscriptions.remove(&id) else {
             return true;
         };
+        if state
+            .root_recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.candidate_unstable)
+        {
+            state.topology_barriers = 1;
+            state
+                .root_recovery
+                .as_mut()
+                .expect("root recovery must exist")
+                .phase =
+                RootRecoveryPhase::CleaningFailure(RootRecoveryFailureReason::IdentityUnstable);
+            self.progress_root_recovery(&mut state);
+            self.subscriptions.insert(id, state);
+            self.publish_deferred_interest_count();
+            return true;
+        }
+        if state.root_lost && state.root_recovery.is_none() {
+            self.subscriptions.insert(id, state);
+            return true;
+        }
         let mut directories = 0;
         let mut entries = 0;
         let mut native_allocations = 0;
@@ -1521,7 +1832,11 @@ impl Worker {
         }
         self.progress_exclusion_update(&mut state);
         self.progress_reconciliation(&mut state);
-        if state.exclusion_update.is_none() && state.reconciliation.is_none() {
+        self.progress_root_recovery(&mut state);
+        if state.exclusion_update.is_none()
+            && state.reconciliation.is_none()
+            && state.root_recovery.is_none()
+        {
             state.publish_resource_counts();
         }
         let runnable = !state.topology_jobs.is_empty()
@@ -1530,6 +1845,7 @@ impl Worker {
                 .as_ref()
                 .is_some_and(|update| update.phase != ExclusionUpdatePhase::WaitingForTopology)
             || reconciliation_runnable(&state);
+        let runnable = runnable || root_recovery_runnable(&state);
         self.subscriptions.insert(id, state);
         self.publish_deferred_interest_count();
         if runnable {
@@ -1809,7 +2125,7 @@ impl Worker {
                         .push_back(TopologyJob::reconciliation(state.root.clone()));
                 }
                 Ok(_) | Err(_) => {
-                    state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+                    state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
                     if let Some(reconciliation) = state.reconciliation.take() {
                         let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                             generation: 0,
@@ -1987,7 +2303,7 @@ impl Worker {
             .is_ok_and(|identity| identity == state.root_identity);
         if !root_stable {
             state.topology_barriers = state.topology_barriers.saturating_sub(1);
-            state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+            state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
             if let Some(reconciliation) = state.reconciliation.take() {
                 let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                     generation: 0,
@@ -2023,6 +2339,7 @@ impl Worker {
         let batch = ChangeBatch {
             sequence: state.next_sequence,
             exclusion_generation: state.exclusion_generation,
+            root_state: state.root_state(),
             invalidated_paths: vec![state.root.clone()],
             coverage: result.coverage.clone(),
         };
@@ -2064,6 +2381,237 @@ impl Worker {
         }
     }
 
+    fn progress_root_recovery(&mut self, state: &mut SubscriptionState) {
+        let Some(phase) = state.root_recovery.as_ref().map(|recovery| recovery.phase) else {
+            return;
+        };
+
+        if matches!(
+            phase,
+            RootRecoveryPhase::RemovingOld | RootRecoveryPhase::CleaningFailure(_)
+        ) {
+            let removal_complete = self.drain_root_recovery_state(state);
+            if !removal_complete {
+                return;
+            }
+
+            if let RootRecoveryPhase::CleaningFailure(reason) = phase {
+                self.finish_root_recovery_failure(state, reason);
+                return;
+            }
+
+            let candidate = state
+                .root_recovery
+                .as_ref()
+                .expect("root recovery must exist")
+                .candidate_identity;
+            if state
+                .root_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.candidate_unstable)
+                || capture_root_candidate(&state.root).ok() != Some(candidate)
+            {
+                state
+                    .root_recovery
+                    .as_mut()
+                    .expect("root recovery must exist")
+                    .phase =
+                    RootRecoveryPhase::CleaningFailure(RootRecoveryFailureReason::IdentityUnstable);
+                self.progress_root_recovery(state);
+                return;
+            }
+
+            if state.is_excluded(&state.root) {
+                self.commit_root_recovery(state);
+                return;
+            }
+
+            let root = state.root.clone();
+            let opened = self.open_topology_directory(state, root.clone(), true, false, false);
+            let Some(opened) = opened.filter(|_| state.watched_paths.contains_key(&root)) else {
+                state.remove_deferred_subtree(&root);
+                self.finish_root_recovery_failure(
+                    state,
+                    RootRecoveryFailureReason::RootWatchUnavailable,
+                );
+                return;
+            };
+            state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
+            state.topology_barriers = 2;
+            state
+                .topology_jobs
+                .push_back(TopologyJob::root_recovery(opened.active));
+            state
+                .root_recovery
+                .as_mut()
+                .expect("root recovery must exist")
+                .phase = RootRecoveryPhase::Scanning;
+            return;
+        }
+
+        let scan_complete = state.root_recovery.as_ref().is_some_and(|recovery| {
+            recovery.phase == RootRecoveryPhase::Scanning
+                && state.topology_jobs.is_empty()
+                && state.topology_barriers == 1
+        });
+        if scan_complete {
+            let candidate = state
+                .root_recovery
+                .as_ref()
+                .expect("root recovery must exist")
+                .candidate_identity;
+            if state
+                .root_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.candidate_unstable)
+                || capture_root_candidate(&state.root).ok() != Some(candidate)
+            {
+                state.topology_barriers = 1;
+                state
+                    .root_recovery
+                    .as_mut()
+                    .expect("root recovery must exist")
+                    .phase =
+                    RootRecoveryPhase::CleaningFailure(RootRecoveryFailureReason::IdentityUnstable);
+            } else {
+                self.commit_root_recovery(state);
+            }
+        }
+    }
+
+    fn drain_root_recovery_state(&mut self, state: &mut SubscriptionState) -> bool {
+        let mut work = 0;
+        while work < MAX_TOPOLOGY_DIRECTORIES_PER_TURN {
+            if let Some((path, descriptor)) = state
+                .watched_paths
+                .iter()
+                .next()
+                .map(|(path, descriptor)| (path.clone(), *descriptor))
+            {
+                state.watched_paths.remove(&path);
+                self.remove_interest(state.id, &path, descriptor);
+                work += 1;
+                continue;
+            }
+            if let Some(path) = state.deferred_directories.keys().next().cloned() {
+                state.deferred_directories.remove(&path);
+                work += 1;
+                continue;
+            }
+            if state.deferred_order.pop_front().is_some() {
+                work += 1;
+                continue;
+            }
+            if let Some(path) = state.pending_promotions.iter().next().cloned() {
+                state.pending_promotions.remove(&path);
+                work += 1;
+                continue;
+            }
+            if state.topology_jobs.pop_front().is_some() {
+                work += 1;
+                continue;
+            }
+            break;
+        }
+        state.watched_paths.is_empty()
+            && state.deferred_directories.is_empty()
+            && state.deferred_order.is_empty()
+            && state.pending_promotions.is_empty()
+            && state.topology_jobs.is_empty()
+    }
+
+    fn finish_root_recovery_failure(
+        &mut self,
+        state: &mut SubscriptionState,
+        reason: RootRecoveryFailureReason,
+    ) {
+        let Some(recovery) = state.root_recovery.take() else {
+            return;
+        };
+        state.topology_barriers = 0;
+        state.publish_resource_counts();
+        self.publish_deferred_interest_count_with(state);
+        let result = state.not_attached_result(
+            recovery.previous_root_state,
+            Some(recovery.candidate_identity),
+            reason,
+        );
+        let _ = recovery.acknowledgement.send(CommandAcknowledgement {
+            generation: 0,
+            value: Ok(result),
+        });
+    }
+
+    fn commit_root_recovery(&mut self, state: &mut SubscriptionState) {
+        let Some(recovery) = state.root_recovery.take() else {
+            return;
+        };
+        state.topology_barriers = 0;
+        state.root_identity = recovery.candidate_identity;
+        state.root_generation = state.root_generation.saturating_add(1);
+        state.root_lost = false;
+        state.root_loss_evidence = None;
+        state.next_root_identity_check = Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
+        let clears_root_uncertainty = state.uncertainty_epoch
+            == recovery.starting_uncertainty_epoch
+            && state.uncertain_reason == recovery.starting_uncertainty
+            && state.uncertain_reason == Some(UncertainReason::RootReplaced);
+        if clears_root_uncertainty {
+            state.uncertain_reason = None;
+        }
+        state.pending_paths.clear();
+        state.pending_started = None;
+        state.pending_generation = None;
+        state.publish_resource_counts();
+        state.publish_root_state();
+        self.publish_deferred_interest_count_with(state);
+
+        let sequence = state.next_sequence;
+        let root_state = state.root_state();
+        let coverage = state.coverage();
+        let batch = ChangeBatch {
+            sequence,
+            exclusion_generation: state.exclusion_generation,
+            root_state,
+            invalidated_paths: vec![state.root.clone()],
+            coverage: coverage.clone(),
+        };
+        let attachment = if recovery.candidate_identity == recovery.previous_root_state.identity {
+            RootRecoveryAttachment::OriginalRestored
+        } else {
+            RootRecoveryAttachment::ReplacementAdopted
+        };
+        let (coverage, boundary_sequence) = match state.output.try_send(batch) {
+            Ok(()) => {
+                state.next_sequence = state.next_sequence.saturating_add(1);
+                state
+                    .stats
+                    .batches_delivered
+                    .fetch_add(1, Ordering::Relaxed);
+                (coverage, Some(sequence))
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                state.stats.batches_dropped.fetch_add(1, Ordering::Relaxed);
+                state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
+                (state.coverage(), None)
+            }
+        };
+        let result = RootRecoveryResult {
+            attachment,
+            reason: None,
+            previous_root_state: recovery.previous_root_state,
+            candidate_identity: Some(recovery.candidate_identity),
+            current_root_state: state.root_state(),
+            exclusion_generation: state.exclusion_generation,
+            coverage,
+            boundary_sequence,
+        };
+        let _ = recovery.acknowledgement.send(CommandAcknowledgement {
+            generation: 0,
+            value: Ok(result),
+        });
+    }
+
     fn finish_topology_job(
         &mut self,
         state: &mut SubscriptionState,
@@ -2092,6 +2640,7 @@ impl Worker {
                 Ok(identity) if identity == state.root_identity => Ok(Established {
                     id: state.id,
                     coverage: state.coverage(),
+                    root_state: Arc::clone(&state.published_root_state),
                 }),
                 Ok(_) | Err(_) => Err(io::Error::new(
                     io::ErrorKind::NotFound,
@@ -2130,6 +2679,10 @@ impl Worker {
         if let Some(descriptor) = self.watch_identities.get(&identity).copied()
             && self.watches.contains_key(&descriptor)
         {
+            if directory_identity(path).ok() != Some(identity) {
+                state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
+                return Err(io::Error::from_raw_os_error(libc::ESTALE));
+            }
             self.insert_interest(state, path, descriptor);
             return Ok(InterestAllocation::Added {
                 created_native_watch: false,
@@ -2159,6 +2712,25 @@ impl Worker {
             return Err(io::Error::last_os_error());
         }
         let created_native_watch = !self.watches.contains_key(&descriptor);
+        let identity_after = directory_identity(path);
+        if identity_after.as_ref().ok() != Some(&identity)
+            || self
+                .watches
+                .get(&descriptor)
+                .and_then(|watch| watch.identity)
+                .is_some_and(|watched| watched != identity)
+        {
+            if created_native_watch {
+                self.expected_ignored.insert(descriptor);
+                // SAFETY: inotify is live and this call only removes the watch
+                // created by the mismatched add above.
+                unsafe {
+                    libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
+                }
+            }
+            state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
+            return Err(io::Error::from_raw_os_error(libc::ESTALE));
+        }
         if self.expected_ignored.contains(&descriptor) {
             // Linux may recycle a removed watch descriptor before its queued
             // IN_IGNORED record is consumed. The later record cannot be
@@ -2275,6 +2847,15 @@ impl Worker {
                 )),
             });
         }
+        if let Some(recovery) = state.root_recovery.take() {
+            let _ = recovery.acknowledgement.send(CommandAcknowledgement {
+                generation: 0,
+                value: Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "subscription disposed during root recovery",
+                )),
+            });
+        }
         self.counters
             .subscriptions
             .store(self.subscriptions.len(), Ordering::Release);
@@ -2316,6 +2897,7 @@ impl Worker {
 
     fn run_maintenance(&mut self) {
         let now = Instant::now();
+        let mut schedule = Vec::new();
         for state in self.subscriptions.values_mut() {
             if state.next_root_identity_check.is_some_and(|due| now >= due) {
                 match RootIdentity::capture(&state.root) {
@@ -2324,11 +2906,21 @@ impl Worker {
                     }
                     Ok(_) | Err(_) => {
                         state.next_root_identity_check = None;
-                        state.mark_uncertain(UncertainReason::RootReplaced, state.root.clone());
+                        state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
                     }
                 }
             }
             state.flush_if_due();
+            if state
+                .root_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.candidate_unstable)
+            {
+                schedule.push(state.id);
+            }
+        }
+        for id in schedule {
+            self.schedule_topology(id);
         }
     }
 
@@ -2455,6 +3047,18 @@ fn reconciliation_runnable(state: &SubscriptionState) -> bool {
     })
 }
 
+fn root_recovery_runnable(state: &SubscriptionState) -> bool {
+    state.root_recovery.as_ref().is_some_and(|recovery| {
+        matches!(
+            recovery.phase,
+            RootRecoveryPhase::RemovingOld | RootRecoveryPhase::CleaningFailure(_)
+        ) || recovery.candidate_unstable
+            || (recovery.phase == RootRecoveryPhase::Scanning
+                && state.topology_jobs.is_empty()
+                && state.topology_barriers == 1)
+    })
+}
+
 fn mark_reconciliation_encounter(state: &mut SubscriptionState, path: &Path, reconciliation: bool) {
     if reconciliation && let Some(transaction) = state.reconciliation.as_mut() {
         transaction.encountered.insert(path.to_path_buf());
@@ -2537,6 +3141,22 @@ fn directory_identity(path: &Path) -> io::Result<RootIdentity> {
     Ok(RootIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
+    })
+}
+
+fn capture_root_candidate(path: &Path) -> Result<RootIdentity, RootRecoveryFailureReason> {
+    RootIdentity::capture(path).map_err(|error| {
+        if error.to_string().contains("symbolic link") {
+            RootRecoveryFailureReason::SymlinkAncestry
+        } else if error.kind() == io::ErrorKind::NotFound {
+            RootRecoveryFailureReason::CandidateMissing
+        } else if error.kind() == io::ErrorKind::InvalidInput
+            || matches!(error.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP))
+        {
+            RootRecoveryFailureReason::CandidateNotDirectory
+        } else {
+            RootRecoveryFailureReason::RootWatchUnavailable
+        }
     })
 }
 
@@ -2655,6 +3275,26 @@ mod tests {
         );
         assert!(state.pending_paths.contains(&root.0));
         assert_eq!(state.stats.overflow_events.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn root_loss_latch_survives_stronger_overflow_coverage() {
+        let root = TestRoot::new("overflow-root-loss");
+        let (mut state, _receiver) = state(&root.0, SubscriptionOptions::default());
+        state.mark_uncertain(UncertainReason::EventOverflow, root.0.clone());
+        state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
+
+        assert_eq!(
+            state.coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::EventOverflow,
+            }
+        );
+        assert_eq!(state.root_state().attachment, RootAttachment::Lost);
+        assert_eq!(
+            state.root_state().loss_evidence,
+            Some(RootLossEvidence::PathIdentityMismatch)
+        );
     }
 
     #[test]

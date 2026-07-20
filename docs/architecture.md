@@ -4,6 +4,7 @@ Status: the Linux feasibility engine now includes the directory-burst
 correctness gate, shared process-wide runtime, bounded fair native-watch
 allocator, generation-based atomic dynamic exclusions, bounded post-loss
 reconciliation, and an opt-in JavaScript automatic policy in targeted stress,
+plus explicit identity-policy-gated root replacement recovery,
 without product integration or publication.
 
 ## Decision
@@ -87,6 +88,23 @@ and cancels its timer, then starts native disposal and joins any active attempt.
 This preserves the native rule that no callback or topology work can begin
 after disposal resolves.
 
+### Decision: root identity adoption is a distinct explicit engine operation
+
+`reconcile()` remains identity-preserving, and automatic reconciliation never
+chooses an identity. Once fixed-size `RootState` evidence reports a lost root,
+only `recoverRoot({ identityPolicy: "original-only" | "accept-replacement" })`
+can attach the immutable lexical pathname again. The Rust engine owns candidate
+capture, ancestry and identity validation, bounded watch-before-read traversal,
+coverage, the root-only commit boundary, peer accounting, and interruption.
+Node translates the result; JavaScript validates the required policy and
+coordinates one user-started call with its automatic-policy status.
+
+Root loss is latched independently of coverage priority and freezes topology
+growth. Every successful attachment advances a separate root generation.
+Expected filesystem refusals return structured `not-attached` results, while
+lifecycle and transaction conflicts reject. The full decision, result schema,
+race assumptions, and evidence are in `docs/root-replacement-follow-up.md`.
+
 The Rust code has an internal `backend/linux.rs` module because the Linux state
 machine is already a useful implementation boundary. There is no public or
 generic backend trait. A second real backend, not a roadmap item, is the point
@@ -116,8 +134,9 @@ Coverage is one of:
 
 Each delivered batch has a monotonically increasing subscription-local
 sequence, the committed exclusion generation under which all of its paths were
-selected, and conservative invalidated paths. Initial subscriptions and their
-batches use generation zero. Detailed create/update/delete or rename claims are
+selected, a fixed-size root identity/attachment snapshot and generation, and
+conservative invalidated paths. Initial subscriptions and their batches use
+generation zero for both independent counters. Detailed create/update/delete or rename claims are
 deliberately absent from the first public engine surface.
 
 An existing subscription can request reconciliation without changing its
@@ -125,9 +144,11 @@ exclusion set or generation. Reconciliation does not reconstruct event detail:
 its successful commit always enqueues one conservative root invalidation. It
 can clear `event-overflow`, `topology-race`, or `consumer-backpressure` only
 after the rebuilt topology barrier and that bounded enqueue succeed. A later or
-stronger loss remains sticky. `root-replaced` is not recoverable in this
-milestone; a request is rejected when that reason is already known, and root
-identity is checked again before and after every reconciliation traversal.
+stronger loss remains sticky. `root-replaced` is not recoverable through this
+operation; a reconciliation request is rejected when root loss is already
+known, and root identity is checked again before and after every traversal.
+The separate explicit root operation can restore or adopt an identity without
+changing the pathname or public subscription.
 
 The output channel and each batch are bounded. If the consumer queue fills, the
 engine discards the over-detailed batch, changes coverage to uncertain, and
@@ -418,6 +439,25 @@ deferred accounting, final coverage snapshot, root invalidation, and unchanged
 exclusion generation have all committed; it still does not wait for a Node or
 JavaScript callback to run.
 
+### Explicit root recovery transaction
+
+Root loss stops promotions and lexical topology growth independently of the
+single visible coverage reason. The explicit recovery transaction shares the
+existing per-subscription gate, captures one policy-authorized candidate,
+removes old logical state in bounded turns, and scans the candidate with the
+same exclusion generation, shared allocator, fairness, and watch-before-read
+rules. Identity checks around watch installation and after traversal prevent an
+ordinary same-path swap from receiving candidate credit; symlink ancestry is
+rejected rather than followed.
+
+Commit publishes the accepted identity, advances root generation once, and
+attempts exactly one root-only boundary. Output pressure can leave the identity
+attached but coverage uncertain without a boundary sequence; it cannot be
+reported as complete. Candidate changes fail with bounded cleanup and leave
+root loss latched. Peers retain shared old interests and continue event and
+topology turns. Joined disposal interrupts or follows the admitted transaction
+without permitting later enqueue or callback entry.
+
 Disposal removes any pending reconciliation, completes its acknowledgement
 with interruption, releases its scan/sweep state and interests, and joins the
 same subscription and final-runtime barriers as ordinary disposal. No new
@@ -450,7 +490,8 @@ watches, descriptors, bridge state, and the worker.
 This is deterministic ordinary-development evidence for post-consumer-loss
 reconciliation. It does not induce or prove recovery from a real inotify queue
 overflow. The supervised forced-overflow scenario remains separately gated on
-host preparation. Root-replacement recovery remains a deliberate separate gap.
+host preparation. Root identity adoption remains a separate explicit operation,
+not part of reconciliation.
 
 The dedicated `overflow-reconciliation` variant reuses the detached
 controller-supervised helper and the same public subscription. Its helper must
@@ -472,8 +513,8 @@ runtime worker. This machinery is separately permission-gated. Explicitly
 confirmed targeted manual and automatic trials exercised and passed this
 contract through the public surface; both remain correctness evidence rather
 than performance results. The automatic variant enables the wrapper policy and
-requires zero harness calls to the manual method.
-Root-replacement recovery remains a gap.
+requires zero harness calls to the manual method. Explicit root recovery has a
+separate ordinary conformance scenario and never runs from this policy.
 
 ## Binding decision
 
@@ -516,12 +557,11 @@ work but duplicating the surrounding cross-platform product is not sustainable.
   fixed and fairness is round-robin among runnable subscriptions);
 - automatic retry policy for permission, transient, or kernel/process resource
   allocation failures that were not caused by the configured budgets;
-- event-driven root-parent anchoring and same-path replacement recovery (the
-  prototype currently detects lexical root identity loss by polling);
-- recovery of a replaced root identity (reconciliation deliberately rejects
-  or retains `root-replaced` rather than attaching to a replacement; the
-  proposed distinct explicit-operation decision and implementation gate are in
-  `docs/root-replacement-follow-up.md`);
+- event-driven root-parent anchoring (ancestor/path identity loss is currently
+  detected by periodic lexical validation rather than an ancestor watch);
+- automatic root identity selection (reconciliation deliberately rejects
+  `root-replaced`; only the explicit policy-gated operation in
+  `docs/root-replacement-follow-up.md` can adopt a candidate);
 - reconstructed detail for events lost before/during reconciliation (manual and
   automatic recovery both remain root-only);
 - runtime descendant mount insertion/reconciliation and a one-filesystem mode;

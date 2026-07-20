@@ -100,6 +100,78 @@ test("native reconciliation commits coverage, generation, and a root invalidatio
   }
 });
 
+test("native root state and explicit replacement recovery preserve one subscription", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-recovery-"));
+  const root = path.join(parent, "root");
+  const moved = path.join(parent, "moved");
+  fs.mkdirSync(path.join(root, "old", "deep"), { recursive: true });
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await binding.subscribe(root, { batchWindowMs: 8 }, (batch) => {
+      batches.push(batch);
+    });
+    const original = subscription.rootState;
+    assert.equal(original.generation, 0n);
+    assert.equal(original.attachment, "attached");
+    assert.equal(original.lossEvidence, undefined);
+    assert.equal(typeof original.identity.device, "bigint");
+    assert.equal(typeof original.identity.inode, "bigint");
+
+    fs.renameSync(root, moved);
+    fs.mkdirSync(path.join(root, "new", "deep"), { recursive: true });
+    await waitFor(
+      () => batches.some((batch) => batch.rootState.attachment === "lost"),
+      "root loss state was not delivered",
+    );
+    assert.equal(subscription.rootState.attachment, "lost");
+
+    const refused = await subscription.recoverRoot("original-only");
+    assert.equal(refused.attachment, "not-attached");
+    assert.equal(refused.reason, "replacement-not-accepted");
+    assert.notDeepEqual(refused.candidateIdentity, original.identity);
+
+    const recovered = await subscription.recoverRoot("accept-replacement");
+    assert.equal(recovered.attachment, "replacement-adopted");
+    assert.equal(recovered.reason, undefined);
+    assert.equal(recovered.currentRootState.generation, 1n);
+    assert.equal(recovered.currentRootState.attachment, "attached");
+    assert.equal(recovered.exclusionGeneration, 0n);
+    assert.deepEqual(recovered.coverage, { state: "complete" });
+    assert.equal(typeof recovered.boundarySequence, "bigint");
+    await waitFor(
+      () => batches.some((batch) => batch.sequence === recovered.boundarySequence),
+      "root recovery boundary was not delivered",
+    );
+
+    const changed = path.join(root, "new", "deep", "after.txt");
+    fs.writeFileSync(changed, "after");
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.invalidatedPaths.some((value) => value.equals(Buffer.from(changed)))),
+      "recovered subscription did not deliver a deep change",
+    );
+    assert.equal(binding.capabilities().rootReplacementRecovery, true);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("native root recovery rejects an unknown identity policy", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-policy-"));
+  const subscription = await binding.subscribe(root, {}, () => {});
+  try {
+    assert.throws(
+      () => subscription.recoverRoot("automatic"),
+      /identityPolicy/,
+    );
+  } finally {
+    await subscription.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("concurrent native dispose calls join once and resolve together", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-dispose-"));
   const subscription = await binding.subscribe(root, {}, () => {});

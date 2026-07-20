@@ -11,6 +11,7 @@ const subscriptionOptions = Object.freeze({
 });
 const publicSubscriptionOperations = Object.freeze({
   reconcile: reconcileExistingSubscription,
+  recoverRoot: recoverExistingSubscriptionRoot,
 });
 
 export const id = "watchbound";
@@ -40,6 +41,46 @@ export async function reconcileExistingSubscription(subscription) {
   return {
     exclusionGeneration,
     coverage: result.coverage,
+  };
+}
+
+export async function recoverExistingSubscriptionRoot(subscription, identityPolicy) {
+  if (typeof subscription?.recoverRoot !== "function") {
+    throw new TypeError("The public subscription does not expose root recovery");
+  }
+  return jsonRootRecoveryResult(
+    await subscription.recoverRoot({ identityPolicy }),
+  );
+}
+
+function jsonRootIdentity(identity) {
+  if (identity == null) return null;
+  return {
+    device: jsonCounter(identity.device),
+    inode: jsonCounter(identity.inode),
+  };
+}
+
+function jsonRootState(state) {
+  if (state == null) return null;
+  return {
+    generation: jsonCounter(state.generation),
+    identity: jsonRootIdentity(state.identity),
+    attachment: state.attachment,
+    lossEvidence: state.lossEvidence ?? null,
+  };
+}
+
+function jsonRootRecoveryResult(result) {
+  return {
+    attachment: result?.attachment ?? null,
+    reason: result?.reason ?? null,
+    previousRootState: jsonRootState(result?.previousRootState),
+    candidateIdentity: jsonRootIdentity(result?.candidateIdentity),
+    currentRootState: jsonRootState(result?.currentRootState),
+    exclusionGeneration: jsonCounter(result?.exclusionGeneration),
+    coverage: result?.coverage ?? null,
+    boundarySequence: jsonCounter(result?.boundarySequence),
   };
 }
 
@@ -86,7 +127,9 @@ export async function loadAdapter() {
     publicWatchCount: true,
     nativeEventBatching: true,
     movedInSubtreeDiscovery: nativeCapabilities.movedInTreeDiscovery,
-    rootReplacementRecovery: nativeCapabilities.rootReplacementRecovery,
+    rootReplacementRecovery:
+      nativeCapabilities.rootReplacementRecovery === true &&
+      typeof publicSubscriptionOperations.recoverRoot === "function",
     staticExclusions: false,
     dynamicExclusions: {
       supported: nativeCapabilities.dynamicExclusions,
@@ -137,6 +180,7 @@ export async function loadAdapter() {
             rawEventCount: batch.invalidatedPaths.length,
             coverage: batch.coverage,
             exclusionGeneration: jsonCounter(batch.exclusionGeneration),
+            rootState: jsonRootState(batch.rootState),
           });
         },
         {
@@ -157,6 +201,15 @@ export async function loadAdapter() {
           "Watchbound advertised reconciliation but the public subscription method is unavailable",
         );
       }
+      if (
+        capabilities.rootReplacementRecovery &&
+        typeof subscription.recoverRoot !== "function"
+      ) {
+        await subscription.dispose();
+        throw new TypeError(
+          "Watchbound advertised root replacement recovery but the public subscription method is unavailable",
+        );
+      }
 
       let exclusionGeneration = 0n;
       const operationEvidence = {
@@ -164,6 +217,8 @@ export async function loadAdapter() {
         automaticReconciliationEnabled: automaticReconciliation !== false,
         reconciliationCalls: 0,
         reconciliationCallsOnOriginalSubscription: 0,
+        rootRecoveryCalls: 0,
+        rootRecoveryCallsOnOriginalSubscription: 0,
         disposalRequests: 0,
       };
       return {
@@ -181,6 +236,9 @@ export async function loadAdapter() {
               : { exclusionGeneration: jsonCounter(status.exclusionGeneration) }),
           };
         },
+        get rootState() {
+          return jsonRootState(subscription.rootState);
+        },
         dispose() {
           operationEvidence.disposalRequests += 1;
           return subscription.dispose();
@@ -196,6 +254,11 @@ export async function loadAdapter() {
           operationEvidence.reconciliationCalls += 1;
           operationEvidence.reconciliationCallsOnOriginalSubscription += 1;
           return reconcileExistingSubscription(subscription);
+        },
+        recoverRoot(identityPolicy) {
+          operationEvidence.rootRecoveryCalls += 1;
+          operationEvidence.rootRecoveryCallsOnOriginalSubscription += 1;
+          return recoverExistingSubscriptionRoot(subscription, identityPolicy);
         },
         async stats() {
           const stats = subscription.stats();

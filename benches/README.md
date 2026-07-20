@@ -17,6 +17,7 @@ not corrupt the report's JSON.
 node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
+node benches/conformance.mjs --adapter watchbound --scenario root-replacement-recovery --quick --strict --pretty
 pnpm test:reconciliation-stress
 node --expose-gc benches/benchmark.mjs --pretty
 node --expose-gc benches/benchmark.mjs --quick --pretty
@@ -42,7 +43,8 @@ the report records a deterministic source-input digest and Git state as well.
 ## Scenarios and accounting
 
 The suite covers ordinary deep changes, populated moved-in trees followed by a deep modification,
-root move/same-path replacement followed by a deep modification, forced inotify queue overflow,
+root move/same-path replacement followed by a deep modification, explicit same-path root recovery,
+forced inotify queue overflow,
 an explicit low watch limit, explicit native-to-JavaScript bridge backpressure, dynamic exclusions, file and
 directory creation bursts, explicit and opt-in automatic in-place post-loss
 reconciliation, rename bursts, and post-disposal mutation. Cold startup is the first
@@ -105,6 +107,16 @@ all three recoverable reasons are covered separately by wrapper/policy tests.
 `root-replaced` produces a terminal blocked status and never schedules policy
 recovery. Failed or exhausted trials remain raw correctness evidence and, like
 all failed trials, contribute no numeric performance samples.
+
+`root-replacement-recovery` is a separate ordinary scenario available only to
+an adapter exposing the public explicit operation, root state, coverage, and
+atomic exclusions. It performs direct and ancestor replacement on the original
+subscription, first proves `original-only` refusal, then explicitly adopts each
+captured candidate. It matches bigint root generations and the public result to
+one singleton boundary per commit, preserves the committed exclusion
+generation and current/future exclusions, requires peer progress during bounded
+recovery, delivers a deep sentinel afterward, and joins both subscriptions
+without a later callback. It never enables or induces forced overflow.
 
 Capability gating is strict: the adapter must expose the complete public existing-subscription
 method together with explicit coverage, typed consumer backpressure, and atomic exclusions.

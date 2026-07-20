@@ -197,6 +197,21 @@ export function scenarioExclusionReason(plan, probe) {
       return "Reconciliation requires atomic dynamic exclusions";
     }
   }
+  if (requirement === "rootReplacementRecovery") {
+    const capabilities = probe.adapter.capabilities;
+    if (capabilities.rootReplacementRecovery !== true) {
+      return "Public explicit root replacement recovery is not supported";
+    }
+    if (!capabilities.explicitCoverage) {
+      return "Root replacement recovery requires explicit coverage reporting";
+    }
+    if (
+      !capabilities.dynamicExclusions?.supported ||
+      !capabilities.dynamicExclusions?.atomic
+    ) {
+      return "Root replacement recovery requires atomic dynamic exclusions";
+    }
+  }
   if (requirement === "automaticReconciliation") {
     const capabilities = probe.adapter.capabilities;
     if (capabilities.automaticReconciliation !== true) {

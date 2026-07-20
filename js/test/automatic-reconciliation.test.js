@@ -134,6 +134,131 @@ test("root replacement cancels pending recovery and is never credited", async ()
   assert.equal(calls, 0);
 });
 
+test("explicit attached root recovery clears the block and preserves a later recoverable loss", async () => {
+  const clock = createClock();
+  const rootRecovery = deferred();
+  let reconciliations = 0;
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => {
+      reconciliations += 1;
+      return { exclusionGeneration: 4n, coverage: complete };
+    },
+    clock,
+  );
+  policy.observe({ state: "uncertain", reason: "root-replaced" });
+
+  const recovery = policy.recoverRoot(
+    "accept-replacement",
+    () => rootRecovery.promise,
+  );
+  assert.deepEqual(policy.status(), {
+    state: "recovering-root",
+    identityPolicy: "accept-replacement",
+  });
+  policy.observe({ state: "uncertain", reason: "consumer-backpressure" });
+  rootRecovery.resolve({
+    attachment: "replacement-adopted",
+    currentRootState: { attachment: "attached" },
+    exclusionGeneration: 4n,
+    coverage: { state: "uncertain", reason: "consumer-backpressure" },
+    boundarySequence: undefined,
+  });
+  await recovery;
+
+  assert.equal(clock.pending, 1);
+  assert.equal(policy.status().state, "scheduled");
+  assert.equal(policy.status().reason, "consumer-backpressure");
+  clock.runNext();
+  await flush();
+  assert.equal(reconciliations, 1);
+  assert.equal(policy.status().state, "recovered");
+});
+
+test("not-attached explicit root recovery remains blocked", async () => {
+  const clock = createClock();
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => ({ exclusionGeneration: 0n, coverage: complete }),
+    clock,
+  );
+  policy.observe({ state: "uncertain", reason: "root-replaced" });
+  const result = await policy.recoverRoot("original-only", async () => ({
+    attachment: "not-attached",
+    currentRootState: { attachment: "lost" },
+    coverage: { state: "uncertain", reason: "root-replaced" },
+  }));
+  assert.equal(result.attachment, "not-attached");
+  assert.deepEqual(policy.status(), { state: "blocked", reason: "root-replaced" });
+  assert.equal(clock.pending, 0);
+});
+
+test("root recovery ignores an older-generation loss batch but retains a later one", async () => {
+  const clock = createClock();
+  const first = deferred();
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => ({ exclusionGeneration: 0n, coverage: complete }),
+    clock,
+  );
+  policy.observe({ state: "uncertain", reason: "root-replaced" });
+  const recovery = policy.recoverRoot("accept-replacement", () => first.promise);
+  policy.observe({
+    coverage: { state: "uncertain", reason: "root-replaced" },
+    rootState: { generation: 0n, attachment: "lost" },
+  });
+  first.resolve({
+    attachment: "replacement-adopted",
+    currentRootState: { generation: 1n, attachment: "attached" },
+    coverage: complete,
+  });
+  await recovery;
+  assert.deepEqual(policy.status(), { state: "idle" });
+
+  const second = deferred();
+  const laterRecovery = policy.recoverRoot("accept-replacement", () => second.promise);
+  policy.observe({
+    coverage: { state: "uncertain", reason: "root-replaced" },
+    rootState: { generation: 2n, attachment: "lost" },
+  });
+  second.resolve({
+    attachment: "replacement-adopted",
+    currentRootState: { generation: 2n, attachment: "attached" },
+    coverage: complete,
+  });
+  await laterRecovery;
+  assert.deepEqual(policy.status(), { state: "blocked", reason: "root-replaced" });
+});
+
+test("disposal joins an explicit root recovery already in flight", async () => {
+  const clock = createClock();
+  const rootRecovery = deferred();
+  const nativeDisposal = deferred();
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => ({ exclusionGeneration: 0n, coverage: complete }),
+    clock,
+  );
+  policy.observe({ state: "uncertain", reason: "root-replaced" });
+  const recovery = policy.recoverRoot(
+    "accept-replacement",
+    () => rootRecovery.promise,
+  );
+  const disposal = policy.dispose(() => nativeDisposal.promise);
+  assert.deepEqual(policy.status(), { state: "disposing" });
+  let disposed = false;
+  disposal.then(() => {
+    disposed = true;
+  });
+  nativeDisposal.resolve();
+  await flush();
+  assert.equal(disposed, false);
+  rootRecovery.reject(new Error("subscription disposed during root recovery"));
+  await assert.rejects(recovery, /disposed during root recovery/);
+  await disposal;
+  assert.deepEqual(policy.status(), { state: "disposed" });
+});
+
 test("loss during reconciliation coalesces to one later non-overlapping attempt", async () => {
   const clock = createClock();
   const first = deferred();

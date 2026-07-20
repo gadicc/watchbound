@@ -4,8 +4,10 @@ export declare class NativeSubscription {
   get initialCoverage(): JsCoverage
   stats(): JsStats
   get exclusionGeneration(): bigint
+  get rootState(): JsRootState
   replaceExclusions(generation: bigint, prefixes: Array<Buffer>): Promise<JsCoverage>
   reconcile(): Promise<JsReconciliationResult>
+  recoverRoot(identityPolicy: string): Promise<JsRootRecoveryResult>
   dispose(): Promise<void>
 }
 
@@ -25,6 +27,7 @@ export interface JsCapabilities {
 export interface JsChangeBatch {
   sequence: bigint
   exclusionGeneration: bigint
+  rootState: JsRootState
   /**
    * Exact Linux path bytes. The JavaScript wrapper may decode UTF-8 paths,
    * but the native boundary never performs a lossy conversion.
@@ -43,6 +46,29 @@ export interface JsCoverage {
 export interface JsReconciliationResult {
   exclusionGeneration: bigint
   coverage: JsCoverage
+}
+
+export interface JsRootIdentity {
+  device: bigint
+  inode: bigint
+}
+
+export interface JsRootRecoveryResult {
+  attachment: string
+  reason?: string
+  previousRootState: JsRootState
+  candidateIdentity?: JsRootIdentity
+  currentRootState: JsRootState
+  exclusionGeneration: bigint
+  coverage: JsCoverage
+  boundarySequence?: bigint
+}
+
+export interface JsRootState {
+  generation: bigint
+  identity: JsRootIdentity
+  attachment: string
+  lossEvidence?: string
 }
 
 export interface JsStats {

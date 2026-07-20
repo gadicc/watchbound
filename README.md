@@ -44,15 +44,19 @@ to its root.
 node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
+node benches/conformance.mjs --adapter watchbound --scenario root-replacement-recovery --quick --strict --pretty
 node benches/conformance.mjs --help
 node --expose-gc benches/benchmark.mjs --help
 ```
 
-The two targeted reconciliation commands are ordinary-development conformance
-checks. The first calls the explicit `subscription.reconcile()` primitive; the
-second enables the JavaScript wrapper's bounded automatic policy. Both use
-deterministic native-to-JavaScript consumer backpressure and do not induce a
-real inotify queue overflow. The I/O-heavy forced-overflow
+The targeted reconciliation and root-recovery commands are
+ordinary-development conformance checks. The first calls the explicit
+`subscription.reconcile()` primitive; the second enables the JavaScript
+wrapper's bounded automatic policy; the third exercises explicit direct and
+ancestor replacement recovery on the original subscription. The first two use
+deterministic native-to-JavaScript consumer backpressure; the third uses
+ordinary temporary-directory replacement. None induces a real inotify queue
+overflow. The I/O-heavy forced-overflow
 scenarios are removed by `--quick` and require both explicit quiet-host
 confirmation and the `--allow-forced-overflow` acknowledgement. The flag is a
 safety interlock, not evidence that the host is ready.
@@ -78,7 +82,9 @@ correctness evidence, not new performance readings.
 The JavaScript wrapper also offers opt-in `automaticReconciliation`. It is
 disabled by default, coalesces the three recoverable uncertainty reasons, uses
 finite capped exponential backoff, and exposes only its current bounded status.
-It calls the same primitive on the original subscription and never reconstructs
-lost detail. `root-replaced` is explicitly blocked and the engine does not
-reattach to the replacement. Root-replacement recovery, non-Linux backends, and
-published prebuilds remain for later milestones.
+lost detail. `root-replaced` blocks this automatic policy: it never chooses a
+replacement identity. A caller may instead invoke the distinct
+`recoverRoot({ identityPolicy })` operation, which revalidates and scans the
+same lexical root under an explicit `original-only` or `accept-replacement`
+decision and emits one conservative root boundary on success. Non-Linux
+backends and published prebuilds remain for later milestones.

@@ -4,6 +4,7 @@ Status: final first-milestone Linux findings as of 2026-07-19, with targeted
 manual, overflow, and opt-in automatic reconciliation follow-up, including a
 clean-source automatic-overflow confirmation, on 2026-07-20. Performance
 ranges and the continuation decision are in `docs/benchmark-results.md`.
+Explicit root replacement recovery was implemented and checked later that day.
 
 ## Second-milestone correctness update
 
@@ -52,7 +53,8 @@ conformance or benchmark readings are recorded here, and the historical series
 below is unchanged. Callback-blocking does not induce a real kernel queue
 overflow, so it is not evidence for native-overflow recovery; the supervised
 forced-overflow run remains separately gated on explicit host preparation.
-Recovery of a replaced root identity remains open.
+Recovery of a replaced root identity was the next distinct milestone and is
+recorded below.
 
 ## Opt-in automatic reconciliation update
 
@@ -102,6 +104,30 @@ hashes, host state, and memory-pressure caveat are recorded in
 `docs/benchmark-results.md`. No further forced-overflow attempt is authorized
 by this evidence run.
 
+## Explicit root replacement recovery update
+
+The engine now latches fixed-size root identity, generation, attachment, and
+loss evidence independently of coverage priority. The distinct public
+`recoverRoot({ identityPolicy })` operation requires `original-only` or
+`accept-replacement` on every call; `reconcile()` remains identity-preserving,
+and the automatic policy still never selects a replacement. Recovery preserves
+one public subscription and exclusion generation, removes and scans topology in
+bounded peer-safe turns, watches before reading, rejects symlink/unstable or
+unaccepted candidates, and commits at most one singleton root boundary.
+
+Fourteen focused engine integration tests plus backend, Node, wrapper, and
+policy cases cover direct and ancestor replacement, original restoration,
+structured refusals, exclusions, watch/runtime limits, partial coverage,
+output pressure, root-loss freezing even under stronger overflow, unstable
+identity, peer progress, and joined disposal. The ordinary
+`root-replacement-recovery` strict quick scenario then passed all 15 checks on
+its first Watchbound trial with forced overflow disabled. It exercised direct
+and ancestor adoption on the original subscription, exact result/boundary and
+root-generation matching, committed exclusions, peer delivery, monotonic
+sequences, a deep sentinel, and final resource/callback cleanup. This unsaved
+development run is correctness evidence, not a benchmark or new performance
+reading.
+
 ## Supervised overflow-reconciliation evidence
 
 After explicit quiet-host confirmation, the dedicated
@@ -131,8 +157,9 @@ heavy scenario requires `--allow-forced-overflow` before any probe or trial can
 start. That flag does not establish host readiness. The passing raw artifact and
 the retained first-attempt harness-bookkeeping failure are identified in
 `docs/benchmark-results.md`; neither replaces the historical performance
-series. Automatic genuine-overflow recovery now has its own separately gated
-evidence above; root-replacement recovery remains open.
+series. Automatic genuine-overflow recovery has its own separately gated
+evidence above; explicit root replacement recovery has the ordinary evidence
+recorded above.
 
 ## Exact Codex JavaScript helper
 
@@ -215,8 +242,9 @@ Linux backend does not surface.
   and disposal.
 - Root move/replacement is explicitly reported as uncertain and invalidates the
   root. A 250 ms lexical path-identity check also detects an ancestor move.
-  Automatic same-path replacement recovery is not implemented, so a deep
-  follow-up in the replacement is not delivered.
+  In the historical final suite no identity was explicitly adopted, so a deep
+  follow-up in the replacement was not delivered. The later operation above
+  does not change that recorded trial.
 - In all three process-level forced-overflow trials, the helper confirmed the
   watcher was stopped before creating 20,480 files against a 16,384-event
   queue. Watchbound reported `event-overflow`, invalidated the root, drained,
@@ -241,5 +269,6 @@ and exclusion design are resolved.
 The shared-runtime scheduling, dynamic-exclusion, and explicit bounded
 reconciliation gaps named in that decision have since been implemented and are
 covered by targeted tests. That later work does not replace the recorded first-
-series measurements. Automatic policy is now implemented above the unchanged
-native primitive; root replacement remains the separate recovery gap.
+series measurements. Automatic policy and distinct explicit root replacement
+recovery are now implemented without extending reconciliation into identity
+adoption.

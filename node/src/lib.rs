@@ -17,7 +17,10 @@ use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
 use watchbound_engine::{
     ChangeBatch, Coverage, Engine, ExclusionHandle, PartialReason, ReconciliationHandle,
-    ReconciliationResult, Stats, StatsHandle, Subscription, SubscriptionOptions, UncertainReason,
+    ReconciliationResult, RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence,
+    RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryHandle, RootRecoveryResult,
+    RootState, RootStateHandle, Stats, StatsHandle, Subscription, SubscriptionOptions,
+    UncertainReason,
 };
 
 type BatchThreadsafeFunction =
@@ -117,6 +120,7 @@ impl From<&Coverage> for JsCoverage {
 pub struct JsChangeBatch {
     pub sequence: u64,
     pub exclusion_generation: u64,
+    pub root_state: JsRootState,
     /// Exact Linux path bytes. The JavaScript wrapper may decode UTF-8 paths,
     /// but the native boundary never performs a lossy conversion.
     pub invalidated_paths: Vec<Buffer>,
@@ -127,6 +131,71 @@ pub struct JsChangeBatch {
 pub struct JsReconciliationResult {
     pub exclusion_generation: u64,
     pub coverage: JsCoverage,
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsRootIdentity {
+    pub device: u64,
+    pub inode: u64,
+}
+
+impl From<RootIdentity> for JsRootIdentity {
+    fn from(identity: RootIdentity) -> Self {
+        Self {
+            device: identity.device,
+            inode: identity.inode,
+        }
+    }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsRootState {
+    pub generation: u64,
+    pub identity: JsRootIdentity,
+    pub attachment: String,
+    pub loss_evidence: Option<String>,
+}
+
+impl From<RootState> for JsRootState {
+    fn from(state: RootState) -> Self {
+        Self {
+            generation: state.generation,
+            identity: state.identity.into(),
+            attachment: root_attachment_name(state.attachment).to_owned(),
+            loss_evidence: state
+                .loss_evidence
+                .map(|evidence| root_loss_evidence_name(evidence).to_owned()),
+        }
+    }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsRootRecoveryResult {
+    pub attachment: String,
+    pub reason: Option<String>,
+    pub previous_root_state: JsRootState,
+    pub candidate_identity: Option<JsRootIdentity>,
+    pub current_root_state: JsRootState,
+    pub exclusion_generation: u64,
+    pub coverage: JsCoverage,
+    pub boundary_sequence: Option<u64>,
+}
+
+impl From<RootRecoveryResult> for JsRootRecoveryResult {
+    fn from(result: RootRecoveryResult) -> Self {
+        Self {
+            attachment: root_recovery_attachment_name(result.attachment).to_owned(),
+            reason: result
+                .reason
+                .map(|reason| root_recovery_failure_name(reason).to_owned()),
+            previous_root_state: result.previous_root_state.into(),
+            candidate_identity: result.candidate_identity.map(Into::into),
+            current_root_state: result.current_root_state.into(),
+            exclusion_generation: result.exclusion_generation,
+            coverage: JsCoverage::from(&result.coverage),
+            boundary_sequence: result.boundary_sequence,
+        }
+    }
 }
 
 impl From<ReconciliationResult> for JsReconciliationResult {
@@ -143,6 +212,7 @@ impl From<ChangeBatch> for JsChangeBatch {
         Self {
             sequence: batch.sequence,
             exclusion_generation: batch.exclusion_generation,
+            root_state: batch.root_state.into(),
             invalidated_paths: batch
                 .invalidated_paths
                 .iter()
@@ -332,6 +402,11 @@ impl NativeSubscription {
         self.state.exclusions.exclusion_generation()
     }
 
+    #[napi(getter)]
+    pub fn root_state(&self) -> JsRootState {
+        self.state.root_state.root_state().into()
+    }
+
     #[napi(ts_return_type = "Promise<JsCoverage>")]
     pub fn replace_exclusions(
         &self,
@@ -360,6 +435,24 @@ impl NativeSubscription {
         AsyncTask::new(ReconcileTask {
             reconciliation: self.state.reconciliation.clone(),
         })
+    }
+
+    #[napi(ts_return_type = "Promise<JsRootRecoveryResult>")]
+    pub fn recover_root(&self, identity_policy: String) -> Result<AsyncTask<RecoverRootTask>> {
+        let identity_policy = match identity_policy.as_str() {
+            "original-only" => RootIdentityPolicy::OriginalOnly,
+            "accept-replacement" => RootIdentityPolicy::AcceptReplacement,
+            _ => {
+                return Err(Error::new(
+                    Status::InvalidArg,
+                    "identityPolicy must be \"original-only\" or \"accept-replacement\"",
+                ));
+            }
+        };
+        Ok(AsyncTask::new(RecoverRootTask {
+            recovery: self.state.root_recovery.clone(),
+            identity_policy,
+        }))
     }
 
     #[napi(ts_return_type = "Promise<void>")]
@@ -399,6 +492,11 @@ pub struct ReconcileTask {
     reconciliation: ReconciliationHandle,
 }
 
+pub struct RecoverRootTask {
+    recovery: RootRecoveryHandle,
+    identity_policy: RootIdentityPolicy,
+}
+
 impl Task for ReplaceExclusionsTask {
     type Output = Coverage;
     type JsValue = JsCoverage;
@@ -427,6 +525,21 @@ impl Task for ReconcileTask {
     }
 }
 
+impl Task for RecoverRootTask {
+    type Output = RootRecoveryResult;
+    type JsValue = JsRootRecoveryResult;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.recovery
+            .recover_root(self.identity_policy)
+            .map_err(node_error)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output.into())
+    }
+}
+
 impl Task for DisposeTask {
     type Output = ();
     type JsValue = ();
@@ -445,6 +558,8 @@ pub struct SubscriptionState {
     stats: StatsHandle,
     exclusions: ExclusionHandle,
     reconciliation: ReconciliationHandle,
+    root_state: RootStateHandle,
+    root_recovery: RootRecoveryHandle,
     threadsafe_function: Mutex<Option<Arc<BatchThreadsafeFunction>>>,
     bridge: Mutex<Option<JoinHandle<io::Result<()>>>>,
     shutdown: Arc<ShutdownGate>,
@@ -466,6 +581,8 @@ impl SubscriptionState {
         let stats = subscription.stats_handle();
         let exclusions = subscription.exclusion_handle();
         let reconciliation = subscription.reconciliation_handle();
+        let root_state = subscription.root_state_handle();
+        let root_recovery = subscription.root_recovery_handle();
         let callback_tracker = Arc::new(CallbackTracker::new());
         let threadsafe_function = Arc::new(threadsafe_function);
         let bridge_callback_tracker = Arc::clone(&callback_tracker);
@@ -487,6 +604,8 @@ impl SubscriptionState {
             stats,
             exclusions,
             reconciliation,
+            root_state,
+            root_recovery,
             threadsafe_function: Mutex::new(Some(threadsafe_function)),
             bridge: Mutex::new(Some(bridge)),
             shutdown,
@@ -764,6 +883,41 @@ fn uncertain_reason_name(reason: UncertainReason) -> &'static str {
         UncertainReason::RootReplaced => "root-replaced",
         UncertainReason::TopologyRace => "topology-race",
         UncertainReason::ConsumerBackpressure => "consumer-backpressure",
+    }
+}
+
+fn root_attachment_name(attachment: RootAttachment) -> &'static str {
+    match attachment {
+        RootAttachment::Attached => "attached",
+        RootAttachment::Lost => "lost",
+    }
+}
+
+fn root_loss_evidence_name(evidence: RootLossEvidence) -> &'static str {
+    match evidence {
+        RootLossEvidence::RootSelfEvent => "root-self-event",
+        RootLossEvidence::RootWatchLoss => "root-watch-loss",
+        RootLossEvidence::PathIdentityMismatch => "path-identity-mismatch",
+        RootLossEvidence::Multiple => "multiple",
+    }
+}
+
+fn root_recovery_attachment_name(attachment: RootRecoveryAttachment) -> &'static str {
+    match attachment {
+        RootRecoveryAttachment::OriginalRestored => "original-restored",
+        RootRecoveryAttachment::ReplacementAdopted => "replacement-adopted",
+        RootRecoveryAttachment::NotAttached => "not-attached",
+    }
+}
+
+fn root_recovery_failure_name(reason: RootRecoveryFailureReason) -> &'static str {
+    match reason {
+        RootRecoveryFailureReason::ReplacementNotAccepted => "replacement-not-accepted",
+        RootRecoveryFailureReason::CandidateMissing => "candidate-missing",
+        RootRecoveryFailureReason::CandidateNotDirectory => "candidate-not-directory",
+        RootRecoveryFailureReason::SymlinkAncestry => "symlink-ancestry",
+        RootRecoveryFailureReason::IdentityUnstable => "identity-unstable",
+        RootRecoveryFailureReason::RootWatchUnavailable => "root-watch-unavailable",
     }
 }
 

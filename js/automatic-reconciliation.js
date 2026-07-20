@@ -19,6 +19,7 @@ const reasonPriority = Object.freeze({
   "consumer-backpressure": 1,
   "topology-race": 2,
   "event-overflow": 3,
+  "root-replaced": 4,
 });
 
 const systemClock = Object.freeze({
@@ -58,6 +59,8 @@ export function createAutomaticReconciliationPolicy(
   let lifecycle = "active";
   let timer = null;
   let activePromise = null;
+  let rootRecoveryPromise = null;
+  let rootRecoveryObservation = null;
   let disposalPromise = null;
   let attempts = 0;
   let pendingLoss = false;
@@ -73,8 +76,17 @@ export function createAutomaticReconciliationPolicy(
     currentStatus = frozenStatus(value);
   }
 
-  function observe(coverage) {
+  function observe(observation) {
+    const coverage = observation?.coverage ?? observation;
+    const rootState = observation?.rootState;
     if (lifecycle !== "active" || !coverage || coverage.state !== "uncertain") return;
+    if (rootRecoveryPromise !== null) {
+      rootRecoveryObservation = strongerRootRecoveryObservation(
+        rootRecoveryObservation,
+        { coverage, rootState },
+      );
+      return;
+    }
     if (coverage.reason === "root-replaced") {
       terminalLatch = true;
       pendingLoss = false;
@@ -198,6 +210,104 @@ export function createAutomaticReconciliationPolicy(
     timer = null;
   }
 
+  function recoverRoot(identityPolicy, nativeRecover) {
+    if (lifecycle !== "active") {
+      return Promise.reject(new Error("subscription is disposing or disposed"));
+    }
+    if (rootRecoveryPromise !== null) {
+      return Promise.reject(new Error("a root recovery is already in progress"));
+    }
+    const previous = {
+      status: currentStatus,
+      terminalLatch,
+      cycleActive,
+      attempts,
+      pendingLoss,
+      cycleReason,
+    };
+    cancelTimer();
+    pendingLoss = false;
+    rootRecoveryObservation = null;
+    setStatus({ state: "recovering-root", identityPolicy });
+
+    rootRecoveryPromise = (async () => {
+      try {
+        const result = await nativeRecover();
+        rootRecoveryPromise = null;
+        if (lifecycle === "active") finishRootRecovery(result);
+        return result;
+      } catch (error) {
+        rootRecoveryPromise = null;
+        if (lifecycle === "active") {
+          const observedRootLoss =
+            rootRecoveryObservation?.coverage.reason === "root-replaced";
+          if (previous.status.state === "blocked" || observedRootLoss) {
+            terminalLatch = true;
+            cycleActive = false;
+            cycleReason = "root-replaced";
+            setStatus({ state: "blocked", reason: "root-replaced" });
+          } else {
+            terminalLatch = previous.terminalLatch;
+            cycleActive = previous.cycleActive;
+            attempts = previous.attempts;
+            pendingLoss = previous.pendingLoss;
+            cycleReason = previous.cycleReason;
+            if (previous.status.state === "scheduled" && pendingLoss) {
+              setStatus({ state: "idle" });
+              scheduleAttempt();
+            } else {
+              setStatus(previous.status);
+            }
+            if (rootRecoveryObservation) observe(rootRecoveryObservation);
+          }
+        }
+        throw error;
+      } finally {
+        rootRecoveryPromise = null;
+        rootRecoveryObservation = null;
+      }
+    })();
+    return rootRecoveryPromise;
+  }
+
+  function finishRootRecovery(result) {
+    const attached =
+      result?.attachment !== "not-attached" &&
+      result?.currentRootState?.attachment === "attached";
+    if (!attached) {
+      terminalLatch = true;
+      cycleActive = false;
+      cycleReason = "root-replaced";
+      setStatus({ state: "blocked", reason: "root-replaced" });
+      return;
+    }
+
+    const currentGeneration = result.currentRootState?.generation;
+    const relevantObservation =
+      rootRecoveryObservation !== null &&
+      (rootRecoveryObservation.rootState?.generation === undefined ||
+        currentGeneration === undefined ||
+        rootRecoveryObservation.rootState.generation >= currentGeneration)
+        ? rootRecoveryObservation
+        : null;
+    if (relevantObservation?.coverage.reason === "root-replaced") {
+      terminalLatch = true;
+      cycleActive = false;
+      cycleReason = "root-replaced";
+      setStatus({ state: "blocked", reason: "root-replaced" });
+      return;
+    }
+
+    terminalLatch = false;
+    cycleActive = false;
+    attempts = 0;
+    pendingLoss = false;
+    cycleReason = null;
+    setStatus({ state: "idle" });
+    observe(result.coverage);
+    if (relevantObservation) observe(relevantObservation);
+  }
+
   function dispose(nativeDispose) {
     if (disposalPromise) return disposalPromise;
     lifecycle = "disposing";
@@ -212,10 +322,12 @@ export function createAutomaticReconciliationPolicy(
       nativeDisposal = Promise.reject(error);
     }
     const activeAtDisposal = activePromise;
+    const rootRecoveryAtDisposal = rootRecoveryPromise;
     disposalPromise = (async () => {
       const [nativeResult] = await Promise.allSettled([
         nativeDisposal,
         activeAtDisposal,
+        rootRecoveryAtDisposal,
       ]);
       lifecycle = "disposed";
       setStatus({ state: "disposed" });
@@ -224,7 +336,7 @@ export function createAutomaticReconciliationPolicy(
     return disposalPromise;
   }
 
-  return Object.freeze({ status, observe, dispose });
+  return Object.freeze({ status, observe, recoverRoot, dispose });
 }
 
 function requireBoundedInteger(name, value, minimum, maximum) {
@@ -237,6 +349,19 @@ function requireBoundedInteger(name, value, minimum, maximum) {
 
 function strongerReason(current, candidate) {
   return reasonPriority[candidate] > reasonPriority[current] ? candidate : current;
+}
+
+function strongerRootRecoveryObservation(current, candidate) {
+  if (current === null) return candidate;
+  const currentGeneration = current.rootState?.generation;
+  const candidateGeneration = candidate.rootState?.generation;
+  if (currentGeneration !== undefined && candidateGeneration !== undefined) {
+    if (candidateGeneration > currentGeneration) return candidate;
+    if (candidateGeneration < currentGeneration) return current;
+  }
+  return reasonPriority[candidate.coverage.reason] > reasonPriority[current.coverage.reason]
+    ? candidate
+    : current;
 }
 
 function isRootReplacementError(error) {

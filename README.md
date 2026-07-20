@@ -18,7 +18,8 @@ The workspace is divided by ownership:
 - `docs/`: architecture, methodology, results, and decisions.
 
 See `docs/architecture.md` and `docs/benchmark-methodology.md` for the design
-and evaluation contract.
+and evaluation contract. The post-feasibility package recommendation and its
+gates are in `docs/consumer-api-stabilization.md`.
 
 ## Build and test
 

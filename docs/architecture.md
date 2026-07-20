@@ -7,6 +7,11 @@ reconciliation, and an opt-in JavaScript automatic policy in targeted stress,
 plus explicit identity-policy-gated root replacement recovery,
 without product integration or publication.
 
+The subsequent consumer/API audit recommends a maintained unpublished package,
+conditional on named ownership and a narrow support target, but explicitly
+does not authorize packaging, publishing, prebuilds, or integration. See
+`docs/consumer-api-stabilization.md`.
+
 ## Decision
 
 Build a small Linux-only Rust prototype around inotify, plus a thin Node-API

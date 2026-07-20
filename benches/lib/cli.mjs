@@ -14,6 +14,7 @@ const DEFAULT_CONFORMANCE_SCENARIOS = [
   "queue-overflow",
   "dynamic-exclusions",
   "reconciliation",
+  "automatic-reconciliation",
   "overflow-reconciliation",
   "burst-files",
   "burst-directories",

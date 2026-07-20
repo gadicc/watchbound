@@ -104,6 +104,8 @@ export async function loadAdapter() {
       nativeCapabilities,
       publicSubscriptionOperations,
     ),
+    automaticReconciliation:
+      nativeCapabilities.automaticReconciliation === true,
   };
 
   return {
@@ -118,6 +120,7 @@ export async function loadAdapter() {
       batchWindowMs = subscriptionOptions.batchWindowMs,
       maxBatchPaths = subscriptionOptions.maxBatchPaths,
       outputQueueCapacity = subscriptionOptions.outputQueueCapacity,
+      automaticReconciliation = false,
     }) {
       const subscription = await implementation.subscribe(
         path.resolve(root),
@@ -141,6 +144,7 @@ export async function loadAdapter() {
           batchWindowMs,
           maxBatchPaths,
           outputQueueCapacity,
+          automaticReconciliation,
         },
       );
 
@@ -157,6 +161,7 @@ export async function loadAdapter() {
       let exclusionGeneration = 0n;
       const operationEvidence = {
         publicSubscriptionCreations: 1,
+        automaticReconciliationEnabled: automaticReconciliation !== false,
         reconciliationCalls: 0,
         reconciliationCallsOnOriginalSubscription: 0,
         disposalRequests: 0,
@@ -166,6 +171,15 @@ export async function loadAdapter() {
         operationEvidence: () => ({ ...operationEvidence }),
         get exclusionGeneration() {
           return jsonCounter(subscription.exclusionGeneration);
+        },
+        get automaticReconciliation() {
+          const status = subscription.automaticReconciliation;
+          return {
+            ...status,
+            ...(status.exclusionGeneration === undefined
+              ? {}
+              : { exclusionGeneration: jsonCounter(status.exclusionGeneration) }),
+          };
         },
         dispose() {
           operationEvidence.disposalRequests += 1;

@@ -33,6 +33,13 @@ export interface SubscriptionOptions {
   batchWindowMs?: number;
   maxBatchPaths?: number;
   outputQueueCapacity?: number;
+  automaticReconciliation?: boolean | AutomaticReconciliationOptions;
+}
+
+export interface AutomaticReconciliationOptions {
+  maxAttempts?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
 }
 
 export interface Stats {
@@ -51,6 +58,7 @@ export interface Stats {
 export interface Subscription {
   readonly initialCoverage: Coverage;
   readonly exclusionGeneration: bigint;
+  readonly automaticReconciliation: AutomaticReconciliationStatus;
   stats(): Stats;
   replaceExclusions(
     generation: bigint,
@@ -65,6 +73,39 @@ export interface ReconciliationResult {
   coverage: Coverage;
 }
 
+export type RecoverableUncertainReason =
+  | "event-overflow"
+  | "topology-race"
+  | "consumer-backpressure";
+
+export type AutomaticReconciliationStatus =
+  | { readonly state: "disabled" | "idle" | "disposing" | "disposed" }
+  | {
+      readonly state: "scheduled";
+      readonly reason: RecoverableUncertainReason;
+      readonly attempt: number;
+      readonly delayMs: number;
+    }
+  | {
+      readonly state: "reconciling";
+      readonly reason: RecoverableUncertainReason;
+      readonly attempt: number;
+    }
+  | {
+      readonly state: "recovered" | "incomplete";
+      readonly reason: RecoverableUncertainReason;
+      readonly attempts: number;
+      readonly exclusionGeneration: bigint;
+      readonly coverage: Coverage;
+    }
+  | {
+      readonly state: "exhausted";
+      readonly reason: RecoverableUncertainReason;
+      readonly attempts: number;
+      readonly error: string;
+    }
+  | { readonly state: "blocked"; readonly reason: "root-replaced" };
+
 export interface Capabilities {
   recursive: true;
   movedInTreeDiscovery: boolean;
@@ -72,6 +113,7 @@ export interface Capabilities {
   overflowReporting: boolean;
   dynamicExclusions: boolean;
   reconciliation: boolean;
+  automaticReconciliation: boolean;
   rootReplacementRecovery: boolean;
   exactPathBytes: true;
 }

@@ -47,6 +47,7 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     assert.equal(capabilities.dynamicExclusions, true);
     assert.equal(subscription.initialCoverage.state, "complete");
     assert.equal(subscription.exclusionGeneration, 0n);
+    assert.deepEqual(subscription.automaticReconciliation, { state: "disabled" });
     assert.ok(batches.some((batch) => batch.invalidatedPaths.includes(changed)));
     assert.equal(typeof batches[0].sequence, "bigint");
     assert.equal(batches[0].exclusionGeneration, 0n);
@@ -180,6 +181,7 @@ test("wrapper reconciles observable consumer backpressure on the same subscripti
     );
 
     assert.equal(subscription.exclusionGeneration, 0n);
+    assert.deepEqual(subscription.automaticReconciliation, { state: "disabled" });
     for (const target of targets) fs.appendFileSync(target, "trigger\n");
     await waitFor(
       () => batches.some((batch) =>
@@ -239,6 +241,87 @@ test("wrapper reconciles observable consumer backpressure on the same subscripti
   }
 });
 
+test("wrapper automatically reconciles consumer backpressure only when opted in", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-auto-reconcile-"));
+  let subscription;
+  try {
+    const burstRoot = path.join(root, "burst");
+    fs.mkdirSync(burstRoot);
+    const targets = [];
+    for (let index = 0; index < 64; index += 1) {
+      const target = path.join(burstRoot, `file-${String(index).padStart(3, "0")}.txt`);
+      fs.writeFileSync(target, "before\n");
+      targets.push(target);
+    }
+
+    const batches = [];
+    const waitCell = new Int32Array(new SharedArrayBuffer(4));
+    let callbackWasBlocked = false;
+    subscription = await subscribe(
+      root,
+      (batch) => {
+        if (!callbackWasBlocked) {
+          callbackWasBlocked = true;
+          for (let round = 0; round < 32; round += 1) {
+            for (const target of targets) fs.appendFileSync(target, "pressure\n");
+          }
+          Atomics.wait(waitCell, 0, 0, 200);
+        }
+        batches.push(batch);
+      },
+      {
+        batchWindowMs: 1,
+        maxBatchPaths: 4_096,
+        outputQueueCapacity: 2,
+        automaticReconciliation: {
+          maxAttempts: 3,
+          initialDelayMs: 10,
+          maxDelayMs: 40,
+        },
+      },
+    );
+
+    assert.equal(capabilities.automaticReconciliation, true);
+    for (const target of targets) fs.appendFileSync(target, "trigger\n");
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.coverage.state === "uncertain" &&
+        batch.coverage.reason === "consumer-backpressure"),
+      "consumer-backpressure uncertainty was not observed",
+      5_000,
+    );
+    await waitFor(
+      () => subscription.automaticReconciliation.state === "recovered",
+      `automatic reconciliation did not recover: ${JSON.stringify(subscription.automaticReconciliation)}`,
+      5_000,
+    );
+    const status = subscription.automaticReconciliation;
+    assert.equal(status.reason, "consumer-backpressure");
+    assert.equal(status.exclusionGeneration, 0n);
+    assert.deepEqual(status.coverage, { state: "complete" });
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.invalidatedPaths.length === 1 &&
+        batch.invalidatedPaths[0] === root &&
+        batch.exclusionGeneration === status.exclusionGeneration &&
+        batch.coverage.state === status.coverage.state),
+      "automatic recovery root boundary was not delivered",
+    );
+
+    const sequences = batches.map((batch) => batch.sequence);
+    assert.ok(sequences.every((sequence, index) => index === 0 || sequence > sequences[index - 1]));
+    assert.ok(batches.every((batch) => batch.exclusionGeneration === 0n));
+  } finally {
+    await subscription?.dispose();
+    if (subscription) {
+      assert.deepEqual(subscription.automaticReconciliation, { state: "disposed" });
+      assert.equal(subscription.stats().watchedDirectories, 0);
+      assert.equal(subscription.stats().deferredDirectories, 0);
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("wrapper rejects concurrent reconciliation and exclusion transactions explicitly", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-conflicts-"));
   let subscription;
@@ -291,13 +374,24 @@ test("wrapper does not report root-replaced uncertainty as recovered", async () 
   let subscription;
   try {
     const batches = [];
-    subscription = await subscribe(root, (batch) => batches.push(batch), { batchWindowMs: 5 });
+    subscription = await subscribe(root, (batch) => batches.push(batch), {
+      batchWindowMs: 5,
+      automaticReconciliation: {
+        maxAttempts: 3,
+        initialDelayMs: 10,
+        maxDelayMs: 40,
+      },
+    });
     fs.renameSync(root, movedRoot);
     await waitFor(
       () => batches.some((batch) =>
         batch.coverage.state === "uncertain" && batch.coverage.reason === "root-replaced"),
       "root replacement uncertainty was not publicly observable",
     );
+    assert.deepEqual(subscription.automaticReconciliation, {
+      state: "blocked",
+      reason: "root-replaced",
+    });
     await assert.rejects(
       subscription.reconcile(),
       /root-replaced|root identity changed/i,

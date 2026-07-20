@@ -16,6 +16,7 @@ not corrupt the report's JSON.
 ```sh
 node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
+node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
 pnpm test:reconciliation-stress
 node --expose-gc benches/benchmark.mjs --pretty
 node --expose-gc benches/benchmark.mjs --quick --pretty
@@ -43,7 +44,8 @@ the report records a deterministic source-input digest and Git state as well.
 The suite covers ordinary deep changes, populated moved-in trees followed by a deep modification,
 root move/same-path replacement followed by a deep modification, forced inotify queue overflow,
 an explicit low watch limit, explicit native-to-JavaScript bridge backpressure, dynamic exclusions, file and
-directory creation bursts, in-place post-loss reconciliation, rename bursts, and post-disposal mutation. Cold startup is the first
+directory creation bursts, explicit and opt-in automatic in-place post-loss
+reconciliation, rename bursts, and post-disposal mutation. Cold startup is the first
 subscription in a fresh child, with module loading measured separately. Warm startup creates and
 disposes one subscription in that fresh child before measuring the second subscription. Both trials
 measure subscription and disposal separately.
@@ -93,6 +95,16 @@ resource state. Current and future excluded prefixes must remain excluded, and m
 coverage is uncertain or reconciliation is scanning are represented by the root boundary rather
 than reconstructed as guaranteed detail.
 
+`automatic-reconciliation` repeats that public contract with the wrapper policy
+enabled and with zero harness calls to `reconcile()`. The report retains the
+single subscription creation, policy status, bounded configuration, unchanged
+generation, singleton matching root boundary, peer progress, excluded-prefix
+checks, sequences, and resource restoration. The default-disabled behavior and
+all three recoverable reasons are covered separately by wrapper/policy tests.
+`root-replaced` produces a terminal blocked status and never schedules policy
+recovery. Failed or exhausted trials remain raw correctness evidence and, like
+all failed trials, contribute no numeric performance samples.
+
 Capability gating is strict: the adapter must expose the complete public existing-subscription
 method together with explicit coverage, typed consumer backpressure, and atomic exclusions.
 Unsupported adapters are excluded with a reason and receive no pass credit. A successful
@@ -108,8 +120,8 @@ coverage, use `pnpm test:reconciliation-stress`, which expands to:
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --runs 5 --burst-count 100 --strict
 ```
 
-The repeat command intentionally omits `--quick`, because that preset selects one run. Both commands
-are ordinary-development evidence only. They do not prove recovery from a real inotify overflow; the
+The repeat command intentionally omits `--quick`, because that preset selects one run. Both manual
+and automatic commands are ordinary-development evidence only. They do not prove recovery from a real inotify overflow; the
 separately supervised forced-overflow run remains gated on explicit host-preparation confirmation.
 
 `overflow-reconciliation` combines the two evidence paths without treating one as the other. It

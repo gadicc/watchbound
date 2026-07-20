@@ -2,8 +2,9 @@
 
 Status: the Linux feasibility engine now includes the directory-burst
 correctness gate, shared process-wide runtime, bounded fair native-watch
-allocator, generation-based atomic dynamic exclusions, and bounded post-loss
-reconciliation in targeted stress, without product integration or publication.
+allocator, generation-based atomic dynamic exclusions, bounded post-loss
+reconciliation, and an opt-in JavaScript automatic policy in targeted stress,
+without product integration or publication.
 
 ## Decision
 
@@ -47,6 +48,44 @@ accounting, and bounded delivery.
 | `js/` | ergonomic JavaScript entry point and TypeScript declarations | hidden recovery or coverage claims |
 | `benches/` | isolated adapters, scenarios, measurements, raw JSON results | product policy or benchmark-only behavior in the engine |
 | future consumer | Git ignore decisions, logical path mapping, UI/logging policy, retries above the filesystem engine | Linux descriptors, rename cookies, inotify queue mechanics |
+
+### Decision: opt-in automatic reconciliation belongs in the JavaScript wrapper
+
+The automatic policy is a consumer policy over the existing public
+`subscription.reconcile()` barrier, not a new filesystem primitive. The
+JavaScript wrapper therefore owns opt-in enablement, loss-notification
+coalescing, bounded attempts, bounded exponential-backoff timers, a single
+current status snapshot, and joining those timers with disposal. The wrapper
+continues using the original native subscription and calls its existing
+reconciliation method; it never unsubscribes, resubscribes, invents detailed
+events, changes exclusions, or assigns coverage.
+
+The public option is `automaticReconciliation: true | { maxAttempts,
+initialDelayMs, maxDelayMs }`, disabled by default. Defaults are deliberately
+small and finite (three attempts, 25 ms initial delay, 1,000 ms maximum delay),
+and validation applies a 10 ms delay floor plus hard ceilings (16 attempts and
+60,000 ms). The subscription exposes one immutable `automaticReconciliation`
+status snapshot
+rather than an event history, so pending evidence remains bounded and terminal
+retry exhaustion or non-recoverable coverage is inspectable without creating
+synthetic filesystem batches.
+
+Only `event-overflow`, `topology-race`, and `consumer-backpressure` schedule the
+policy. `root-replaced` cancels a pending timer and latches a non-recoverable
+status; an active native barrier is joined but cannot be credited as recovery.
+One pending-loss bit coalesces notifications before a timer and records a new
+barrier requirement during a running attempt. A recoverable loss delivered
+after a successful root enqueue starts a new bounded cycle when its later batch
+reaches JavaScript. Native batch order, generations, coverage, exclusion
+transactions, and the singleton root boundary remain authoritative.
+
+Automatic calls deliberately use the same native topology transaction gate as
+manual reconciliation and exclusion replacement. Conflicts stay explicit and
+may consume a bounded retry attempt; the wrapper does not queue or silently
+reorder an exclusion update. Disposal first closes the policy admission gate
+and cancels its timer, then starts native disposal and joins any active attempt.
+This preserves the native rule that no callback or topology work can begin
+after disposal resolves.
 
 The Rust code has an internal `backend/linux.rs` module because the Linux state
 machine is already a useful implementation boundary. There is no public or
@@ -411,8 +450,7 @@ watches, descriptors, bridge state, and the worker.
 This is deterministic ordinary-development evidence for post-consumer-loss
 reconciliation. It does not induce or prove recovery from a real inotify queue
 overflow. The supervised forced-overflow scenario remains separately gated on
-host preparation. Root-replacement recovery and an automatic reconciliation
-policy also remain deliberate gaps.
+host preparation. Root-replacement recovery remains a deliberate separate gap.
 
 The dedicated `overflow-reconciliation` variant reuses the detached
 controller-supervised helper and the same public subscription. Its helper must
@@ -433,8 +471,10 @@ watches, the shared inotify descriptor and eventfd, both bridges, and the final
 runtime worker. This machinery is separately permission-gated and has not yet
 been added to ordinary or automatic commands. A later explicitly confirmed
 targeted trial exercised and passed this contract through the public surface;
-it remains correctness evidence rather than a performance result. Automatic
-invocation and root-replacement recovery remain gaps.
+it remains correctness evidence rather than a performance result. The separate
+ordinary `automatic-reconciliation` scenario applies the same checks with the
+wrapper policy enabled and zero harness calls to the manual method.
+Root-replacement recovery remains a gap.
 
 ## Binding decision
 
@@ -480,9 +520,10 @@ work but duplicating the surrounding cross-platform product is not sustainable.
 - event-driven root-parent anchoring and same-path replacement recovery (the
   prototype currently detects lexical root identity loss by polling);
 - recovery of a replaced root identity (reconciliation deliberately rejects
-  or retains `root-replaced` rather than attaching to a replacement);
-- automatic reconciliation policy or reconstructed detail for events lost
-  before/during reconciliation (the public operation is explicit and root-only);
+  or retains `root-replaced` rather than attaching to a replacement; the open
+  identity and lifecycle questions are in `docs/root-replacement-follow-up.md`);
+- reconstructed detail for events lost before/during reconciliation (manual and
+  automatic recovery both remain root-only);
 - runtime descendant mount insertion/reconciliation and a one-filesystem mode;
 - detailed change kinds and rename pairing;
 - native prebuild production and package publishing;

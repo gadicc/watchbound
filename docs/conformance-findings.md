@@ -1,8 +1,9 @@
 # Correctness and capability findings
 
 Status: final first-milestone Linux findings as of 2026-07-19, with targeted
-overflow-reconciliation follow-up on 2026-07-20. Performance ranges and the
-continuation decision are in `docs/benchmark-results.md`.
+manual, overflow, and opt-in automatic reconciliation follow-up on 2026-07-20.
+Performance ranges and the continuation decision are in
+`docs/benchmark-results.md`.
 
 ## Second-milestone correctness update
 
@@ -51,7 +52,31 @@ conformance or benchmark readings are recorded here, and the historical series
 below is unchanged. Callback-blocking does not induce a real kernel queue
 overflow, so it is not evidence for native-overflow recovery; the supervised
 forced-overflow run remains separately gated on explicit host preparation.
-Automatic recovery policy and recovery of a replaced root identity remain open.
+Recovery of a replaced root identity remains open.
+
+## Opt-in automatic reconciliation update
+
+The wrapper now owns a default-disabled bounded policy over the existing public
+reconciliation primitive. Focused deterministic tests cover all three allowed
+reasons, repeated-loss coalescing before and during an attempt, one active call,
+post-enqueue loss, capped exponential backoff and terminal exhaustion,
+root-replacement blocking, incomplete coverage, timer cancellation, active
+join, idempotent disposal, and no later retry. Native reconciliation and
+exclusion tests remain authoritative for generations, transaction conflicts,
+root-only delivery, sequences, and current/future exclusions; no engine or
+Node-API contract changed.
+
+The ordinary `automatic-reconciliation` harness scenario passed its targeted
+strict quick run through the public wrapper. The harness made zero manual
+reconciliation calls and retained one original subscription. Deterministic
+`consumer-backpressure` was explicit, generation one stayed committed, exactly
+one singleton root recovery boundary matched complete policy coverage, all
+sequence/generation evidence was complete and monotonic, excluded prefixes did
+not leak, a peer delivered during the scan, the deep sentinel arrived, and
+inotify, eventfd, thread, and subscription state returned to baseline. This
+unsaved development run is correctness evidence only, not a performance
+reading and not genuine-overflow evidence. Failed recovery remains raw
+correctness evidence and is excluded from pass-only performance aggregates.
 
 ## Supervised overflow-reconciliation evidence
 
@@ -82,7 +107,8 @@ heavy scenario requires `--allow-forced-overflow` before any probe or trial can
 start. That flag does not establish host readiness. The passing raw artifact and
 the retained first-attempt harness-bookkeeping failure are identified in
 `docs/benchmark-results.md`; neither replaces the historical performance
-series. Automatic recovery and root-replacement recovery are still open.
+series. Automatic genuine-overflow recovery has not been run in this milestone;
+root-replacement recovery remains open.
 
 ## Exact Codex JavaScript helper
 
@@ -191,5 +217,5 @@ and exclusion design are resolved.
 The shared-runtime scheduling, dynamic-exclusion, and explicit bounded
 reconciliation gaps named in that decision have since been implemented and are
 covered by targeted tests. That later work does not replace the recorded first-
-series measurements or remove the remaining automatic-recovery and
-root-replacement gaps.
+series measurements. Automatic policy is now implemented above the unchanged
+native primitive; root replacement remains the separate recovery gap.

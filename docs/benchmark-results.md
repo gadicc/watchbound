@@ -1,7 +1,8 @@
 # Final benchmark results
 
 Status: first Linux feasibility measurement complete on 2026-07-19; targeted
-overflow-reconciliation correctness follow-up recorded on 2026-07-20.
+overflow and opt-in automatic reconciliation correctness follow-up completed on
+2026-07-20. No later correctness check replaces the performance series.
 
 ## Second-milestone follow-up (not a benchmark replacement)
 
@@ -21,6 +22,20 @@ batch window and 64-path batches now pass with complete detailed coverage.
 
 These are targeted correctness checks. The final JSON, hashes, ranges, and
 decision below remain the first-milestone evidence and have not been replaced.
+
+## Automatic reconciliation follow-up (not a performance reading)
+
+The separate ordinary `automatic-reconciliation` strict quick scenario passed
+through the public JavaScript wrapper using deterministic consumer
+backpressure. It retained the original subscription, made no harness call to
+manual `reconcile()`, preserved committed exclusion generation one, matched
+complete policy status to exactly one singleton root boundary, retained
+monotonic complete batch counters, kept current/future exclusions effective,
+allowed peer delivery during the scan, delivered the later sentinel, and
+returned native resources to baseline. The run was intentionally not promoted
+to a saved final artifact or performance reading. Failed automatic recovery is
+retained as correctness evidence by the harness and never enters pass-only
+numeric aggregates.
 
 ## Supervised overflow-reconciliation follow-up
 
@@ -72,6 +87,15 @@ quiescence without copying the successful boolean into its evidence object.
 Commit `e4ad05f` added a regression test and retained that field before the
 passing retry. The failed raw correctness outcome remains preserved and never
 enters pass-only performance aggregates.
+
+Both ignored files were re-hashed before this automatic-policy milestone. Their
+sizes and SHA-256 values still exactly match the entries above; neither was
+deleted, copied, or overwritten. A durable archival process should copy raw
+reports to a content-addressed project artifact store outside the worktree and
+commit a small manifest containing filename, SHA-256, schema, source commit,
+host-preparation record, and retention location. That proposal has not been
+executed: copying outside this workspace or changing the current
+`/benches/results/*.json` ignore policy requires explicit user approval.
 
 ## Decision
 

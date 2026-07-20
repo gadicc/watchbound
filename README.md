@@ -43,13 +43,16 @@ to its root.
 ```sh
 node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
+node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
 node benches/conformance.mjs --help
 node --expose-gc benches/benchmark.mjs --help
 ```
 
-The targeted reconciliation command is an ordinary-development conformance
-check. It uses deterministic native-to-JavaScript consumer backpressure and
-does not induce a real inotify queue overflow. The I/O-heavy forced-overflow
+The two targeted reconciliation commands are ordinary-development conformance
+checks. The first calls the explicit `subscription.reconcile()` primitive; the
+second enables the JavaScript wrapper's bounded automatic policy. Both use
+deterministic native-to-JavaScript consumer backpressure and do not induce a
+real inotify queue overflow. The I/O-heavy forced-overflow
 scenarios are removed by `--quick` and require both explicit quiet-host
 confirmation and the `--allow-forced-overflow` acknowledgement. The flag is a
 safety interlock, not evidence that the host is ready.
@@ -70,7 +73,12 @@ peer-subscription isolation, post-recovery delivery, and joined cleanup. It
 also contains a separately gated `overflow-reconciliation` scenario that can
 apply those checks after supervised genuine `event-overflow`. A confirmed
 targeted follow-up passed this public recovery contract; it is correctness
-evidence, not a new performance reading. The engine reports root replacement
-as uncertain but does not reattach to the replacement.
-Automatic recovery policy, root-replacement recovery, non-Linux backends, and
+evidence, not a new performance reading.
+
+The JavaScript wrapper also offers opt-in `automaticReconciliation`. It is
+disabled by default, coalesces the three recoverable uncertainty reasons, uses
+finite capped exponential backoff, and exposes only its current bounded status.
+It calls the same primitive on the original subscription and never reconstructs
+lost detail. `root-replaced` is explicitly blocked and the engine does not
+reattach to the replacement. Root-replacement recovery, non-Linux backends, and
 published prebuilds remain for later milestones.

@@ -112,6 +112,15 @@ native output path and that its coverage matches the result; callback
 observation is a later, separately bounded phase. Mutations during uncertainty
 or traversal are not counted as reconstructed detailed delivery.
 
+`automatic-reconciliation` uses the same deterministic backpressure topology
+and correctness checks, but enables the JavaScript wrapper policy and makes no
+harness call to `reconcile()`. It records the finite policy configuration and
+current status, one original subscription, unchanged generations, singleton
+matching root boundary, peer progress, exclusion preservation, sequence
+evidence, and joined disposal. Failed or exhausted recovery remains in raw
+correctness results and is excluded from numeric performance aggregates by the
+existing pass-only sample rule. It is not native-overflow evidence.
+
 `overflow-reconciliation` records the same compact recovery evidence but only
 accepts genuine loss when the detached helper proves stop/mutate/resume order,
 the distinct-file workload exceeds the observed/configured kernel queue bound,
@@ -189,6 +198,17 @@ result:
 node benches/conformance.mjs \
   --adapter watchbound \
   --scenario reconciliation \
+  --quick \
+  --strict \
+  --pretty
+```
+
+Targeted opt-in automatic-policy check under the same deterministic loss:
+
+```sh
+node benches/conformance.mjs \
+  --adapter watchbound \
+  --scenario automatic-reconciliation \
   --quick \
   --strict \
   --pretty

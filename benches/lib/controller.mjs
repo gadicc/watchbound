@@ -197,6 +197,27 @@ export function scenarioExclusionReason(plan, probe) {
       return "Reconciliation requires atomic dynamic exclusions";
     }
   }
+  if (requirement === "automaticReconciliation") {
+    const capabilities = probe.adapter.capabilities;
+    if (capabilities.automaticReconciliation !== true) {
+      return "Opt-in automatic reconciliation is not supported";
+    }
+    if (capabilities.reconciliation !== true) {
+      return "Automatic reconciliation requires public existing-subscription reconciliation";
+    }
+    if (!capabilities.explicitCoverage) {
+      return "Automatic reconciliation requires explicit coverage reporting";
+    }
+    if (!capabilities.consumerBackpressureReporting) {
+      return "Automatic reconciliation requires explicit consumer-backpressure reporting";
+    }
+    if (
+      !capabilities.dynamicExclusions?.supported ||
+      !capabilities.dynamicExclusions?.atomic
+    ) {
+      return "Automatic reconciliation requires atomic dynamic exclusions";
+    }
+  }
   if (requirement === "overflowReconciliation") {
     const capabilities = probe.adapter.capabilities;
     if (capabilities.reconciliation !== true) {
@@ -465,6 +486,7 @@ function workspaceSourceIdentity() {
     "node/index.js",
     "node/index.d.ts",
     "node/package.json",
+    "js/automatic-reconciliation.js",
     "js/index.js",
     "js/index.d.ts",
     "js/package.json",

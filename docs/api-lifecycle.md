@@ -232,5 +232,47 @@ The scenario is removed by `--quick` and cannot be selected without
 `--allow-forced-overflow`; that acknowledgement is not host-readiness
 confirmation. Its heavy path was not run while being implemented; a later
 explicitly confirmed targeted trial passed the lifecycle contract recorded in
-`docs/benchmark-results.md`. Automatic recovery policy and root-replacement
-recovery remain out of scope.
+`docs/benchmark-results.md`.
+
+## Opt-in automatic reconciliation policy
+
+The JavaScript wrapper accepts `automaticReconciliation: true` or a bounded
+options object with `maxAttempts`, `initialDelayMs`, and `maxDelayMs`. It is
+disabled by default. Defaults are three attempts, 25 ms initial delay, and a
+1,000 ms cap; public validation limits attempts to 16 and delays to 10–60,000
+ms. The delay for attempt N is `min(initialDelayMs * 2^(N-1), maxDelayMs)`.
+
+The policy observes native batch coverage before invoking the user's callback.
+Only `event-overflow`, `topology-race`, and `consumer-backpressure` set its one
+pending-loss bit. Repeats before the timer fires are coalesced. A loss during a
+barrier requests exactly one later attempt after the active call settles. A
+loss that happens after the native root enqueue but before its callback is a
+later ordered batch; when that batch reaches JavaScript it begins a fresh
+bounded cycle. No attempt overlaps another.
+
+Automatic calls use the original subscription and the same native transaction
+gate. A simultaneous manual reconciliation or exclusion replacement therefore
+retains the existing explicit `WouldBlock`/topology-transaction conflict;
+nothing is silently queued or reordered. A conflict can consume one bounded
+automatic attempt. Exclusion generations, sequences, coverage, and the
+root-only boundary remain native results. Detailed lost events are never
+reconstructed or credited.
+
+`subscription.automaticReconciliation` is one immutable current snapshot, not
+an unbounded history. It reports scheduled/reconciling progress, successful
+coverage and generation, terminal incomplete coverage, bounded retry
+exhaustion with a capped error message, `root-replaced` as blocked, and disposal
+state. Exhaustion latches the automatic policy rather than restarting on every
+batch carrying sticky uncertainty; explicit manual reconciliation remains
+available. Root replacement cancels a pending timer and can never receive
+automatic recovery credit.
+
+`dispose()` closes policy admission and cancels its timer before beginning
+native disposal, then joins both native disposal and an active policy attempt.
+Repeated disposal returns the same promise. No timer, retry, reconciliation, or
+callback can begin after it resolves. The deterministic test scheduler is
+reachable only through an internal module excluded by the package's public
+`exports`; the release entry point exposes no loss-injection or clock hook.
+
+Same-path root replacement remains a separate milestone; see
+`docs/root-replacement-follow-up.md`.

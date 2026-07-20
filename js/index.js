@@ -1,10 +1,19 @@
 import nativeBinding from "../node/index.js";
 import path from "node:path";
+import {
+  createAutomaticReconciliationPolicy,
+  normalizeAutomaticReconciliation,
+} from "./automatic-reconciliation.js";
 
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const callbackHolders = new WeakMap();
 
-export const capabilities = Object.freeze(nativeBinding.capabilities());
+export const capabilities = Object.freeze({
+  ...nativeBinding.capabilities(),
+  automaticReconciliation: true,
+});
+
+const automaticReconciliationDisabled = Object.freeze({ state: "disabled" });
 
 /**
  * Subscribe to one recursive directory root.
@@ -20,6 +29,14 @@ export async function subscribe(root, onBatch, options = {}) {
   if (typeof onBatch !== "function") {
     throw new TypeError("onBatch must be a function");
   }
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("options must be an object");
+  }
+
+  const automaticConfig = normalizeAutomaticReconciliation(
+    options.automaticReconciliation,
+  );
+  const { automaticReconciliation: _automaticReconciliation, ...nativeOptions } = options;
 
   // Preserve every caller-supplied component for the engine's symlink-ancestry
   // validation. path.resolve(root) would erase `symlink/..` before native code
@@ -29,19 +46,29 @@ export async function subscribe(root, onBatch, options = {}) {
     ? root
     : `${process.cwd()}${path.sep}${root}`;
   const resolvedRoot = path.resolve(absoluteRoot);
-  const callbackHolder = { onBatch };
+  const callbackHolder = { onBatch, observeCoverage: null };
   const weakCallbackHolder = new WeakRef(callbackHolder);
   const nativeSubscription = await nativeBinding.subscribe(
     absoluteRoot,
-    options,
+    nativeOptions,
     createNativeCallback(weakCallbackHolder, resolvedRoot),
   );
+  const automaticPolicy = automaticConfig === null
+    ? null
+    : createAutomaticReconciliationPolicy(
+        automaticConfig,
+        () => nativeSubscription.reconcile(),
+      );
+  callbackHolder.observeCoverage = automaticPolicy?.observe ?? null;
   let disposePromise;
   let subscription;
   subscription = Object.freeze({
     initialCoverage: nativeSubscription.initialCoverage,
     get exclusionGeneration() {
       return nativeSubscription.exclusionGeneration;
+    },
+    get automaticReconciliation() {
+      return automaticPolicy?.status() ?? automaticReconciliationDisabled;
     },
     stats: () => nativeSubscription.stats(),
     replaceExclusions: (generation, prefixes) => {
@@ -60,9 +87,10 @@ export async function subscribe(root, onBatch, options = {}) {
     },
     reconcile: () => nativeSubscription.reconcile(),
     dispose: () =>
-      (disposePromise ??= nativeSubscription
-        .dispose()
-        .finally(() => callbackHolders.delete(subscription))),
+      (disposePromise ??= (automaticPolicy
+        ? automaticPolicy.dispose(() => nativeSubscription.dispose())
+        : nativeSubscription.dispose()
+      ).finally(() => callbackHolders.delete(subscription))),
   });
   callbackHolders.set(subscription, callbackHolder);
   return subscription;
@@ -71,7 +99,11 @@ export async function subscribe(root, onBatch, options = {}) {
 function createNativeCallback(weakCallbackHolder, resolvedRoot) {
   return (nativeBatch) => {
     const holder = weakCallbackHolder.deref();
-    if (holder) holder.onBatch(normalizeBatch(resolvedRoot, nativeBatch));
+    if (holder) {
+      const batch = normalizeBatch(resolvedRoot, nativeBatch);
+      holder.observeCoverage?.(batch.coverage);
+      holder.onBatch(batch);
+    }
   };
 }
 

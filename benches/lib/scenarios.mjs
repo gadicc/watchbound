@@ -26,6 +26,7 @@ export const scenarioNames = Object.freeze([
   "queue-overflow",
   "dynamic-exclusions",
   "reconciliation",
+  "automatic-reconciliation",
   "overflow-reconciliation",
   "burst-files",
   "burst-directories",
@@ -47,6 +48,7 @@ export function scenarioRequirement(name) {
   if (name === "dynamic-exclusions") return "dynamicExclusions";
   if (name === "bridge-backpressure") return "consumerBackpressure";
   if (name === "reconciliation") return "reconciliation";
+  if (name === "automatic-reconciliation") return "automaticReconciliation";
   if (name === "overflow-reconciliation") return "overflowReconciliation";
   return null;
 }
@@ -146,7 +148,11 @@ export function prepareScenario(name, config, runDirectory) {
     fs.writeFileSync(target, "before\n");
     return { root, target, excludedDirectory: "excluded" };
   }
-  if (name === "reconciliation" || name === "overflow-reconciliation") {
+  if (
+    name === "reconciliation" ||
+    name === "automatic-reconciliation" ||
+    name === "overflow-reconciliation"
+  ) {
     const pressureRoot = path.join(root, "pressure");
     const excludedRoot = path.join(root, "excluded");
     const peerRoot = path.join(runDirectory, "peer-root");
@@ -1243,7 +1249,13 @@ async function runBridgeBackpressure(adapter, prepared, config) {
   }
 }
 
-async function runReconciliation(adapter, prepared, config, lossKind = "consumer-backpressure") {
+async function runReconciliation(
+  adapter,
+  prepared,
+  config,
+  lossKind = "consumer-backpressure",
+  automatic = false,
+) {
   const forcedOverflow = lossKind === "event-overflow";
   if (forcedOverflow && config.allowForcedOverflow !== true) {
     throw new Error("overflow-reconciliation requires the forced-overflow permission gate");
@@ -1261,10 +1273,14 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
   let callbackWorkloadDurationMs = null;
   const callbackWorkloadRounds = Math.ceil(2_048 / prepared.pressureTargets.length);
   const callbackWorkloadOperations = callbackWorkloadRounds * prepared.pressureTargets.length;
+  const automaticReconciliation = automatic
+    ? { maxAttempts: 3, initialDelayMs: 750, maxDelayMs: 1_000 }
+    : false;
   const primary = await subscribeMeasured(adapter, prepared, config, recorder, {
     batchWindowMs: 1,
     maxBatchPaths: 4_096,
     outputQueueCapacity: forcedOverflow ? 64 : 2,
+    automaticReconciliation,
     onBatch(batch) {
       if (blockNextCallback && !callbackWasBlocked) {
         callbackWasBlocked = true;
@@ -1404,7 +1420,28 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
     const statsBeforeReconciliation = await safeStats(primary.session);
     const reconciliationStartedAtMs = nowMs();
     let reconciliationSettled = false;
-    const reconciliationPromise = primary.session.reconcile().then(
+    const requestedReconciliation = automatic
+      ? (async () => {
+          const terminalObserved = await waitFor(() =>
+            ["recovered", "incomplete", "exhausted", "blocked"].includes(
+              primary.session.automaticReconciliation?.state,
+            ), config.timeoutMs, 1);
+          const status = primary.session.automaticReconciliation;
+          if (!terminalObserved) {
+            throw new Error("automatic reconciliation did not reach a terminal status");
+          }
+          if (status.state !== "recovered" && status.state !== "incomplete") {
+            throw new Error(
+              `automatic reconciliation ended in ${status.state}: ${status.error ?? status.reason}`,
+            );
+          }
+          return {
+            exclusionGeneration: status.exclusionGeneration,
+            coverage: status.coverage,
+          };
+        })()
+      : primary.session.reconcile();
+    const reconciliationPromise = requestedReconciliation.then(
       (result) => {
         reconciliationSettled = true;
         return result;
@@ -1495,6 +1532,7 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
       .concat(postReconciliationBatches)
       .some((batch) => batch.paths.some(isExcludedPath));
     const primaryOperationEvidenceBeforeDisposal = primary.session.operationEvidence?.() ?? null;
+    const automaticStatusBeforeDisposal = primary.session.automaticReconciliation ?? null;
     const finalStatsBeforeDisposal = await safeStats(primary.session);
     const peerFinalStatsBeforeDisposal = await safeStats(peer.session);
 
@@ -1526,6 +1564,7 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
       peer: peerRecorder.summary(postDisposalPeerCheckpoint),
     };
     const primaryOperationEvidenceAfterDisposal = primary.session.operationEvidence?.() ?? null;
+    const automaticStatusAfterDisposal = primary.session.automaticReconciliation ?? null;
     const lifecycleFinishedAt = processSample();
     const threadsAtEnd = watchboundThreadSample();
     const eventfdsAtEnd = eventfdSample();
@@ -1639,11 +1678,17 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
         beforeDisposal: primaryOperationEvidenceBeforeDisposal,
         afterDisposal: primaryOperationEvidenceAfterDisposal,
       },
+      automaticReconciliation: {
+        beforeDisposal: automaticStatusBeforeDisposal,
+        afterDisposal: automaticStatusAfterDisposal,
+      },
       subscriptionOptions: {
         batchWindowMs: 1,
         maxBatchPaths: 4_096,
         outputQueueCapacity: forcedOverflow ? 64 : 2,
+        automaticReconciliation,
       },
+      recoveryMode: automatic ? "automatic" : "manual",
       lossKind,
       overflowInduction: forcedOverflow ? {
         kernelQueueLimit,
@@ -1745,10 +1790,21 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
         check(
           "reconciliation-used-existing-subscription",
           primaryOperationEvidenceBeforeDisposal?.publicSubscriptionCreations === 1 &&
-          primaryOperationEvidenceBeforeDisposal?.reconciliationCalls === 1 &&
-          primaryOperationEvidenceBeforeDisposal?.reconciliationCallsOnOriginalSubscription === 1 &&
+          primaryOperationEvidenceBeforeDisposal?.reconciliationCalls === (automatic ? 0 : 1) &&
+          primaryOperationEvidenceBeforeDisposal?.reconciliationCallsOnOriginalSubscription ===
+            (automatic ? 0 : 1) &&
           primaryOperationEvidenceBeforeDisposal?.disposalRequests === 0,
           { evidence: primaryOperationEvidenceBeforeDisposal },
+        ),
+        check(
+          "automatic-policy-mode-explicit",
+          primaryOperationEvidenceBeforeDisposal?.automaticReconciliationEnabled === automatic,
+          { automatic, evidence: primaryOperationEvidenceBeforeDisposal },
+        ),
+        check(
+          "automatic-policy-reported-terminal-recovery",
+          !automatic || automaticStatusBeforeDisposal?.state === "recovered",
+          { status: automaticStatusBeforeDisposal },
         ),
         check("generation-zero-result-remained-zero", peerReconciliation.exclusionGeneration === "0"),
         check("generation-zero-root-remained-zero", peerGenerationZeroObservation.rootBoundaries.some(
@@ -1833,6 +1889,11 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
           peerObservation.exclusionGenerations[0] === "0"),
         check("joined-disposal-marked-both-subscriptions-disposed", finalStats?.disposed === true &&
           peerFinalStats?.disposed === true),
+        check(
+          "automatic-policy-joined-disposal",
+          !automatic || automaticStatusAfterDisposal?.state === "disposed",
+          { status: automaticStatusAfterDisposal },
+        ),
         check("post-disposal-reconciliation-rejected-by-lifecycle", postDisposalReconciliationRejectedByLifecycle, {
           error: postDisposalReconciliationError,
         }),
@@ -2086,6 +2147,9 @@ export async function runScenario(name, adapter, prepared, config) {
   if (name === "queue-overflow") return runQueueOverflow(adapter, prepared, config);
   if (name === "dynamic-exclusions") return runDynamicExclusions(adapter, prepared, config);
   if (name === "reconciliation") return runReconciliation(adapter, prepared, config);
+  if (name === "automatic-reconciliation") {
+    return runReconciliation(adapter, prepared, config, "consumer-backpressure", true);
+  }
   if (name === "overflow-reconciliation") {
     return runReconciliation(adapter, prepared, config, "event-overflow");
   }

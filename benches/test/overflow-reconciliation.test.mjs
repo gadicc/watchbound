@@ -84,6 +84,7 @@ function completeEvidence(overrides = {}) {
     excludedPathsObserved: false,
     originalSubscription: {
       publicSubscriptionCreations: 1,
+      automaticReconciliationEnabled: false,
       reconciliationCalls: 1,
       reconciliationCallsOnOriginalSubscription: 1,
       disposalRequests: 0,
@@ -118,7 +119,9 @@ function failedCheckNames(evidence) {
 
 test("overflow reconciliation is listed but removed with every forced-overflow scenario by quick", () => {
   assert.ok(scenarioNames.includes("overflow-reconciliation"));
+  assert.ok(scenarioNames.includes("automatic-overflow-reconciliation"));
   assert.match(help("conformance"), /overflow-reconciliation/u);
+  assert.match(help("conformance"), /automatic-overflow-reconciliation/u);
   assert.equal(parseOptions("conformance", ["--help"]).help, true);
   assert.equal(scenarioRequirement("overflow-reconciliation"), "overflowReconciliation");
   assert.throws(
@@ -134,10 +137,15 @@ test("overflow reconciliation is listed but removed with every forced-overflow s
   const quick = parseOptions("conformance", ["--quick"]);
   assert.ok(!quick.scenarios.includes("queue-overflow"));
   assert.ok(!quick.scenarios.includes("overflow-reconciliation"));
+  assert.ok(!quick.scenarios.includes("automatic-overflow-reconciliation"));
 });
 
-test("both heavy scenarios require explicit forced-overflow permission before planning", () => {
-  for (const scenario of ["queue-overflow", "overflow-reconciliation"]) {
+test("all heavy scenarios require explicit forced-overflow permission before planning", () => {
+  for (const scenario of [
+    "queue-overflow",
+    "overflow-reconciliation",
+    "automatic-overflow-reconciliation",
+  ]) {
     assert.throws(
       () => parseOptions("conformance", ["--scenario", scenario]),
       /--allow-forced-overflow/u,
@@ -159,13 +167,17 @@ test("scenario dispatch retains a second forced-overflow permission guard", asyn
     runScenario("overflow-reconciliation", null, null, {}),
     /permission gate/u,
   );
+  await assert.rejects(
+    runScenario("automatic-overflow-reconciliation", null, null, {}),
+    /permission gate/u,
+  );
 });
 
 test("overflow reconciliation preparation is bounded and keeps primary and peer roots separate", () => {
   const runDirectory = `/tmp/watchbound-overflow-reconciliation-prepare-${process.pid}-${Date.now()}`;
   try {
     const prepared = prepareScenario(
-      "overflow-reconciliation",
+      "automatic-overflow-reconciliation",
       { burstCount: 100 },
       runDirectory,
     );
@@ -175,6 +187,37 @@ test("overflow reconciliation preparation is bounded and keeps primary and peer 
   } finally {
     fs.rmSync(runDirectory, { recursive: true, force: true });
   }
+});
+
+test("automatic overflow evidence requires zero manual calls on the original subscription", () => {
+  const automatic = completeEvidence({
+    automatic: true,
+    automaticStatus: {
+      state: "recovered",
+      reason: "event-overflow",
+      attempts: 1,
+      exclusionGeneration: "1",
+      coverage: { state: "complete" },
+    },
+    originalSubscription: {
+      publicSubscriptionCreations: 1,
+      automaticReconciliationEnabled: true,
+      reconciliationCalls: 0,
+      reconciliationCallsOnOriginalSubscription: 0,
+      disposalRequests: 0,
+    },
+    lifecycle: {
+      ...completeEvidence().lifecycle,
+      automaticDisposed: true,
+    },
+  });
+  assert.deepEqual(failedCheckNames(automatic), []);
+
+  automatic.originalSubscription.reconciliationCalls = 1;
+  automatic.originalSubscription.reconciliationCallsOnOriginalSubscription = 1;
+  assert.ok(
+    failedCheckNames(automatic).includes("reconciliation-used-original-subscription"),
+  );
 });
 
 test("unsupported adapters are explicitly capability-excluded and cannot receive pass credit", () => {
@@ -203,6 +246,26 @@ test("unsupported adapters are explicitly capability-excluded and cannot receive
     mutate(unsupported);
     assert.match(scenarioExclusionReason(plan, unsupported), /requires|supported/iu);
   }
+});
+
+test("automatic overflow reconciliation requires both automatic and overflow capabilities", () => {
+  const plan = { scenario: "automatic-overflow-reconciliation" };
+  const probe = {
+    status: "available",
+    adapter: {
+      capabilities: {
+        automaticReconciliation: true,
+        reconciliation: true,
+        explicitCoverage: true,
+        overflowReporting: true,
+        supervisedOverflow: true,
+        dynamicExclusions: { supported: true, atomic: true },
+      },
+    },
+  };
+  assert.equal(scenarioExclusionReason(plan, probe), null);
+  probe.adapter.capabilities.automaticReconciliation = false;
+  assert.match(scenarioExclusionReason(plan, probe), /automatic/iu);
 });
 
 test("only supervised genuine event-overflow evidence receives loss credit", () => {

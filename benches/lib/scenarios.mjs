@@ -28,6 +28,7 @@ export const scenarioNames = Object.freeze([
   "reconciliation",
   "automatic-reconciliation",
   "overflow-reconciliation",
+  "automatic-overflow-reconciliation",
   "burst-files",
   "burst-directories",
   "burst-renames",
@@ -50,6 +51,9 @@ export function scenarioRequirement(name) {
   if (name === "reconciliation") return "reconciliation";
   if (name === "automatic-reconciliation") return "automaticReconciliation";
   if (name === "overflow-reconciliation") return "overflowReconciliation";
+  if (name === "automatic-overflow-reconciliation") {
+    return "automaticOverflowReconciliation";
+  }
   return null;
 }
 
@@ -151,7 +155,8 @@ export function prepareScenario(name, config, runDirectory) {
   if (
     name === "reconciliation" ||
     name === "automatic-reconciliation" ||
-    name === "overflow-reconciliation"
+    name === "overflow-reconciliation" ||
+    name === "automatic-overflow-reconciliation"
   ) {
     const pressureRoot = path.join(root, "pressure");
     const excludedRoot = path.join(root, "excluded");
@@ -255,6 +260,7 @@ export function evaluateOverflowReconciliationEvidence(evidence) {
     sameCoverage(batch.coverage, result?.coverage)
   );
   const operation = evidence.originalSubscription ?? {};
+  const automatic = evidence.automatic === true;
   const interval = evidence.intervalMutation ?? {};
   const peer = evidence.peer ?? {};
   const lifecycle = evidence.lifecycle ?? {};
@@ -291,9 +297,14 @@ export function evaluateOverflowReconciliationEvidence(evidence) {
     check(
       "reconciliation-used-original-subscription",
       operation.publicSubscriptionCreations === 1 &&
-      operation.reconciliationCalls === 1 &&
-      operation.reconciliationCallsOnOriginalSubscription === 1 &&
+      operation.automaticReconciliationEnabled === automatic &&
+      operation.reconciliationCalls === (automatic ? 0 : 1) &&
+      operation.reconciliationCallsOnOriginalSubscription === (automatic ? 0 : 1) &&
       operation.disposalRequests === 0,
+    ),
+    check(
+      "automatic-overflow-policy-reported-recovery",
+      !automatic || evidence.automaticStatus?.state === "recovered",
     ),
     check(
       "generation-zero-remained-zero",
@@ -372,6 +383,10 @@ export function evaluateOverflowReconciliationEvidence(evidence) {
     check("final-disposal-restored-eventfd-resources", lifecycle.eventfdsRestored === true),
     check("final-disposal-joined-native-threads", lifecycle.threadsRestored === true),
     check("final-subscription-state-returned-to-baseline", lifecycle.subscriptionStateReleased === true),
+    check(
+      "automatic-overflow-policy-joined-disposal",
+      !automatic || lifecycle.automaticDisposed === true,
+    ),
   ];
 }
 
@@ -1602,6 +1617,8 @@ async function runReconciliation(
     const overflowChecks = forcedOverflow
       ? [
           ...evaluateOverflowReconciliationEvidence({
+            automatic,
+            automaticStatus: automaticStatusBeforeDisposal,
             root: resolvedPrimaryRoot,
             helper: overflowHelper,
             lossObservation: pressureObservation,
@@ -1663,6 +1680,7 @@ async function runReconciliation(
                 finalStats?.disposed === true && peerFinalStats?.disposed === true &&
                 Number(finalStats?.directoryWatches ?? 0) === 0 &&
                 Number(peerFinalStats?.directoryWatches ?? 0) === 0,
+              automaticDisposed: automaticStatusAfterDisposal?.state === "disposed",
             },
           }),
           ...observationHealthChecks("event-overflow", pressureObservation),
@@ -2152,6 +2170,9 @@ export async function runScenario(name, adapter, prepared, config) {
   }
   if (name === "overflow-reconciliation") {
     return runReconciliation(adapter, prepared, config, "event-overflow");
+  }
+  if (name === "automatic-overflow-reconciliation") {
+    return runReconciliation(adapter, prepared, config, "event-overflow", true);
   }
   if (name === "burst-files") return runBurst(adapter, prepared, config, "files");
   if (name === "burst-directories") return runBurst(adapter, prepared, config, "directories");

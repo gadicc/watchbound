@@ -37,6 +37,45 @@ to a saved final artifact or performance reading. Failed automatic recovery is
 retained as correctness evidence by the harness and never enters pass-only
 numeric aggregates.
 
+## Supervised automatic overflow-reconciliation follow-up
+
+After explicit quiet-host confirmation, the separately gated
+`automatic-overflow-reconciliation` scenario passed one strict targeted trial.
+This is correctness evidence, not a performance reading.
+
+- Raw result:
+  `benches/results/automatic-overflow-reconciliation-2026-07-20-attempt-1.json`
+  (schema 2, 53,686 bytes, SHA-256
+  `b69d4d220c8cee6bb4b3b3a54e4087c67c8625bceeb1864133492f76fae70e88`).
+- Source HEAD was `7de7834dfcadde75f47bd31350f5e79470728f74` with five
+  dirty harness/test entries for the new gated scenario; the complete recorded
+  source digest was
+  `c1aaa5033129ef1a627f1e1cab7448edb8210c52ac62d88d9ff4245b8fbc31ec`.
+  The loaded release native artifact SHA-256 was
+  `59ea6df9b6f331dea2b77ffbbe65c44aeeb866e364ef468023e1f66dcd654495`.
+- The supervised helper confirmed stop/mutate/resume order and created 20,480
+  distinct files against `max_queued_events=16,384`. Public coverage reported
+  `event-overflow`, the native overflow counter advanced from zero to one, the
+  output queue dropped no batches, and the uncertain interval quiesced.
+- The wrapper policy recovered in one attempt with zero manual reconciliation
+  calls before disposal. Committed exclusion generation one remained unchanged
+  and complete result coverage matched exactly one singleton root boundary.
+  All 45 correctness checks passed; counters were complete and monotonic,
+  excluded prefixes did not leak, and loss-interval detail received no
+  reconstruction credit.
+- The peer truthfully reported shared-stream overflow and delivered during the
+  primary scan. The deep post-recovery sentinel arrived. Joined disposal left
+  both subscriptions disposed with zero watches, restored inotify from `0/0`
+  through one active instance back to `0/0`, restored eventfds from three
+  through four back to three, joined all three named Watchbound threads, and
+  admitted no callback or retry after disposal.
+
+The report ran for 2.110 seconds on tmpfs with the `powersave` governor and load
+average 3.49/4.16/4.47 to 3.61/4.17/4.48 on 24 logical CPUs. The immediate
+five-second preflight observed 84–91% CPU idle, 0% I/O wait, no blocked tasks,
+and near-zero current CPU/I/O pressure. These timings are context only. The raw
+file remains ignored and local under the existing artifact policy.
+
 ## Supervised overflow-reconciliation follow-up
 
 After explicit quiet-host confirmation on 2026-07-20, one targeted
@@ -88,11 +127,12 @@ Commit `e4ad05f` added a regression test and retained that field before the
 passing retry. The failed raw correctness outcome remains preserved and never
 enters pass-only performance aggregates.
 
-Both ignored files were re-hashed before this automatic-policy milestone. Their
-sizes and SHA-256 values still exactly match the entries above; neither was
-deleted, copied, or overwritten. A durable archival process should copy raw
-reports to a content-addressed project artifact store outside the worktree and
-commit a small manifest containing filename, SHA-256, schema, source commit,
+The two earlier ignored files were re-hashed during this automatic-policy
+milestone and still exactly match their entries above. The new automatic raw
+file also matches its recorded size and hash. None of the three was deleted,
+copied, or overwritten. A durable archival process should copy raw reports to
+a content-addressed project artifact store outside the worktree and commit a
+small manifest containing filename, SHA-256, schema, source commit,
 host-preparation record, and retention location. That proposal has not been
 executed: copying outside this workspace or changing the current
 `/benches/results/*.json` ignore policy requires explicit user approval.

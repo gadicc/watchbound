@@ -70,10 +70,10 @@ generation-based atomic dynamic exclusions. Its public conformance scenario
 exercises bounded reconciliation in place on an existing subscription,
 including an unchanged exclusion generation, a conservative root boundary,
 peer-subscription isolation, post-recovery delivery, and joined cleanup. It
-also contains a separately gated `overflow-reconciliation` scenario that can
-apply those checks after supervised genuine `event-overflow`. A confirmed
-targeted follow-up passed this public recovery contract; it is correctness
-evidence, not a new performance reading.
+also contains separately gated manual and automatic overflow-reconciliation
+scenarios that apply those checks after supervised genuine `event-overflow`.
+Confirmed targeted follow-ups passed both public recovery paths; they are
+correctness evidence, not new performance readings.
 
 The JavaScript wrapper also offers opt-in `automaticReconciliation`. It is
 disabled by default, coalesces the three recoverable uncertainty reasons, uses

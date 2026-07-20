@@ -274,5 +274,10 @@ callback can begin after it resolves. The deterministic test scheduler is
 reachable only through an internal module excluded by the package's public
 `exports`; the release entry point exposes no loss-injection or clock hook.
 
+The separately gated `automatic-overflow-reconciliation` conformance variant
+has exercised this same lifecycle after supervised genuine `event-overflow`;
+its raw correctness evidence is recorded in `docs/benchmark-results.md` and is
+not a performance reading.
+
 Same-path root replacement remains a separate milestone; see
 `docs/root-replacement-follow-up.md`.

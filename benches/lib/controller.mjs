@@ -218,6 +218,30 @@ export function scenarioExclusionReason(plan, probe) {
       return "Automatic reconciliation requires atomic dynamic exclusions";
     }
   }
+  if (requirement === "automaticOverflowReconciliation") {
+    const capabilities = probe.adapter.capabilities;
+    if (capabilities.automaticReconciliation !== true) {
+      return "Opt-in automatic reconciliation is not supported";
+    }
+    if (capabilities.reconciliation !== true) {
+      return "Automatic overflow reconciliation requires existing-subscription reconciliation";
+    }
+    if (!capabilities.explicitCoverage) {
+      return "Automatic overflow reconciliation requires explicit coverage reporting";
+    }
+    if (!capabilities.overflowReporting) {
+      return "Automatic overflow reconciliation requires explicit event-overflow reporting";
+    }
+    if (!capabilities.supervisedOverflow) {
+      return "The supervised genuine-overflow mechanism is not supported";
+    }
+    if (
+      !capabilities.dynamicExclusions?.supported ||
+      !capabilities.dynamicExclusions?.atomic
+    ) {
+      return "Automatic overflow reconciliation requires atomic dynamic exclusions";
+    }
+  }
   if (requirement === "overflowReconciliation") {
     const capabilities = probe.adapter.capabilities;
     if (capabilities.reconciliation !== true) {

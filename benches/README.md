@@ -76,8 +76,9 @@ After resume, the watcher must show activity and reach a
 quiet boundary before the harness starts a separate sentinel phase. Induction evidence, explicit
 coverage/loss reporting, drain status, and sentinel delivery are separate results. It is a correctness
 stress case and should be run only after the user explicitly confirms that the host is quiet and
-prepared. Selecting `queue-overflow` or `overflow-reconciliation` requires
-`--allow-forced-overflow`; the acknowledgement never infers host readiness. Both scenarios are
+prepared. Selecting `queue-overflow`, `overflow-reconciliation`, or
+`automatic-overflow-reconciliation` requires `--allow-forced-overflow`; the
+acknowledgement never infers host readiness. All three scenarios are
 removed by `--quick`, and an overflow-only quick selection fails because no scenario remains.
 
 The bridge-backpressure case is likewise conformance-only: it blocks the first JavaScript callback,
@@ -142,3 +143,11 @@ later. The targeted heavy command is `pnpm test:overflow-reconciliation`, but it
 flag and must not be invoked until the user separately confirms host preparation. The initial
 implementation did not run it; a later confirmed targeted trial passed, with both that artifact and
 the retained first-attempt bookkeeping failure identified in `docs/benchmark-results.md`.
+
+`automatic-overflow-reconciliation` reuses the same supervisor and evidence
+contract while enabling the wrapper policy and requiring zero harness calls to
+manual reconciliation. It additionally requires recovered and disposed policy
+status. Its targeted command is
+`pnpm test:automatic-overflow-reconciliation`; it embeds the same permission
+flag and remains contingent on separate quiet-host confirmation. One confirmed
+trial passed, and its ignored raw artifact is identified in the results doc.

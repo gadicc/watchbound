@@ -133,6 +133,12 @@ requires its coverage to remain explicit and truthful and its delivery to
 continue during the primary reconciliation scan, not that it falsely remain
 complete.
 
+`automatic-overflow-reconciliation` uses that identical supervised induction
+and evidence boundary while enabling the wrapper policy. It additionally
+requires zero manual reconciliation calls on the original subscription plus
+terminal recovered and disposed policy states. It remains separately gated and
+its single-trial duration is not promoted to a performance reading.
+
 RSS is allocator and high-water-state evidence, not precise ownership. Small
 differences and any single sample are not treated as meaningful. CPU time does
 not identify which native thread consumed it. Latency includes scheduler noise.
@@ -231,14 +237,16 @@ These deterministic callback-block/backpressure checks are not evidence that a
 real inotify queue overflow was induced or recovered. The forced-overflow run
 below remains separately gated on explicit quiet-host preparation.
 
-Both heavy scenarios are removed by `--quick`. Selecting either one otherwise
+All three heavy scenarios are removed by `--quick`. Selecting any one otherwise
 fails during option parsing unless `--allow-forced-overflow` is present, before
 capability probes or trials are spawned. The flag is only an acknowledgement;
 the operator must still obtain explicit confirmation that the host is quiet
 and prepared. The dedicated command is `pnpm test:overflow-reconciliation`.
 It was not executed while the scenario was implemented. A later explicitly
 confirmed targeted run passed; its raw artifact and retained first-attempt
-bookkeeping failure are recorded in `docs/benchmark-results.md`.
+bookkeeping failure are recorded in `docs/benchmark-results.md`. The automatic
+counterpart is `pnpm test:automatic-overflow-reconciliation` and has the same
+host-confirmation requirement; its confirmed artifact is recorded there too.
 
 Final correctness run, including the I/O-heavy forced-overflow case, after the
 user confirms the host is ready:

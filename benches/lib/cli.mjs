@@ -16,6 +16,7 @@ const DEFAULT_CONFORMANCE_SCENARIOS = [
   "reconciliation",
   "automatic-reconciliation",
   "overflow-reconciliation",
+  "automatic-overflow-reconciliation",
   "burst-files",
   "burst-directories",
   "burst-renames",
@@ -171,7 +172,9 @@ export function parseOptions(kind, argv) {
     options.directoryCounts = [100];
     options.burstCount = 100;
     options.scenarios = options.scenarios.filter((name) =>
-      name !== "queue-overflow" && name !== "overflow-reconciliation"
+      name !== "queue-overflow" &&
+      name !== "overflow-reconciliation" &&
+      name !== "automatic-overflow-reconciliation"
     );
   }
   if (options.scenarios.length === 0) {
@@ -179,7 +182,9 @@ export function parseOptions(kind, argv) {
   }
   if (
     options.scenarios.some((name) =>
-      name === "queue-overflow" || name === "overflow-reconciliation"
+      name === "queue-overflow" ||
+      name === "overflow-reconciliation" ||
+      name === "automatic-overflow-reconciliation"
     ) &&
     !options.help &&
     !options.allowForcedOverflow

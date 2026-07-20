@@ -468,12 +468,11 @@ Acknowledgement follows bounded root enqueue, not necessarily callback entry.
 A second subscription retains explicit truthful coverage and delivery while
 the primary bounded scan yields. Joined disposal restores subscription state,
 watches, the shared inotify descriptor and eventfd, both bridges, and the final
-runtime worker. This machinery is separately permission-gated and has not yet
-been added to ordinary or automatic commands. A later explicitly confirmed
-targeted trial exercised and passed this contract through the public surface;
-it remains correctness evidence rather than a performance result. The separate
-ordinary `automatic-reconciliation` scenario applies the same checks with the
-wrapper policy enabled and zero harness calls to the manual method.
+runtime worker. This machinery is separately permission-gated. Explicitly
+confirmed targeted manual and automatic trials exercised and passed this
+contract through the public surface; both remain correctness evidence rather
+than performance results. The automatic variant enables the wrapper policy and
+requires zero harness calls to the manual method.
 Root-replacement recovery remains a gap.
 
 ## Binding decision

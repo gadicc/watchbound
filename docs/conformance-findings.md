@@ -78,6 +78,19 @@ unsaved development run is correctness evidence only, not a performance
 reading and not genuine-overflow evidence. Failed recovery remains raw
 correctness evidence and is excluded from pass-only performance aggregates.
 
+After explicit host confirmation, the separately gated automatic-overflow
+variant also passed one supervised trial. The helper exceeded the kernel queue
+bound and proved stop/mutate/resume ordering; Watchbound reported genuine
+`event-overflow` with an advanced native counter and no output drop. The policy
+used the original subscription, made zero manual calls, recovered in one
+attempt, retained generation one, and produced exactly one matching singleton
+root boundary. All 45 checks passed, including peer truthfulness/delivery,
+excluded-prefix preservation, no reconstructed-detail credit, sentinel
+delivery, policy disposal, and resource restoration. The ignored raw artifact,
+hash, source digest, dirty-harness caveat, and host context are recorded in
+`docs/benchmark-results.md`; this remains correctness rather than performance
+evidence.
+
 ## Supervised overflow-reconciliation evidence
 
 After explicit quiet-host confirmation, the dedicated
@@ -107,8 +120,8 @@ heavy scenario requires `--allow-forced-overflow` before any probe or trial can
 start. That flag does not establish host readiness. The passing raw artifact and
 the retained first-attempt harness-bookkeeping failure are identified in
 `docs/benchmark-results.md`; neither replaces the historical performance
-series. Automatic genuine-overflow recovery has not been run in this milestone;
-root-replacement recovery remains open.
+series. Automatic genuine-overflow recovery now has its own separately gated
+evidence above; root-replacement recovery remains open.
 
 ## Exact Codex JavaScript helper
 

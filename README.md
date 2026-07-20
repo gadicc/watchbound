@@ -68,9 +68,9 @@ exercises bounded reconciliation in place on an existing subscription,
 including an unchanged exclusion generation, a conservative root boundary,
 peer-subscription isolation, post-recovery delivery, and joined cleanup. It
 also contains a separately gated `overflow-reconciliation` scenario that can
-apply those checks after supervised genuine `event-overflow`; its machinery is
-implemented, but no new heavy trial or final reading was recorded with this
-change. It
-reports root replacement as uncertain but does not reattach to the replacement.
+apply those checks after supervised genuine `event-overflow`. A confirmed
+targeted follow-up passed this public recovery contract; it is correctness
+evidence, not a new performance reading. The engine reports root replacement
+as uncertain but does not reattach to the replacement.
 Automatic recovery policy, root-replacement recovery, non-Linux backends, and
 published prebuilds remain for later milestones.

@@ -431,8 +431,10 @@ A second subscription retains explicit truthful coverage and delivery while
 the primary bounded scan yields. Joined disposal restores subscription state,
 watches, the shared inotify descriptor and eventfd, both bridges, and the final
 runtime worker. This machinery is separately permission-gated and has not yet
-been exercised for a recorded heavy result. Automatic invocation and
-root-replacement recovery remain gaps.
+been added to ordinary or automatic commands. A later explicitly confirmed
+targeted trial exercised and passed this contract through the public surface;
+it remains correctness evidence rather than a performance result. Automatic
+invocation and root-replacement recovery remain gaps.
 
 ## Binding decision
 

@@ -216,8 +216,9 @@ fails during option parsing unless `--allow-forced-overflow` is present, before
 capability probes or trials are spawned. The flag is only an acknowledgement;
 the operator must still obtain explicit confirmation that the host is quiet
 and prepared. The dedicated command is `pnpm test:overflow-reconciliation`.
-It was added for the confirmed evidence run and was not executed while the
-scenario was implemented.
+It was not executed while the scenario was implemented. A later explicitly
+confirmed targeted run passed; its raw artifact and retained first-attempt
+bookkeeping failure are recorded in `docs/benchmark-results.md`.
 
 Final correctness run, including the I/O-heavy forced-overflow case, after the
 user confirms the host is ready:

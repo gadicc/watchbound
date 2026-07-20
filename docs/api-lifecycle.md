@@ -230,5 +230,7 @@ entry because it follows bounded native enqueue.
 
 The scenario is removed by `--quick` and cannot be selected without
 `--allow-forced-overflow`; that acknowledgement is not host-readiness
-confirmation. Its heavy path was not run while being implemented. Automatic
-recovery policy and root-replacement recovery remain out of scope.
+confirmation. Its heavy path was not run while being implemented; a later
+explicitly confirmed targeted trial passed the lifecycle contract recorded in
+`docs/benchmark-results.md`. Automatic recovery policy and root-replacement
+recovery remain out of scope.

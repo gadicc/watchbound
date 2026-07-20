@@ -1,7 +1,8 @@
 # Correctness and capability findings
 
-Status: final first-milestone Linux findings as of 2026-07-19. Performance
-ranges and the continuation decision are in `docs/benchmark-results.md`.
+Status: final first-milestone Linux findings as of 2026-07-19, with targeted
+overflow-reconciliation follow-up on 2026-07-20. Performance ranges and the
+continuation decision are in `docs/benchmark-results.md`.
 
 ## Second-milestone correctness update
 
@@ -52,27 +53,36 @@ overflow, so it is not evidence for native-overflow recovery; the supervised
 forced-overflow run remains separately gated on explicit host preparation.
 Automatic recovery policy and recovery of a replaced root identity remain open.
 
-## Supervised overflow-reconciliation machinery
+## Supervised overflow-reconciliation evidence
 
-The next conformance scenario, `overflow-reconciliation`, is now implemented
-but has not been executed. It combines the existing detached overflow helper
-with the public reconciliation lifecycle on one unchanged subscription. The
-bounded raw evidence covers helper stop/mutate/resume order, queue-bound
-exceedance, typed `event-overflow` and root invalidation, output drain, an
-uncertain-interval mutation, generations and sequences, one singleton root
-recovery boundary, matching result coverage, exclusions, peer progress, a deep
-sentinel, lifecycle rejection, and native-resource baselines.
+After explicit quiet-host confirmation, the dedicated
+`overflow-reconciliation` scenario passed one strict targeted trial through the
+public Node/JavaScript surface. The detached helper confirmed the watcher was
+stopped before creating 20,480 distinct files against a 16,384-event queue and
+confirmed resume afterward. Watchbound reported typed `event-overflow`,
+invalidated the root, advanced its native overflow counter, drained with no
+output drop, remained uncertain through the interval mutation, and reconciled
+the original subscription to complete coverage.
+
+Generation zero and committed generation one remained unchanged, every batch
+had monotonic sequence/generation evidence, and recovery produced exactly one
+singleton root batch whose coverage matched the public result. Current and
+future exclusions remained effective; interval detail received no guaranteed
+reconstruction credit; the shared-stream peer reported truthful uncertainty
+and delivered during the scan; the deep sentinel arrived afterward. Joined
+disposal restored watches, inotify descriptors, the runtime eventfd, bridge
+threads, worker, and subscription state to baseline, rejected later
+reconciliation, and admitted no later callback.
 
 Capability checks exclude adapters without public reconciliation, explicit
 overflow/coverage, atomic exclusions, or the supervised mechanism; synthetic
 loss and deterministic consumer backpressure do not receive genuine-overflow
 credit. `--quick` removes both forced-overflow scenarios, and selecting either
 heavy scenario requires `--allow-forced-overflow` before any probe or trial can
-start. That flag does not establish host readiness. No forced-overflow command,
-heavy conformance suite, new raw result, or final performance reading was run
-or recorded during implementation. The final evidence run awaits explicit
-quiet-host confirmation. Automatic recovery and root-replacement recovery are
-still open.
+start. That flag does not establish host readiness. The passing raw artifact and
+the retained first-attempt harness-bookkeeping failure are identified in
+`docs/benchmark-results.md`; neither replaces the historical performance
+series. Automatic recovery and root-replacement recovery are still open.
 
 ## Exact Codex JavaScript helper
 

@@ -1,6 +1,7 @@
 # Final benchmark results
 
-Status: first Linux feasibility measurement complete on 2026-07-19.
+Status: first Linux feasibility measurement complete on 2026-07-19; targeted
+overflow-reconciliation correctness follow-up recorded on 2026-07-20.
 
 ## Second-milestone follow-up (not a benchmark replacement)
 
@@ -20,6 +21,57 @@ batch window and 64-path batches now pass with complete detailed coverage.
 
 These are targeted correctness checks. The final JSON, hashes, ranges, and
 decision below remain the first-milestone evidence and have not been replaced.
+
+## Supervised overflow-reconciliation follow-up
+
+After explicit quiet-host confirmation on 2026-07-20, one targeted
+`overflow-reconciliation` retry passed strict conformance through the public
+Node/JavaScript subscription. This is correctness evidence, not a replacement
+benchmark or a performance reading.
+
+- Passing raw result:
+  `benches/results/overflow-reconciliation-2026-07-20-attempt-2.json` (schema
+  2, 52,464 bytes, SHA-256
+  `abb44ec31818e2ac26fa136fcb87dfb7dee047810e1c598b79c41ed9958e2169`).
+- Source commit: `e4ad05fa160d4114bff5d5a60bb34e5d23c9fdbd`, clean;
+  Watchbound source digest
+  `150868e6d6e9bf1488cca46eedfef45c5cdf669312a8512f1b43ca71cf791ab6`.
+- The supervised helper confirmed stop, mutation, and resume in order and
+  created 20,480 distinct files against `max_queued_events=16,384`. The native
+  overflow counter advanced from zero to one, the root reported typed
+  `event-overflow`, delivery quiesced, and no native output batch was dropped.
+- Generation zero on the peer and committed generation one on the primary
+  remained unchanged. All sequences were strictly monotonic. Reconciliation
+  returned complete coverage and emitted exactly one singleton primary-root
+  batch with identical coverage; its JavaScript callback began after the
+  acknowledgement, as the API permits.
+- Mutations during uncertainty remained covered conservatively rather than
+  receiving detailed-reconstruction credit. Current and future exclusions
+  remained effective, the peer delivered truthfully during the primary scan,
+  and the later deep sentinel arrived.
+- Joined disposal left both subscriptions disposed with zero directory watches.
+  Inotify instances/watches returned from `0/0` to `0/0`, eventfds from three
+  through four active back to three, and named Watchbound threads from zero
+  through three active back to zero. No callback began after disposal and later
+  reconciliation was rejected by lifecycle state.
+
+The harness report recorded load average `3.48/3.29/3.01` at both start and
+finish on 24 logical CPUs, the `powersave` governor, tmpfs `/tmp`, and unchanged
+inotify limits. Immediately before the run, the operator reported less than one
+core of other CPU activity and 0.0% I/O wait (0.2% maximum observed). The
+1.718-second report duration is retained only as context; a single correctness
+trial is not a performance range.
+
+The first confirmed attempt is retained as
+`benches/results/overflow-reconciliation-2026-07-20-attempt-1-failed.json`
+(48,249 bytes, SHA-256
+`2f925a898068d4d9ed4299f3b6dc9b30d8fddc297ea94a2b3191645765eb1fde`).
+Every substantive filesystem, reconciliation, peer, sentinel, and cleanup
+check passed, but the trial outcome failed because the harness awaited interval
+quiescence without copying the successful boolean into its evidence object.
+Commit `e4ad05f` added a regression test and retained that field before the
+passing retry. The failed raw correctness outcome remains preserved and never
+enters pass-only performance aggregates.
 
 ## Decision
 

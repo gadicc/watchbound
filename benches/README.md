@@ -127,5 +127,6 @@ Loss-interval detail is retained only as diagnostic evidence; it is never credit
 reconstruction. `root-replaced` remains non-recoverable. Reconciliation acknowledgement means the
 matching root boundary entered the bounded output path, while the JavaScript callback may start
 later. The targeted heavy command is `pnpm test:overflow-reconciliation`, but it embeds the permission
-flag and must not be invoked until the user separately confirms host preparation. This implementation
-did not run it or record a new final result.
+flag and must not be invoked until the user separately confirms host preparation. The initial
+implementation did not run it; a later confirmed targeted trial passed, with both that artifact and
+the retained first-attempt bookkeeping failure identified in `docs/benchmark-results.md`.

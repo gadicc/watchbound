@@ -172,16 +172,22 @@ Commit `e4ad05f` added a regression test and retained that field before the
 passing retry. The failed raw correctness outcome remains preserved and never
 enters pass-only performance aggregates.
 
-The earlier ignored files were re-hashed during the automatic-policy milestone
-and matched their recorded entries; the clean-source artifact is independently
-recorded above. None was deleted, copied, or overwritten. Before archival, all
-four milestone artifacts must be re-verified together. A durable archival
-process should copy raw reports to a content-addressed project artifact store
-outside the worktree and commit a small manifest containing filename, SHA-256,
-schema, source commit and digest, native artifact hash, host preparation,
-retention location, classification, and caveats. That proposal has not been
-executed: copying outside this workspace or changing the current
-`/benches/results/*.json` ignore policy requires explicit user approval.
+All four milestone artifacts were re-hashed together after the clean-source
+trial and matched the sizes and hashes recorded above. With explicit user
+approval, exact copies were archived without overwrite in the backed-up private
+content-addressed store under
+`$XDG_DATA_HOME/watchbound/artifacts/sha256/<sha256>.json` (defaulting to
+`~/.local/share`). Destination hashes and byte identity matched every ignored
+source; the originals remain intact and ignored. The public-safe manifest is
+`docs/artifacts/overflow-reconciliation-2026-07-20.json`, and the retention and
+verification process is in `docs/artifact-archival.md`.
+
+The raw reports are deliberately not tracked because they contain absolute
+paths and detailed host state. A deterministic sanitizer and public derived
+evidence remain future work; initial requirements and leak-prevention tests are
+recorded in `plans/public-evidence-sanitization.md`. A derivative will have its
+own hash and will not replace or authorize deletion of its exact private
+original.
 
 ## Decision
 

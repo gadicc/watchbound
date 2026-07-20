@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "collection": "overflow-reconciliation-2026-07-20",
+  "createdAt": "2026-07-20",
+  "classification": "correctness-evidence",
+  "archive": {
+    "kind": "private-local-content-addressed-store",
+    "storeRoot": "$XDG_DATA_HOME/watchbound/artifacts/sha256",
+    "defaultStoreRootWhenXdgDataHomeIsUnset": "~/.local/share/watchbound/artifacts/sha256",
+    "objectNameTemplate": "<sha256>.json",
+    "copyPolicy": "copy-without-overwrite-and-verify-byte-identity",
+    "backupRecord": "The user confirmed on 2026-07-20 that ~/.local is backed up.",
+    "retention": "Retain until a successor durable archive and any public sanitized derivatives have been independently verified; do not remove merely because a derivative exists."
+  },
+  "artifacts": [
+    {
+      "logicalFilename": "overflow-reconciliation-2026-07-20-attempt-1-failed.json",
+      "sha256": "2f925a898068d4d9ed4299f3b6dc9b30d8fddc297ea94a2b3191645765eb1fde",
+      "byteSize": 48249,
+      "reportSchemaVersion": 2,
+      "scenario": "overflow-reconciliation",
+      "reportStatus": "completed",
+      "outcome": "fail",
+      "sourceCommit": "d406da8026aaa00ea0b17cf52833b1f293afe5e3",
+      "sourceDirty": false,
+      "sourceDigest": "150868e6d6e9bf1488cca46eedfef45c5cdf669312a8512f1b43ca71cf791ab6",
+      "nativeArtifactSha256": "59ea6df9b6f331dea2b77ffbbe65c44aeeb866e364ef468023e1f66dcd654495",
+      "hostPreparationRecord": "Explicit quiet-host confirmation on 2026-07-20; the report recorded 24 logical CPUs, powersave, tmpfs, unchanged inotify limits, and load 3.50/3.25/2.95 to 3.46/3.24/2.95.",
+      "archivalLocation": "$XDG_DATA_HOME/watchbound/artifacts/sha256/2f925a898068d4d9ed4299f3b6dc9b30d8fddc297ea94a2b3191645765eb1fde.json",
+      "classification": "correctness-evidence",
+      "caveats": [
+        "Retained failed outcome; it must not enter pass-only performance aggregates.",
+        "The substantive filesystem and cleanup evidence passed, but the harness failed overflow-loss-interval-quiesced because it did not retain the successful boolean in the evidence object.",
+        "The report contains private absolute paths and host details and must not be committed unsanitized."
+      ]
+    },
+    {
+      "logicalFilename": "overflow-reconciliation-2026-07-20-attempt-2.json",
+      "sha256": "abb44ec31818e2ac26fa136fcb87dfb7dee047810e1c598b79c41ed9958e2169",
+      "byteSize": 52464,
+      "reportSchemaVersion": 2,
+      "scenario": "overflow-reconciliation",
+      "reportStatus": "completed",
+      "outcome": "pass",
+      "sourceCommit": "e4ad05fa160d4114bff5d5a60bb34e5d23c9fdbd",
+      "sourceDirty": false,
+      "sourceDigest": "150868e6d6e9bf1488cca46eedfef45c5cdf669312a8512f1b43ca71cf791ab6",
+      "nativeArtifactSha256": "59ea6df9b6f331dea2b77ffbbe65c44aeeb866e364ef468023e1f66dcd654495",
+      "hostPreparationRecord": "Explicit quiet-host confirmation on 2026-07-20; immediately before the run the operator observed less than one core of other CPU work, 0.0% I/O wait with 0.2% maximum, powersave, tmpfs, and unchanged inotify limits.",
+      "archivalLocation": "$XDG_DATA_HOME/watchbound/artifacts/sha256/abb44ec31818e2ac26fa136fcb87dfb7dee047810e1c598b79c41ed9958e2169.json",
+      "classification": "correctness-evidence",
+      "caveats": [
+        "One supervised correctness trial is not a performance range.",
+        "Its 1.718-second duration is environmental context only.",
+        "The report contains private absolute paths and host details and must not be committed unsanitized."
+      ]
+    },
+    {
+      "logicalFilename": "automatic-overflow-reconciliation-2026-07-20-attempt-1.json",
+      "sha256": "b69d4d220c8cee6bb4b3b3a54e4087c67c8625bceeb1864133492f76fae70e88",
+      "byteSize": 53686,
+      "reportSchemaVersion": 2,
+      "scenario": "automatic-overflow-reconciliation",
+      "reportStatus": "completed",
+      "outcome": "pass",
+      "sourceCommit": "7de7834dfcadde75f47bd31350f5e79470728f74",
+      "sourceDirty": true,
+      "sourceStatusEntryCount": 5,
+      "sourceDigest": "c1aaa5033129ef1a627f1e1cab7448edb8210c52ac62d88d9ff4245b8fbc31ec",
+      "nativeArtifactSha256": "59ea6df9b6f331dea2b77ffbbe65c44aeeb866e364ef468023e1f66dcd654495",
+      "hostPreparationRecord": "Explicit quiet-host confirmation on 2026-07-20; the immediate five-second preflight observed 84-91% CPU idle, 0% I/O wait, no blocked tasks, near-zero CPU/I/O pressure, powersave, tmpfs, and unchanged inotify limits.",
+      "archivalLocation": "$XDG_DATA_HOME/watchbound/artifacts/sha256/b69d4d220c8cee6bb4b3b3a54e4087c67c8625bceeb1864133492f76fae70e88.json",
+      "classification": "correctness-evidence",
+      "caveats": [
+        "The source worktree contained five dirty harness/test entries for the new gated scenario; the recorded source digest is authoritative for the tested source set.",
+        "One supervised correctness trial is not a performance range.",
+        "The report contains private absolute paths and host details and must not be committed unsanitized."
+      ]
+    },
+    {
+      "logicalFilename": "automatic-overflow-reconciliation-2026-07-20-attempt-2.json",
+      "sha256": "a3cd9b71100cc1060e97bb15d94998396eee18bed6e02cdb27887f43b4996e2a",
+      "byteSize": 53796,
+      "reportSchemaVersion": 2,
+      "scenario": "automatic-overflow-reconciliation",
+      "reportStatus": "completed",
+      "outcome": "pass",
+      "sourceCommit": "b6f49dafdebd8ca06a2a0da8de372ebfbb7f2b4e",
+      "sourceDirty": false,
+      "sourceDigest": "c1aaa5033129ef1a627f1e1cab7448edb8210c52ac62d88d9ff4245b8fbc31ec",
+      "nativeArtifactSha256": "59ea6df9b6f331dea2b77ffbbe65c44aeeb866e364ef468023e1f66dcd654495",
+      "hostPreparationRecord": "Explicit quiet-host confirmation on 2026-07-20; timed preflight samples showed 79-87% CPU idle, 0% I/O wait, no blocked tasks, zero I/O pressure averages, powersave, tmpfs, and unchanged inotify limits.",
+      "archivalLocation": "$XDG_DATA_HOME/watchbound/artifacts/sha256/a3cd9b71100cc1060e97bb15d94998396eee18bed6e02cdb27887f43b4996e2a.json",
+      "classification": "correctness-evidence",
+      "caveats": [
+        "The preflight also showed 4.43% ten-second full memory pressure and background swap activity up to 2,412 KiB/s.",
+        "One supervised correctness trial is not a performance range; its 2.131-second duration and resource timing are environmental context only.",
+        "The report contains private absolute paths and host details and must not be committed unsanitized."
+      ]
+    }
+  ]
+}

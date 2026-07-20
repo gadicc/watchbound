@@ -246,7 +246,13 @@ It was not executed while the scenario was implemented. A later explicitly
 confirmed targeted run passed; its raw artifact and retained first-attempt
 bookkeeping failure are recorded in `docs/benchmark-results.md`. The automatic
 counterpart is `pnpm test:automatic-overflow-reconciliation` and has the same
-host-confirmation requirement; its confirmed artifact is recorded there too.
+host-confirmation requirement; its confirmed artifacts are recorded there too.
+The clean-source confirmation was one separately authorized targeted trial,
+retained as correctness evidence regardless of outcome. Its preflight, source
+commit and digest, native artifact hash, induction evidence, complete check
+result, resource restoration, and environmental caveats are recorded with the
+raw identity. A completed targeted run does not authorize a retry or any other
+command containing `--allow-forced-overflow`.
 
 Final correctness run, including the I/O-heavy forced-overflow case, after the
 user confirms the host is ready:

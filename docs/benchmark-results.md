@@ -1,8 +1,9 @@
 # Final benchmark results
 
 Status: first Linux feasibility measurement complete on 2026-07-19; targeted
-overflow and opt-in automatic reconciliation correctness follow-up completed on
-2026-07-20. No later correctness check replaces the performance series.
+overflow and opt-in automatic reconciliation correctness follow-up, including
+a clean-source automatic-overflow confirmation, completed on 2026-07-20. No
+later correctness check replaces the performance series.
 
 ## Second-milestone follow-up (not a benchmark replacement)
 
@@ -76,6 +77,50 @@ five-second preflight observed 84–91% CPU idle, 0% I/O wait, no blocked tasks,
 and near-zero current CPU/I/O pressure. These timings are context only. The raw
 file remains ignored and local under the existing artifact policy.
 
+## Clean-source automatic overflow-reconciliation confirmation
+
+With the host explicitly confirmed quiet and prepared, exactly one further
+targeted `automatic-overflow-reconciliation` trial passed from clean source on
+2026-07-20. This is correctness evidence only and is not a performance reading
+or replacement for the final performance series.
+
+- Raw result:
+  `benches/results/automatic-overflow-reconciliation-2026-07-20-attempt-2.json`
+  (schema 2, 53,796 bytes, SHA-256
+  `a3cd9b71100cc1060e97bb15d94998396eee18bed6e02cdb27887f43b4996e2a`).
+- Source HEAD was clean commit
+  `b6f49dafdebd8ca06a2a0da8de372ebfbb7f2b4e`; the recorded source digest was
+  `c1aaa5033129ef1a627f1e1cab7448edb8210c52ac62d88d9ff4245b8fbc31ec`.
+  The existing release native artifact was current and was not rebuilt; its
+  recorded SHA-256 was
+  `59ea6df9b6f331dea2b77ffbbe65c44aeeb866e364ef468023e1f66dcd654495`
+  (1,353,344 bytes).
+- The supervisor confirmed stop/mutate/resume order and generated 20,480
+  distinct files, exceeding `max_queued_events=16,384` by 4,096. Public
+  coverage reported `event-overflow`, the native overflow counter advanced
+  from zero to one, the output queue dropped no batches, and the uncertain
+  interval quiesced.
+- The original public subscription recovered automatically in one attempt
+  without a harness call to manual `reconcile()`. Committed exclusion
+  generation one and peer generation zero remained unchanged, coverage became
+  complete through exactly one matching singleton root boundary, and no lost
+  interval detail was credited as reconstructed. The peer reported shared
+  uncertainty truthfully and delivered during the scan; the deep sentinel was
+  then delivered.
+- All 45 checks passed. Joined, idempotent disposal left both subscriptions
+  disposed with zero watches; inotify returned from `0/0` through one active
+  instance to `0/0`, eventfds from three through four to three, and all three
+  named Watchbound threads were joined. No callback or reconciliation began
+  after disposal resolved.
+
+The raw report ran for 2.131 seconds on tmpfs, Linux 7.1.3-2-cachyos, Node
+25.2.1, 24 logical CPUs, the `powersave` governor, and unchanged inotify limits;
+load average was 5.96/3.78/3.95 at both report samples. The immediate preflight
+showed 79–87% CPU idle in the timed samples, 0% I/O wait, no blocked tasks, and
+zero I/O pressure averages. It also showed 4.43% ten-second full memory pressure
+and background swap activity up to 2,412 KiB/s, so duration and resource timing
+remain environmental context only. The ignored raw file is preserved locally.
+
 ## Supervised overflow-reconciliation follow-up
 
 After explicit quiet-host confirmation on 2026-07-20, one targeted
@@ -127,13 +172,14 @@ Commit `e4ad05f` added a regression test and retained that field before the
 passing retry. The failed raw correctness outcome remains preserved and never
 enters pass-only performance aggregates.
 
-The two earlier ignored files were re-hashed during this automatic-policy
-milestone and still exactly match their entries above. The new automatic raw
-file also matches its recorded size and hash. None of the three was deleted,
-copied, or overwritten. A durable archival process should copy raw reports to
-a content-addressed project artifact store outside the worktree and commit a
-small manifest containing filename, SHA-256, schema, source commit,
-host-preparation record, and retention location. That proposal has not been
+The earlier ignored files were re-hashed during the automatic-policy milestone
+and matched their recorded entries; the clean-source artifact is independently
+recorded above. None was deleted, copied, or overwritten. Before archival, all
+four milestone artifacts must be re-verified together. A durable archival
+process should copy raw reports to a content-addressed project artifact store
+outside the worktree and commit a small manifest containing filename, SHA-256,
+schema, source commit and digest, native artifact hash, host preparation,
+retention location, classification, and caveats. That proposal has not been
 executed: copying outside this workspace or changing the current
 `/benches/results/*.json` ignore policy requires explicit user approval.
 

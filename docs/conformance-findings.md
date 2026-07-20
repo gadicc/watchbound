@@ -1,9 +1,9 @@
 # Correctness and capability findings
 
 Status: final first-milestone Linux findings as of 2026-07-19, with targeted
-manual, overflow, and opt-in automatic reconciliation follow-up on 2026-07-20.
-Performance ranges and the continuation decision are in
-`docs/benchmark-results.md`.
+manual, overflow, and opt-in automatic reconciliation follow-up, including a
+clean-source automatic-overflow confirmation, on 2026-07-20. Performance
+ranges and the continuation decision are in `docs/benchmark-results.md`.
 
 ## Second-milestone correctness update
 
@@ -90,6 +90,17 @@ delivery, policy disposal, and resource restoration. The ignored raw artifact,
 hash, source digest, dirty-harness caveat, and host context are recorded in
 `docs/benchmark-results.md`; this remains correctness rather than performance
 evidence.
+
+A second and final authorized automatic-overflow trial then passed from clean
+commit `b6f49da`. Its supervisor again created 20,480 distinct files against a
+16,384-event kernel queue, the native overflow counter advanced exactly once,
+and all 45 checks passed. It retained the original subscription, generation
+one, a single matching root recovery boundary, peer progress, exclusion
+behavior, post-recovery sentinel delivery, and joined cleanup without crediting
+uncertain-interval detail. The ignored schema-2 artifact, source and native
+hashes, host state, and memory-pressure caveat are recorded in
+`docs/benchmark-results.md`. No further forced-overflow attempt is authorized
+by this evidence run.
 
 ## Supervised overflow-reconciliation evidence
 

@@ -79,6 +79,7 @@ function completeEvidence(overrides = {}) {
       guaranteedDetailedReconstruction: false,
       conservativeRootBoundary: true,
       coverageStayedUncertain: true,
+      quiesced: true,
     },
     excludedPathsObserved: false,
     originalSubscription: {
@@ -227,6 +228,12 @@ test("only supervised genuine event-overflow evidence receives loss credit", () 
   assert.ok(failedCheckNames(tooSmall).includes("overflow-workload-exceeded-kernel-queue-bound"));
 });
 
+test("the uncertain interval must carry explicit successful quiescence evidence", () => {
+  const notQuiesced = completeEvidence();
+  notQuiesced.intervalMutation.quiesced = false;
+  assert.ok(failedCheckNames(notQuiesced).includes("loss-interval-quiesced"));
+});
+
 test("recovery evidence enforces the original subscription, stable generations, and one root-only boundary", () => {
   const reconstructed = completeEvidence({
     intervalMutation: {
@@ -235,6 +242,7 @@ test("recovery evidence enforces the original subscription, stable generations, 
       guaranteedDetailedReconstruction: true,
       conservativeRootBoundary: true,
       coverageStayedUncertain: true,
+      quiesced: true,
     },
   });
   assert.ok(failedCheckNames(reconstructed).includes("loss-interval-not-credited-as-detailed-reconstruction"));

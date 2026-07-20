@@ -328,6 +328,7 @@ export function evaluateOverflowReconciliationEvidence(evidence) {
       "coverage-stayed-uncertain-through-loss-interval",
       interval.coverageStayedUncertain === true,
     ),
+    check("loss-interval-quiesced", interval.quiesced === true),
     check(
       "loss-interval-not-credited-as-detailed-reconstruction",
       interval.guaranteedDetailedReconstruction === false,
@@ -1384,12 +1385,19 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
     fs.mkdirSync(path.dirname(prepared.excludedFutureTarget), { recursive: true });
     fs.writeFileSync(prepared.excludedFutureTarget, "ignored future\n");
     const intervalMutationEndedAtMs = nowMs();
-    await requirePhaseQuiescence(recorder, config, "uncertain-interval mutations");
-    const intervalObservation = recorder.summary(intervalCheckpoint, [
-      prepared.intervalTarget,
-      prepared.excludedCurrentTarget,
-      prepared.excludedFutureTarget,
-    ]);
+    const intervalQuiesced = await requirePhaseQuiescence(
+      recorder,
+      config,
+      "uncertain-interval mutations",
+    );
+    const intervalObservation = {
+      quiesced: intervalQuiesced,
+      ...recorder.summary(intervalCheckpoint, [
+        prepared.intervalTarget,
+        prepared.excludedCurrentTarget,
+        prepared.excludedFutureTarget,
+      ]),
+    };
     const intervalBatches = recorder.batchesSince(intervalCheckpoint);
 
     const reconciliationCheckpoint = recorder.checkpoint();
@@ -1582,6 +1590,7 @@ async function runReconciliation(adapter, prepared, config, lossKind = "consumer
                 recoveryRootBatches.length === 1 && matchingRecoveryBoundaries.length === 1,
               coverageStayedUncertain:
                 intervalObservation.uncertainReasons.includes("event-overflow"),
+              quiesced: intervalObservation.quiesced,
             },
             excludedPathsObserved,
             originalSubscription: primaryOperationEvidenceBeforeDisposal,

@@ -2,9 +2,30 @@
   "name": "@gadicc/watchbound-node",
   "version": "0.0.0",
   "private": true,
-  "description": "Unpublished Node-API proof for Watchbound",
+  "description": "Maintained unpublished Node-API binding for Watchbound",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
   "main": "index.js",
   "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js",
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
   "scripts": {
     "build": "napi build --platform --release --output-dir . --no-js --dts native.generated.d.ts",
     "test": "node test/smoke.cjs && node --test test/loader.cjs test/lifecycle.cjs"

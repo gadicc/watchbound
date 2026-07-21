@@ -18,7 +18,11 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  js: {}
+  js:
+    dependencies:
+      '@gadicc/watchbound-node':
+        specifier: workspace:0.0.0
+        version: link:../node
 
   node: {}
 

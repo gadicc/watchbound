@@ -1,5 +1,5 @@
 /target/
-/node_modules/
+node_modules/
 /node/*.node
 /node/*.so
 /node/native.generated.d.ts

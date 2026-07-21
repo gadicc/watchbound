@@ -1,18 +1,20 @@
 # Watchbound
 
-Watchbound is an experimental, Linux-first recursive directory watcher that
-treats filesystem coverage as an explicit result rather than an assumption.
-It uses one inotify watch per included directory, batches invalidations, and
-reports partial or uncertain coverage when it cannot safely claim completeness.
+Watchbound is an experimental, maintained-unpublished Linux recursive directory
+watcher that treats filesystem coverage as an explicit result rather than an
+assumption. It uses one inotify watch per included directory, batches
+invalidations, and reports partial or uncertain coverage when it cannot safely
+claim completeness.
 
-This repository is a feasibility milestone. Nothing here is published or has
-a stable API. It is intentionally independent of Codex Desktop and does not
-contain Git-ignore or application policy.
+This repository remains private at `0.0.0`. Nothing here is published or has a
+stable public API, and the maintained target remains pending clean CI evidence.
+It is intentionally independent of Codex Desktop and does not contain
+Git-ignore or application policy.
 
 The workspace is divided by ownership:
 
 - `engine/`: reusable Rust engine and Linux inotify state machine.
-- `node/`: thin Node-API proof-of-concept binding.
+- `node/`: thin Node-API representation and lifecycle binding.
 - `js/`: JavaScript entry point and TypeScript declarations.
 - `benches/`: standalone conformance and measurement harnesses.
 - `docs/`: architecture, methodology, results, and decisions.
@@ -26,13 +28,11 @@ diagnostic rather than a policy surface.
 
 ## Build and test
 
-The current workspace manifests still admit Linux with Rust 1.88+, Node.js 18+,
-pnpm, and a C linker during stabilization; that broad install range is not a
-support claim. The pending maintained target is the narrower Node
-`>=24.18.0 <25` Ubuntu 24.04/x64/glibc source build in
-[`docs/support-matrix.md`](docs/support-matrix.md). The native boundary targets
-Node-API 6; the wrapper additionally uses `WeakRef`, and the test suite uses
-`node:test`. Nothing is published.
+The manifests intentionally admit only Node `>=24.18.0 <25`, Linux x64, and
+glibc. The pending maintained target is Ubuntu 24.04 with Linux 6.8+, glibc
+2.39, Rust 1.88+, pnpm 10.33.2, `build-essential`, and a working C linker; see
+[`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
+floor, not a broader support claim. Nothing is published.
 
 ```sh
 pnpm install
@@ -41,10 +41,15 @@ pnpm test
 pnpm check
 ```
 
-The native build produces a local platform binding under `node/`; generated
-`.node` binaries are ignored by Git. The JavaScript wrapper preserves exact
-Linux path bytes and conservatively collapses a non-UTF-8 string invalidation
-to its root.
+The controlled build produces exactly the local
+`node/watchbound.linux-x64-gnu.node` binding. The hand-owned loader accepts no
+environment override, optional prebuild package, WASI branch, download, or
+runtime compiler fallback, and verifies native/package/API/build identity
+before exporting the binding. Generated `.node` binaries and napi-rs's private
+declaration output are ignored by Git. See
+[`docs/native-delivery.md`](docs/native-delivery.md). The JavaScript wrapper
+preserves exact Linux path bytes and conservatively collapses a non-UTF-8 string
+invalidation to its root.
 
 `initialCoverage` and `initialRootState` expose the immutable establishment
 baseline. `subscription.observedState` is the frozen projection of that baseline

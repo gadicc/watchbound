@@ -10,6 +10,8 @@ const wrapperPackage = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8"),
 );
 
+export const WRAPPER_VERSION = wrapperPackage.version;
+
 export function buildCapabilities(native, metadata) {
   if (native?.schemaVersion !== 1 || metadata?.schemaVersion !== 1) {
     throw new Error("native capability metadata does not use schema version 1");
@@ -23,7 +25,7 @@ export function buildCapabilities(native, metadata) {
   return deepFreeze({
     schemaVersion: 1,
     versions: {
-      wrapper: wrapperPackage.version,
+      wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
       engine: metadata.engineVersion,
       bindingApi: metadata.bindingApiVersion,

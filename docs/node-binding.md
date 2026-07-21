@@ -1,6 +1,8 @@
 # Node binding decision
 
-Status: selected for the feasibility proof, not a stable package commitment.
+Status: selected for the maintained-unpublished source-build candidate; the
+exact target still requires a clean CI run and is not a stable public package
+commitment.
 
 ## Choice
 
@@ -10,7 +12,7 @@ Use napi-rs v3 with Node-API 6 for the thin binding.
   feature;
 - `napi-derive` 3.5.10;
 - `napi-build` 2.3.2;
-- `@napi-rs/cli` 3.7.3 for local proof builds only.
+- `@napi-rs/cli` 3.7.3 for the pinned controlled source build.
 
 The workspace declares Rust 1.88 as its minimum because napi-rs v3 requires it.
 The engine itself does not depend on napi-rs.
@@ -90,6 +92,31 @@ permits a later configuration when it releases the final runtime lease.
 actual process-global state and can therefore show another handle's active
 budget. Its inactive result is the zero/null snapshot, not the handle request.
 
+## Loader and source-build boundary
+
+`node/index.js` and `node/index.d.ts` are hand-owned. The napi-rs build runs
+with `--no-js` and writes its diagnostic declaration output only to the ignored
+`native.generated.d.ts`; the workspace build verifies that the hand-owned
+loader, declarations, and loader implementation remain byte-identical.
+
+The loader accepts exactly `watchbound.linux-x64-gnu.node` beside the package.
+It has no environment-variable override, optional-package lookup, WASI branch,
+download, or install-time build fallback. Before exporting the binding it
+requires Linux x64, detected glibc, Node-API 6 or newer, metadata schema 1,
+binding API 1, matching package/native/engine versions, Node-API build floor 6,
+the `x86_64-unknown-linux-gnu` target, and a release build profile. The wrapper
+then asserts its own package version against the native package version.
+
+Definitive loader failures have bounded `WATCHBOUND_UNSUPPORTED_PLATFORM`,
+`WATCHBOUND_UNSUPPORTED_LIBC`, `WATCHBOUND_UNSUPPORTED_NODE_API`,
+`WATCHBOUND_NATIVE_NOT_BUILT`, `WATCHBOUND_NATIVE_LOAD_FAILED`,
+`WATCHBOUND_NATIVE_VERSION_MISMATCH`, or `WATCHBOUND_NATIVE_API_MISMATCH`
+codes. These import-time packaging diagnostics are separate from the
+schema-version-1 operational error taxonomy. Runtime facts outside the pending
+support matrix do not become supported merely because a locally built addon can
+load. The full delivery decision and future prebuild gates are in
+[`native-delivery.md`](native-delivery.md).
+
 ## Establishment and observed state
 
 The engine captures `initial_coverage` and `initial_root_state` in one
@@ -139,9 +166,11 @@ thread-safe-function delivery failures are counted separately; the former do
 not stop the bridge, while the latter are terminal and surface when disposal
 joins it.
 
-## Not decided here
+## Still gated
 
 - clean-CI qualification of the approved Node 24.18/Ubuntu 24.04 target;
-- whether any later milestone should add a prebuilt platform/libc matrix;
-- package signing, provenance, and release automation;
-- final package-loader diagnostics and artifact identity gates.
+- whether a separately approved later milestone should design or produce a
+  prebuilt platform/libc matrix;
+- package signing, provenance, SBOM, attestation, reproducibility, and release
+  automation;
+- any package publication or consumer integration.

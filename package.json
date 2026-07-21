@@ -2,15 +2,16 @@
   "name": "@gadicc/watchbound-workspace",
   "version": "0.0.0",
   "private": true,
-  "description": "Linux feasibility workspace for the Watchbound resource-aware directory watcher",
+  "description": "Private workspace for the Watchbound resource-aware Linux directory watcher",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.18.0 <25"
   },
   "scripts": {
     "build": "cargo build --workspace",
-    "build:node": "pnpm --dir node build",
+    "build:node": "node scripts/build-node.mjs",
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-js.mjs && pnpm typecheck",
     "typecheck": "tsc -p js/test/types/tsconfig.json",
     "test": "cargo test --workspace && pnpm --dir node test && node --test js/test/*.test.js benches/test/*.test.mjs",

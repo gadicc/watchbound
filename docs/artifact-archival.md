@@ -42,5 +42,13 @@ time.
 Do not commit an original report merely because it is small. A public
 derivative must be produced by a deterministic, tested sanitizer, identified by
 its own hash, and linked to the private original hash in the manifest. The
-initial design work for that follow-up is in
+bounded schema-2 sanitizer, public schema, synthetic verification, disclosure
+policy, and required per-derivative approval/review workflow are in
 `plans/public-evidence-sanitization.md`.
+
+The existence of that tooling does not authorize reading or transforming a
+private object. No current manifest entry has a public derivative. A real
+derivative requires explicit approval naming the original hash and intended
+public path, followed by manual leak review and a manifest linkage containing
+both the private and public SHA-256 values. Generation does not authorize
+publication or deletion of the retained original.

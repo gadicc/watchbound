@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:watchbound:schema:public-conformance-evidence:1",
+  "title": "Watchbound public conformance evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schemaVersion",
+    "kind",
+    "sanitizer",
+    "resultClassification",
+    "privateOriginal",
+    "provenance",
+    "disclosure",
+    "report"
+  ],
+  "properties": {
+    "schema": {
+      "const": "urn:watchbound:schema:public-conformance-evidence:1"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "watchbound-public-conformance-evidence"
+    },
+    "sanitizer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "sourceReportSchemaVersion", "bounds"],
+      "properties": {
+        "name": {
+          "const": "watchbound-conformance-report-sanitizer"
+        },
+        "version": {
+          "const": "1.0.0"
+        },
+        "sourceReportSchemaVersion": {
+          "const": 2
+        },
+        "bounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxInputBytes",
+            "maxOutputBytes",
+            "maxDepth",
+            "maxNodes",
+            "maxArrayLength",
+            "maxObjectKeys",
+            "maxStringBytes"
+          ],
+          "properties": {
+            "maxInputBytes": { "type": "integer", "minimum": 1 },
+            "maxOutputBytes": { "type": "integer", "minimum": 1 },
+            "maxDepth": { "type": "integer", "minimum": 1 },
+            "maxNodes": { "type": "integer", "minimum": 1 },
+            "maxArrayLength": { "type": "integer", "minimum": 1 },
+            "maxObjectKeys": { "type": "integer", "minimum": 1 },
+            "maxStringBytes": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "resultClassification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence",
+        "reportStatus",
+        "outcome",
+        "performanceSamplePolicies"
+      ],
+      "properties": {
+        "evidence": { "type": "string", "minLength": 1 },
+        "reportStatus": { "type": "string", "minLength": 1 },
+        "outcome": { "enum": ["pass", "fail", "observed"] },
+        "performanceSamplePolicies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "privateOriginal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestCollection",
+        "logicalFilename",
+        "sha256",
+        "byteSize"
+      ],
+      "properties": {
+        "manifestCollection": { "$ref": "#/$defs/safeIdentifier" },
+        "logicalFilename": { "$ref": "#/$defs/safeIdentifier" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byteSize": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "nativeArtifact"],
+      "properties": {
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "dirty", "statusEntryCount", "sha256"],
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "dirty": { "type": "boolean" },
+            "statusEntryCount": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "nativeArtifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256"],
+          "properties": {
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "disclosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pathPlaceholders",
+        "exactTimestamps",
+        "kernelVersion",
+        "omittedHostFields"
+      ],
+      "properties": {
+        "pathPlaceholders": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["$HOME", "$TEMP_ROOT", "$TRIAL_ROOT", "$WORKSPACE"],
+          "properties": {
+            "$HOME": { "type": "string" },
+            "$TEMP_ROOT": { "type": "string" },
+            "$TRIAL_ROOT": { "type": "string" },
+            "$WORKSPACE": { "type": "string" }
+          }
+        },
+        "exactTimestamps": { "const": "replaced with $TIMESTAMP" },
+        "kernelVersion": { "const": "major.minor only" },
+        "omittedHostFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "suite",
+        "system",
+        "methodology",
+        "config",
+        "sourceIdentity",
+        "adapterProbes",
+        "excludedRuns",
+        "results",
+        "aggregates",
+        "summary"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "suite": { "type": "string" },
+        "startedAt": { "const": "$TIMESTAMP" },
+        "finishedAt": { "const": "$TIMESTAMP" },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "system": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platform", "architecture", "node", "kernelMajorMinor"],
+          "properties": {
+            "platform": { "type": "string" },
+            "architecture": { "type": "string" },
+            "node": { "type": "string" },
+            "kernelMajorMinor": {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+$"
+            },
+            "cpuGovernor": { "$ref": "#/$defs/jsonValue" },
+            "tempFilesystem": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string" },
+                "filesystemType": { "$ref": "#/$defs/jsonValue" },
+                "error": { "$ref": "#/$defs/jsonValue" }
+              }
+            },
+            "inotifyLimits": { "$ref": "#/$defs/jsonObject" }
+          }
+        },
+        "methodology": { "$ref": "#/$defs/jsonObject" },
+        "config": { "$ref": "#/$defs/jsonObject" },
+        "sourceIdentity": { "$ref": "#/$defs/jsonObject" },
+        "adapterProbes": { "$ref": "#/$defs/jsonObject" },
+        "excludedRuns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonValue" }
+        },
+        "results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonValue" }
+        },
+        "aggregates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonValue" }
+        },
+        "summary": { "$ref": "#/$defs/jsonObject" }
+      }
+    }
+  },
+  "$defs": {
+    "safeIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "jsonObject": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/jsonValue" }
+    },
+    "jsonValue": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonValue" }
+        },
+        { "$ref": "#/$defs/jsonObject" }
+      ]
+    }
+  }
+}

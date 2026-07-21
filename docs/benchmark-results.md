@@ -183,11 +183,13 @@ source; the originals remain intact and ignored. The public-safe manifest is
 verification process is in `docs/artifact-archival.md`.
 
 The raw reports are deliberately not tracked because they contain absolute
-paths and detailed host state. A deterministic sanitizer and public derived
-evidence remain future work; initial requirements and leak-prevention tests are
-recorded in `plans/public-evidence-sanitization.md`. A derivative will have its
-own hash and will not replace or authorize deletion of its exact private
-original.
+paths and detailed host state. A deterministic bounded sanitizer, public
+schema, and synthetic leak-prevention tests are implemented and recorded in
+`plans/public-evidence-sanitization.md`, but they have not been run on these
+private originals. No public derivative has been generated or committed. Each
+real derivative needs separate approval naming the original hash and public
+path, manual leak review, and a manifest linkage with its own hash; it will not
+replace or authorize deletion of its exact private original.
 
 ## Decision
 

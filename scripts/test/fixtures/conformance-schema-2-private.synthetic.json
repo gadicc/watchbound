@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 2,
+  "suite": "conformance",
+  "startedAt": "2026-01-02T03:04:05.000Z",
+  "finishedAt": "2026-01-02T03:04:06.250Z",
+  "durationMs": 1250,
+  "system": {
+    "platform": "linux",
+    "architecture": "x64",
+    "node": "v24.18.0",
+    "kernel": "6.8.0-52-generic",
+    "cpuModel": "Synthetic Confidential CPU",
+    "logicalCpuCount": 32,
+    "totalMemoryBytes": 68719476736,
+    "loadAverageAtStart": [1.25, 0.75, 0.5],
+    "loadAverageAtFinish": [1.5, 0.8, 0.6],
+    "cpuGovernor": "powersave",
+    "tempFilesystem": {
+      "path": "/var/tmp",
+      "device": 42,
+      "filesystemType": 16914836,
+      "blockSize": 4096,
+      "blocks": 100000,
+      "blocksAvailable": 90000
+    },
+    "inotifyLimits": {
+      "maxUserWatches": 524288,
+      "maxUserInstances": 1024,
+      "maxQueuedEvents": 16384
+    }
+  },
+  "methodology": {
+    "isolation": "Each trial runs in a fresh child process",
+    "watchAccounting": "Counts come from /proc/self/fdinfo",
+    "semanticPerformanceSamples": "Numeric performance aggregates include completed passing trials only; every raw trial is retained"
+  },
+  "config": {
+    "adapters": ["watchbound"],
+    "scenarios": ["overflow-reconciliation"],
+    "runs": 1,
+    "directoryCounts": [100],
+    "burstCount": 50,
+    "maxWatches": 512,
+    "timeoutMs": 5000,
+    "childTimeoutMs": 30000,
+    "settleMs": 100,
+    "topologyDelayMs": 350,
+    "exclusionObservationMs": 500,
+    "disposalObservationMs": 300,
+    "tempDir": "/var/tmp",
+    "trialOrder": "rotating",
+    "quick": false,
+    "allowForcedOverflow": true,
+    "codexWatcherPath": "/home/casey-example/private/codex/patch.js",
+    "parcelWatcherPath": "@parcel/watcher"
+  },
+  "sourceIdentity": {
+    "workspaceRoot": "/home/casey-example/src/watchbound",
+    "gitHead": "1111111111111111111111111111111111111111",
+    "gitHeadError": null,
+    "gitDirty": true,
+    "gitStatusEntryCount": 2,
+    "sourceSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "sourceFileCount": 19,
+    "expectedBuildProfile": "release",
+    "expectedBuildCommand": "pnpm --dir node build"
+  },
+  "adapterProbes": {
+    "watchbound": {
+      "kind": "probe",
+      "adapterId": "watchbound",
+      "status": "available",
+      "adapter": {
+        "metadata": {
+          "id": "watchbound",
+          "nativeArtifact": {
+            "path": "/home/casey-example/src/watchbound/node/watchbound.linux-x64-gnu.node",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "bytes": 123456,
+            "modifiedAt": "2026-01-02T02:00:00.000Z",
+            "candidateCount": 1
+          },
+          "build": {
+            "expectedProfile": "release",
+            "command": "pnpm --dir node build",
+            "nativeLibraryOverride": null
+          }
+        },
+        "capabilities": {
+          "explicitCoverage": true,
+          "overflowReporting": true,
+          "reconciliation": true
+        }
+      }
+    }
+  },
+  "excludedRuns": [],
+  "results": [
+    {
+      "kind": "trial",
+      "adapterId": "watchbound",
+      "scenario": "overflow-reconciliation",
+      "run": 1,
+      "status": "completed",
+      "outcome": "fail",
+      "adapter": {
+        "id": "watchbound",
+        "nativeArtifact": {
+          "path": "/home/casey-example/src/watchbound/node/watchbound.linux-x64-gnu.node",
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "bytes": 123456,
+          "modifiedAt": "2026-01-02T02:00:00.000Z",
+          "candidateCount": 1
+        }
+      },
+      "result": {
+        "observation": {
+          "sequences": ["41", "42", "43"],
+          "sequencesStrictlyMonotonic": true,
+          "exclusionGenerations": ["0", "1"],
+          "coverageStates": ["complete", "uncertain", "complete"],
+          "uncertainReasons": ["event-overflow"],
+          "missedPathCount": 1,
+          "missedPaths": [
+            "/var/tmp/watchbound-bench-nonce-7QZ/root/missed.txt"
+          ],
+          "pathCounts": {
+            "/var/tmp/watchbound-bench-nonce-7QZ/root/seen.txt": 1,
+            "/var/tmp/watchbound-bench-key-only-9RX/root/key-only.txt": 1
+          },
+          "asyncErrors": [
+            {
+              "code": "WATCHBOUND_SYNTHETIC_FAILURE",
+              "message": "failure below /var/tmp/watchbound-bench-nonce-7QZ/root and /home/casey-example/.cache/watchbound",
+              "stack": "Error: synthetic\n    at inspect (file:///home/casey-example/src/watchbound/benches/run-child.mjs:10:2)"
+            }
+          ]
+        },
+        "reconciliation": {
+          "exclusionGeneration": "1",
+          "boundarySequence": "43",
+          "coverage": {
+            "state": "complete"
+          }
+        },
+        "coverageTransitions": [
+          { "sequence": "41", "generation": "0", "state": "complete" },
+          { "sequence": "42", "generation": "0", "state": "uncertain", "reason": "event-overflow" },
+          { "sequence": "43", "generation": "1", "state": "complete" }
+        ],
+        "diagnostics": {
+          "dirtyPaths": [
+            "/home/casey-example/src/watchbound/benches/private-change.mjs"
+          ],
+          "stdout": "synthetic diagnostic from /var/tmp/watchbound-bench-nonce-7QZ/root"
+        },
+        "checks": [
+          { "name": "sequence-monotonic", "passed": true },
+          { "name": "coverage-stayed-uncertain", "passed": true },
+          { "name": "all-expected-paths-delivered", "passed": false, "missedPathCount": 1 },
+          { "name": "joined-cleanup", "passed": true }
+        ],
+        "cleanup": {
+          "joined": true,
+          "inotifyBefore": { "supported": true, "instances": 1, "watches": 101, "fds": [{ "fd": 19, "watches": 101 }] },
+          "inotifyAfter": { "supported": true, "instances": 0, "watches": 0, "fds": [] },
+          "inotifyDelta": { "supported": true, "instances": -1, "watches": -101 }
+        }
+      }
+    }
+  ],
+  "aggregates": [
+    {
+      "adapterId": "watchbound",
+      "scenario": "overflow-reconciliation",
+      "scale": "default",
+      "runs": 1,
+      "passed": 0,
+      "failed": 1,
+      "observed": 0,
+      "performanceRuns": 0,
+      "performanceSamplePolicy": "pass-only",
+      "allCompletedCorrectness": {
+        "missedPathCount": { "samples": 1, "min": 1, "median": 1, "max": 1, "mean": 1 }
+      }
+    }
+  ],
+  "summary": {
+    "planned": 1,
+    "executed": 1,
+    "excluded": 0,
+    "completed": 1,
+    "passed": 0,
+    "nonconforming": 1,
+    "observed": 0,
+    "errors": 0,
+    "runtimeSkips": 0,
+    "cleanupErrors": 0,
+    "skipped": 0
+  }
+}

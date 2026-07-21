@@ -25,6 +25,14 @@ ordinary conformance, TypeScript fixtures, and environment teardown have
 passed on this exact class of host. Until clean CI records that evidence, the
 table is a target rather than a completed claim.
 
+Capability schema version 1 mirrors this table under `capabilities.support`
+with `status: "target-pending-clean-ci"`. The adjacent `capabilities.runtime`
+section reports the platform, architecture, kernel, libc, Node, and Node-API
+facts observed in the process that loaded the native binary. Those facts are
+diagnostic only: a match does not promote the target to supported, and a
+nonmatch does not broaden the table. Only clean target evidence and a deliberate
+document/schema update can change support status or scope.
+
 The package remains Linux-only and source-built. No prebuilt native artifact
 is produced or distributed in this phase.
 

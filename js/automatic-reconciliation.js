@@ -5,15 +5,15 @@ import {
   isWatchboundError,
 } from "./errors.js";
 
-const DEFAULTS = Object.freeze({
+export const AUTOMATIC_RECONCILIATION_DEFAULTS = Object.freeze({
   maxAttempts: 3,
   initialDelayMs: 25,
   maxDelayMs: 1_000,
 });
 
-const LIMITS = Object.freeze({
-  maxAttempts: 16,
-  maxDelayMs: 60_000,
+export const AUTOMATIC_RECONCILIATION_LIMITS = Object.freeze({
+  maxAttempts: Object.freeze({ minimum: 1, maximum: 16 }),
+  delayMs: Object.freeze({ minimum: 10, maximum: 60_000 }),
 });
 
 const recoverableReasons = new Set([
@@ -45,7 +45,7 @@ const systemClock = Object.freeze({
 
 export function normalizeAutomaticReconciliation(value) {
   if (value === undefined || value === false) return null;
-  if (value === true) return { ...DEFAULTS };
+  if (value === true) return { ...AUTOMATIC_RECONCILIATION_DEFAULTS };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw invalidArgumentError(
       "subscribe",
@@ -53,12 +53,28 @@ export function normalizeAutomaticReconciliation(value) {
     );
   }
 
-  const maxAttempts = value.maxAttempts ?? DEFAULTS.maxAttempts;
-  const initialDelayMs = value.initialDelayMs ?? DEFAULTS.initialDelayMs;
-  const maxDelayMs = value.maxDelayMs ?? DEFAULTS.maxDelayMs;
-  requireBoundedInteger("maxAttempts", maxAttempts, 1, LIMITS.maxAttempts);
-  requireBoundedInteger("initialDelayMs", initialDelayMs, 10, LIMITS.maxDelayMs);
-  requireBoundedInteger("maxDelayMs", maxDelayMs, 10, LIMITS.maxDelayMs);
+  const maxAttempts = value.maxAttempts ?? AUTOMATIC_RECONCILIATION_DEFAULTS.maxAttempts;
+  const initialDelayMs =
+    value.initialDelayMs ?? AUTOMATIC_RECONCILIATION_DEFAULTS.initialDelayMs;
+  const maxDelayMs = value.maxDelayMs ?? AUTOMATIC_RECONCILIATION_DEFAULTS.maxDelayMs;
+  requireBoundedInteger(
+    "maxAttempts",
+    maxAttempts,
+    AUTOMATIC_RECONCILIATION_LIMITS.maxAttempts.minimum,
+    AUTOMATIC_RECONCILIATION_LIMITS.maxAttempts.maximum,
+  );
+  requireBoundedInteger(
+    "initialDelayMs",
+    initialDelayMs,
+    AUTOMATIC_RECONCILIATION_LIMITS.delayMs.minimum,
+    AUTOMATIC_RECONCILIATION_LIMITS.delayMs.maximum,
+  );
+  requireBoundedInteger(
+    "maxDelayMs",
+    maxDelayMs,
+    AUTOMATIC_RECONCILIATION_LIMITS.delayMs.minimum,
+    AUTOMATIC_RECONCILIATION_LIMITS.delayMs.maximum,
+  );
   if (maxDelayMs < initialDelayMs) {
     throw invalidArgumentError(
       "subscribe",

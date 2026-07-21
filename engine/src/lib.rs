@@ -13,6 +13,8 @@ pub use error::{
     ErrorCode, MAX_ERROR_MESSAGE_BYTES, Operation, Result, RetryAfter, SystemCause, WatchboundError,
 };
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
@@ -194,6 +196,8 @@ pub struct Capabilities {
     pub dynamic_exclusions: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
+    pub process_native_watch_budget: bool,
+    pub shared_native_watches: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -297,6 +301,12 @@ impl Engine {
         })
     }
 
+    /// Returns the process-wide native-watch budget requested by this engine
+    /// value. Constructing an engine does not acquire or configure a runtime.
+    pub const fn native_watch_budget(&self) -> Option<usize> {
+        self.runtime_watch_budget
+    }
+
     pub const fn capabilities(&self) -> Capabilities {
         Capabilities {
             recursive: true,
@@ -306,6 +316,8 @@ impl Engine {
             dynamic_exclusions: true,
             reconciliation: true,
             root_replacement_recovery: true,
+            process_native_watch_budget: true,
+            shared_native_watches: true,
         }
     }
 
@@ -986,6 +998,18 @@ mod tests {
             false,
             None,
         );
+    }
+
+    #[test]
+    fn engine_values_report_their_requested_native_watch_budget() {
+        assert_eq!(Engine::new().native_watch_budget(), None);
+        assert_eq!(
+            Engine::with_runtime_watch_budget(17)
+                .unwrap()
+                .native_watch_budget(),
+            Some(17)
+        );
+        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

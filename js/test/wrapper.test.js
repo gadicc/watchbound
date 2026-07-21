@@ -59,8 +59,8 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     const deadline = Date.now() + 3_000;
     while (batches.length === 0 && Date.now() < deadline) await delay(10);
 
-    assert.equal(capabilities.recursive, true);
-    assert.equal(capabilities.dynamicExclusions, true);
+    assert.equal(capabilities.features.recursive, true);
+    assert.equal(capabilities.features.dynamicExclusions, true);
     assert.equal(subscription.initialCoverage.state, "complete");
     assert.equal(subscription.exclusionGeneration, 0n);
     assert.deepEqual(subscription.automaticReconciliation, { state: "disabled" });
@@ -200,7 +200,7 @@ test("wrapper reconciles in place under the committed exclusion generation", asy
       exclusionGeneration: 2n,
       coverage: { state: "complete" },
     });
-    assert.equal(capabilities.reconciliation, true);
+    assert.equal(capabilities.features.reconciliation, true);
     const deadline = Date.now() + 3_000;
     while (!batches.some((batch) => batch.invalidatedPaths.includes(root)) && Date.now() < deadline) {
       await delay(10);
@@ -363,7 +363,7 @@ test("wrapper automatically reconciles consumer backpressure only when opted in"
       },
     );
 
-    assert.equal(capabilities.automaticReconciliation, true);
+    assert.equal(capabilities.features.automaticReconciliation, true);
     for (const target of targets) fs.appendFileSync(target, "trigger\n");
     await waitFor(
       () => batches.some((batch) =>
@@ -593,7 +593,7 @@ test("wrapper explicitly recovers a replacement without automatic identity adopt
       () => batches.some((batch) => batch.invalidatedPaths.includes(sentinel)),
       "post-recovery deep sentinel was not delivered",
     );
-    assert.equal(capabilities.rootReplacementRecovery, true);
+    assert.equal(capabilities.features.rootReplacementRecovery, true);
     assert.throws(() => subscription.recoverRoot(null), /options must be an object/);
     assert.throws(
       () => subscription.recoverRoot({ identityPolicy: "automatic" }),

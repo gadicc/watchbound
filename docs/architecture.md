@@ -289,14 +289,48 @@ removing an overlapping logical interest therefore neither consumes nor returns
 a runtime token; only the first or final interest changes the unique count.
 
 `Engine::new()` preserves the unbounded prototype behavior. A caller can use
-`Engine::with_runtime_watch_budget` to request a positive unique-watch budget.
-Configuration is fixed for one runtime lifetime: while any subscription keeps
-that process runtime alive, every subscribing `Engine` must request exactly the
-same bounded value or the same unbounded default. A conflict fails before a
-subscription command is admitted. After final joined shutdown, a later runtime
-may use a different configuration. `RuntimeStats` reports the active budget,
-unique native watches, and queued deferred logical interests; no
-application-specific default is embedded in the engine.
+`Engine::with_runtime_watch_budget` to request a positive unique-watch budget;
+JavaScript exposes the same resource owner through
+`createEngine({ nativeWatchBudget })`. Constructing either handle is
+resource-free. The top-level JavaScript `subscribe()` lazily delegates through
+one default unbounded engine. All handles from the one loaded native binary
+share this process registry; they do not create private inotify runtimes.
+
+Configuration is fixed for one runtime lifetime. The first establishment to
+acquire the runtime holds a provisional lease while its ordered establishment
+work is in flight. Matching configurations can coexist. A concurrent different
+configuration can receive `WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` even if
+the first establishment later fails; once the failed establishment releases
+the final lease and shutdown joins, retry may succeed. Established
+subscriptions retain leases until joined disposal, after which a final release
+permits reconfiguration. No application-specific default is embedded in the
+engine.
+
+`Engine::native_watch_budget()` and JavaScript `engine.nativeWatchBudget`
+report a handle's requested configuration. `RuntimeStats`/`runtimeStats()`
+instead report the actual process runtime—its active budget, unique native
+watches, deferred logical interests, subscriptions, inotify instance, and
+worker—or an inactive zero/null snapshot. Thus a handle may observe another
+engine's active configuration rather than its own request.
+
+### Versioned public capabilities
+
+The wrapper combines native schema-version-1 feature/default metadata, loaded
+binary build/version identity, process runtime facts, and the approved support
+target into one deeply frozen JSON-serializable `capabilities` value. Its
+sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
+and `observability`, under `schemaVersion: 1`. Features distinguish
+subscription logical limits from the process native-watch budget and shared
+watches. Options publish exact defaults, `u32` hard bounds, scope, units, and
+accounting. Observability publishes ordered-batch authority, callback-entry
+state, result/getter lead, stats scope, counter encodings, and the one-entry
+native callback queue.
+
+The `runtime` section is observed information about the process that loaded the
+single native binary, not evidence that the host is supported. The separate
+`support` section remains `target-pending-clean-ci` for the narrow controlled
+source-build target in `support-matrix.md`; matching facts do not change that
+status and nonmatching facts do not broaden it.
 
 ### Allocator and promotion state machine
 

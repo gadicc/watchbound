@@ -23,8 +23,9 @@ function jsonCounter(value) {
 }
 
 export function advertisesReconciliation(wrapperCapabilities, operations) {
+  const features = wrapperCapabilities?.features ?? wrapperCapabilities;
   return (
-    wrapperCapabilities?.reconciliation === true &&
+    features?.reconciliation === true &&
     typeof operations?.reconcile === "function"
   );
 }
@@ -109,38 +110,41 @@ export async function loadAdapter() {
   const metadata = {
     id,
     label: "Watchbound Rust/Node-API feasibility prototype",
-    engineVersion: "0.0.0",
-    binding: "napi-rs 3.10.5 / Node-API 6",
+    engineVersion: implementation.capabilities.versions.engine,
+    binding:
+      `napi-rs / Node-API ${implementation.capabilities.build.nodeApi}`,
     nativeArtifact,
     build: {
-      expectedProfile: "release",
+      expectedProfile: implementation.capabilities.build.profile,
+      targetTriple: implementation.capabilities.build.targetTriple,
       command: "pnpm --dir node build",
       nativeLibraryOverride: process.env.NAPI_RS_NATIVE_LIBRARY_PATH ?? null,
     },
     subscriptionOptions,
   };
   const nativeCapabilities = implementation.capabilities;
+  const nativeFeatures = nativeCapabilities.features;
   const capabilities = {
     platform: "linux",
-    recursiveDirectoryTree: nativeCapabilities.recursive,
+    recursiveDirectoryTree: nativeFeatures.recursive,
     directoryOnlyKernelWatches: true,
     publicWatchCount: true,
     nativeEventBatching: true,
-    movedInSubtreeDiscovery: nativeCapabilities.movedInTreeDiscovery,
+    movedInSubtreeDiscovery: nativeFeatures.movedInTreeDiscovery,
     rootReplacementRecovery:
-      nativeCapabilities.rootReplacementRecovery === true &&
+      nativeFeatures.rootReplacementRecovery === true &&
       typeof publicSubscriptionOperations.recoverRoot === "function",
     staticExclusions: false,
     dynamicExclusions: {
-      supported: nativeCapabilities.dynamicExclusions,
-      atomic: nativeCapabilities.dynamicExclusions,
-      reason: nativeCapabilities.dynamicExclusions
+      supported: nativeFeatures.dynamicExclusions,
+      atomic: nativeFeatures.dynamicExclusions,
+      reason: nativeFeatures.dynamicExclusions
         ? null
         : "Generation-based atomic exclusions are unavailable",
     },
     explicitCoverage: true,
-    explicitWatchLimits: nativeCapabilities.explicitWatchLimits,
-    overflowReporting: nativeCapabilities.overflowReporting,
+    explicitWatchLimits: nativeFeatures.explicitWatchLimits,
+    overflowReporting: nativeFeatures.overflowReporting,
     supervisedOverflow: process.platform === "linux",
     consumerBackpressureReporting: true,
     reconciliation: advertisesReconciliation(
@@ -148,7 +152,7 @@ export async function loadAdapter() {
       publicSubscriptionOperations,
     ),
     automaticReconciliation:
-      nativeCapabilities.automaticReconciliation === true,
+      nativeFeatures.automaticReconciliation === true,
   };
 
   return {

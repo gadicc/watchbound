@@ -238,6 +238,145 @@ test("native binding reports partial coverage at a caller watch limit", async ()
   }
 });
 
+test("native engines own process budget requests without acquiring resources", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-engine-"));
+  const firstRoot = path.join(parent, "first");
+  const secondRoot = path.join(parent, "second");
+  const unboundedRoot = path.join(parent, "unbounded");
+  fs.mkdirSync(path.join(firstRoot, "one", "two"), { recursive: true });
+  fs.mkdirSync(secondRoot);
+  fs.mkdirSync(unboundedRoot);
+  const firstEngine = binding.createEngine({ nativeWatchBudget: 2 });
+  const sameEngine = binding.createEngine({ nativeWatchBudget: 2 });
+  const conflictingEngine = binding.createEngine({ nativeWatchBudget: 3 });
+  const unboundedEngine = binding.createEngine({ nativeWatchBudget: null });
+  let first;
+  let second;
+  let unbounded;
+  let reconfigured;
+  try {
+    assert.equal(firstEngine.nativeWatchBudget, 2);
+    assert.equal(sameEngine.nativeWatchBudget, 2);
+    assert.equal(conflictingEngine.nativeWatchBudget, 3);
+    assert.equal(unboundedEngine.nativeWatchBudget ?? null, null);
+    const inactiveStats = firstEngine.runtimeStats();
+    assert.deepEqual({
+      ...inactiveStats,
+      nativeWatchBudget: inactiveStats.nativeWatchBudget ?? null,
+    }, {
+      active: false,
+      inotifyInstances: 0,
+      workerThreads: 0,
+      nativeWatches: 0,
+      nativeWatchBudget: null,
+      deferredInterests: 0,
+      subscriptions: 0,
+    });
+
+    first = await firstEngine.subscribe(firstRoot, {}, () => {});
+    assert.deepEqual(first.initialCoverage, {
+      state: "partial",
+      reason: "resource-limit",
+      watchedDirectories: 2,
+      deferredDirectories: 1,
+    });
+    second = await sameEngine.subscribe(secondRoot, {}, () => {});
+    const activeStats = firstEngine.runtimeStats();
+    assert.deepEqual({
+      ...activeStats,
+      nativeWatchBudget: activeStats.nativeWatchBudget ?? null,
+    }, {
+      active: true,
+      inotifyInstances: 1,
+      workerThreads: 1,
+      nativeWatches: 2,
+      nativeWatchBudget: 2,
+      deferredInterests: 2,
+      subscriptions: 2,
+    });
+
+    await assert.rejects(
+      conflictingEngine.subscribe(unboundedRoot, {}, () => {}),
+      (error) => {
+        assert.equal(error.code, "WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT");
+        assert.equal(error.operation, "subscribe");
+        assert.equal(error.retryAfter, "runtime-disposed");
+        return true;
+      },
+    );
+    await assert.rejects(
+      binding.subscribe(unboundedRoot, {}, () => {}),
+      (error) => {
+        assert.equal(error.code, "WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT");
+        assert.equal(error.operation, "subscribe");
+        return true;
+      },
+    );
+
+    await first.dispose();
+    first = undefined;
+    await second.dispose();
+    second = undefined;
+    assert.equal(firstEngine.runtimeStats().active, false);
+
+    unbounded = await binding.subscribe(unboundedRoot, {}, () => {});
+    assert.equal(unboundedEngine.runtimeStats().active, true);
+    assert.equal(unboundedEngine.runtimeStats().nativeWatchBudget ?? null, null);
+    await unbounded.dispose();
+    unbounded = undefined;
+
+    reconfigured = await conflictingEngine.subscribe(secondRoot, {}, () => {});
+    assert.equal(conflictingEngine.runtimeStats().nativeWatchBudget, 3);
+  } finally {
+    await first?.dispose();
+    await second?.dispose();
+    await unbounded?.dispose();
+    await reconfigured?.dispose();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("native engine validation and capability metadata are machine-readable", () => {
+  for (const value of [-1, 0, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 32]) {
+    assert.throws(
+      () => binding.createEngine({ nativeWatchBudget: value }),
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+        assert.equal(error.operation, "create-engine");
+        assert.equal(error.retryable, false);
+        assert.match(error.message, /nativeWatchBudget/);
+        return true;
+      },
+    );
+  }
+
+  assert.equal(binding.createEngine().nativeWatchBudget ?? null, null);
+  const metadata = binding.bindingMetadata();
+  assert.equal(metadata.schemaVersion, 1);
+  assert.equal(metadata.bindingApiVersion, 1);
+  assert.equal(metadata.nativeVersion, metadata.engineVersion);
+  assert.equal(metadata.nodeApiVersion, 6);
+  assert.match(metadata.targetTriple, /linux/);
+  assert.equal(metadata.buildProfile, "release");
+
+  const capabilities = binding.capabilities();
+  assert.equal(capabilities.schemaVersion, 1);
+  assert.equal(capabilities.processNativeWatchBudget, true);
+  assert.equal(capabilities.sharedNativeWatches, true);
+  assert.deepEqual({
+    ...capabilities.subscriptionDefaults,
+    watchLimit: capabilities.subscriptionDefaults.watchLimit ?? null,
+  }, {
+    watchLimit: null,
+    batchWindowMs: 10,
+    maxBatchPaths: 1_024,
+    outputQueueCapacity: 64,
+  });
+  assert.equal(capabilities.positiveIntegerMinimum, 1);
+  assert.equal(capabilities.positiveIntegerMaximum, 2 ** 32 - 1);
+});
+
 test("native binding rejects non-positive, fractional, and overflowing options", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-options-"));
   try {

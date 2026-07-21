@@ -26,18 +26,38 @@ when overlapping subscriptions share one native watch.
 
 `Engine::new()` requests the unbounded runtime default.
 `Engine::with_runtime_watch_budget(positive_limit)` requests a budget over
-unique native watches. The first live subscription fixes that configuration for
-the shared runtime's lifetime. A later subscription requesting a different
-bounded value, or bounded versus unbounded operation, fails with
-`WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` and
-`retryAfter: "runtime-disposed"`; the runtime does not silently choose one
-engine's value. After the final subscription performs joined shutdown, the next
-runtime may use a new configuration.
+unique native watches. JavaScript exposes the same choice as
+`createEngine({ nativeWatchBudget: number | null })`; omitted or `null` means no
+Watchbound-imposed runtime budget, while a number must be an integer from 1
+through `2^32 - 1`. Engine creation validates and retains only the requested
+configuration. It allocates no inotify instance, eventfd, worker, watch, or
+subscription. The top-level `subscribe()` convenience function lazily creates
+one default unbounded JavaScript engine and delegates to it.
 
-`Engine::runtime_stats()` reports the active `native_watch_budget`, unique
-`native_watches`, queued `deferred_interests`, subscriptions, inotify instance,
-and worker thread. An engine with no live runtime reports the default zero/none
-snapshot.
+All engine values from the one loaded native binding share one process-wide
+runtime registry. The first establishment to acquire that registry fixes its
+configuration for the runtime lifetime. Matching bounded engines coexist, as
+do multiple unbounded engines; a bounded/unbounded mismatch or unequal bounded
+values reject subscription with `WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT`
+and `retryAfter: "runtime-disposed"`.
+
+Acquisition is provisional while an admitted establishment traverses and
+validates its root. A concurrent differently configured establishment can
+therefore receive the configuration conflict even if the first establishment
+later fails. The failed establishment releases its lease; if it was the final
+lease, shutdown is joined and retry with another configuration may then
+succeed. Similarly, when the final established subscription's joined disposal
+releases the final runtime lease, a later runtime may use a new configuration.
+The runtime never silently chooses among engine requests.
+
+`Engine::runtime_stats()` and JavaScript `engine.runtimeStats()` report the
+actual shared process runtime: active state, actual `nativeWatchBudget`, unique
+`nativeWatches`, queued logical `deferredInterests`, subscriptions, inotify
+instances, and worker threads. They do not report an engine-local allocation or
+echo its request. `engine.nativeWatchBudget` is the retained request; every
+engine's runtime stats can show a different engine's currently active global
+configuration. With no runtime, stats are the frozen zero/null inactive
+snapshot even for an engine that requests a bounded value.
 
 `initial_coverage` and `initial_root_state` never change. Together they are the
 exact establishment baseline: batch sequence zero, exclusion generation zero,
@@ -58,6 +78,54 @@ and withholds that invalidation until discovery finishes. The resulting batch
 reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
+
+## Capability schema version 1
+
+The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
+has these top-level sections:
+
+| Section | Contract |
+| --- | --- |
+| `schemaVersion` | Exactly `1`. |
+| `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
+| `build` | Controlled-source-build delivery, `prebuilt: false`, build profile and target triple, Node-API 6, and Rust 1.88 minimum. |
+| `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
+| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. Its status remains `target-pending-clean-ci`. |
+| `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, and observed state. |
+| `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
+| `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, and the native callback-queue bound. |
+
+The exact identity leaves are `versions.{wrapper,native,engine,bindingApi}`,
+`build.{delivery,prebuilt,profile,targetTriple,nodeApi,rustMinimum}`, and
+`runtime.{platform,architecture,kernel,libc:{family,version},node:{version,api}}`.
+Feature booleans are `recursive`, `movedInTreeDiscovery`,
+`explicitWatchLimits`, `processNativeWatchBudget`, `sharedNativeWatches`,
+`overflowReporting`, `dynamicExclusions`, `reconciliation`,
+`automaticReconciliation`, `rootReplacementRecovery`, `exactPathBytes`,
+`orderedBatches`, and `observedState`.
+
+Runtime facts describe the process that loaded the binding; they are not a
+support claim and do not widen the fixed `support` target. Even an exact runtime
+match remains pending until clean CI records the complete target gate.
+
+Positive JavaScript options crossing the native boundary share bounds 1 through
+`2^32 - 1`. `options.engine.nativeWatchBudget` defaults to `null`, has scope
+`process-runtime`, and accounts `unique-native-watches`;
+`options.subscription.watchLimit` defaults to `null`, has scope `subscription`,
+and accounts `logical-directories`. Other subscription defaults are 10 ms
+`batchWindowMs`, 1,024 `maxBatchPaths`, and 64 queued batches.
+`automaticReconciliation` defaults to `false`; its option defaults/bounds are
+3 attempts (1–16), 25 ms initial delay (10–60,000), and 1,000 ms maximum delay
+(10–60,000), with maximum delay at least initial delay. `null` on either watch
+limit means no Watchbound-imposed limit, not unlimited kernel resources.
+
+Observability fixes `authoritativeState: "ordered-batches"` and
+`observedStateBoundary: "before-callback"`; both operation results and native
+getters may lead observed state. Initial coverage/root state and subscription
+stats are present. Runtime stats have process scope, count unique native watches
+and deferred logical interests, and use an inactive zero snapshot. Sequences and
+cumulative counters are bigint, gauges are numbers, and the native callback
+queue capacity is one.
 
 ## Delivery
 
@@ -141,7 +209,8 @@ by the acknowledgement. `exclusion_generation()` reports the last acknowledged
 value. The Node proof exposes the same operation asynchronously with `Buffer`
 prefixes and bigint generations. The JavaScript wrapper accepts strings or
 `Uint8Array`s and exposes a live bigint `exclusionGeneration` getter. The
-`dynamicExclusions` capability is true on all three implemented surfaces.
+wrapper reports this as `capabilities.features.dynamicExclusions`; the Rust and
+raw Node capability records expose the corresponding native feature.
 
 Each call supplies the complete replacement set. Prefixes are normalized,
 root-relative directory namespaces and are compared using exact Linux bytes.
@@ -194,7 +263,8 @@ Rust exposes synchronous `reconcile()` on `Subscription` and cloneable
 `ReconciliationHandle`. Node and the JavaScript wrapper expose the same worker
 barrier as an asynchronous method. Its result contains the unchanged
 `exclusionGeneration` and the committed final `coverage`; the
-`reconciliation` capability advertises the complete surface.
+`capabilities.features.reconciliation` flag advertises the complete wrapper
+surface.
 
 The recoverable sticky reasons are `event-overflow`, `topology-race`, and
 `consumer-backpressure`. Reconciliation never synthesizes the detailed events

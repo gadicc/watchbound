@@ -53,6 +53,43 @@ a compatibility-contract version, not a property repeated on each error;
 consumers branch on `code`, and treat `message` and `systemCause` as bounded
 diagnostics only.
 
+## Native identity, capabilities, and engine handles
+
+The one native binary loaded into the process exposes schema version 1 binding
+metadata: native and engine versions, binding API version 1, Node-API 6, target
+triple, and build profile. Its raw capabilities also provide feature flags,
+Rust subscription defaults, the shared positive-`u32` option bounds, process
+budgeting, and shared-native-watch support. The wrapper combines those values
+with its own version, runtime facts, the approved support target, automatic
+policy limits, and observability semantics.
+
+The resulting public `capabilities` object is deeply frozen and
+JSON-serializable. Under `schemaVersion: 1`, its stable sections are `versions`,
+`build`, `runtime`, `support`, `features`, `options`, and `observability`.
+Observed platform, architecture, kernel, libc, Node, and Node-API values in
+`runtime` identify the current process only. They are not a support decision;
+`support.status` remains `target-pending-clean-ci` even when every runtime fact
+matches the narrow target.
+
+Node exposes a cheap `NativeEngine`, and the wrapper exposes
+`createEngine({ nativeWatchBudget: number | null })`. Creation stores a request
+but acquires no descriptors, worker, watches, or runtime lease. The wrapper's
+top-level `subscribe()` lazily creates one unbounded default engine. Every
+engine from this binary shares the engine's process-wide runtime registry.
+Equal configurations can coexist; unequal bounded budgets or bounded versus
+unbounded establishment reject with
+`WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` and
+`retryAfter: "runtime-disposed"`.
+
+The first admitted establishment's runtime acquisition is provisional. A
+differently configured concurrent call may see a conflict even if the first
+call later fails establishment; releasing its final lease joins shutdown, after
+which retry may succeed. The final live subscription's joined disposal likewise
+permits a later configuration when it releases the final runtime lease.
+`nativeWatchBudget` reports the handle's request, while `runtimeStats()` reports
+actual process-global state and can therefore show another handle's active
+budget. Its inactive result is the zero/null snapshot, not the handle request.
+
 ## Establishment and observed state
 
 The engine captures `initial_coverage` and `initial_root_state` in one
@@ -104,7 +141,7 @@ joins it.
 
 ## Not decided here
 
-- supported Node release matrix beyond the workspace's current Node 18 floor;
-- prebuilt platform/architecture matrix and libc variants;
+- clean-CI qualification of the approved Node 24.18/Ubuntu 24.04 target;
+- whether any later milestone should add a prebuilt platform/libc matrix;
 - package signing, provenance, and release automation;
-- whether a future binding should use a shared process-wide engine dispatcher.
+- final package-loader diagnostics and artifact identity gates.

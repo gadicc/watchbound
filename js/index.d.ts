@@ -245,18 +245,155 @@ export type AutomaticReconciliationStatus =
     };
 
 export interface Capabilities {
-  recursive: true;
-  movedInTreeDiscovery: boolean;
-  explicitWatchLimits: boolean;
-  overflowReporting: boolean;
-  dynamicExclusions: boolean;
-  reconciliation: boolean;
-  automaticReconciliation: boolean;
-  rootReplacementRecovery: boolean;
-  exactPathBytes: true;
+  readonly schemaVersion: 1;
+  readonly versions: {
+    readonly wrapper: string;
+    readonly native: string;
+    readonly engine: string;
+    readonly bindingApi: number;
+  };
+  readonly build: {
+    readonly delivery: "controlled-source-build";
+    readonly prebuilt: false;
+    readonly profile: string;
+    readonly targetTriple: string;
+    readonly nodeApi: number;
+    readonly rustMinimum: "1.88";
+  };
+  readonly runtime: {
+    readonly platform: string;
+    readonly architecture: string;
+    readonly kernel: string;
+    readonly libc: {
+      readonly family: "glibc" | "musl" | "unknown";
+      readonly version: string | null;
+    };
+    readonly node: {
+      readonly version: string;
+      readonly api: number | null;
+    };
+  };
+  readonly support: {
+    readonly status: "target-pending-clean-ci";
+    readonly operatingSystem: {
+      readonly family: "linux";
+      readonly distribution: "ubuntu";
+      readonly version: "24.04";
+      readonly kernelMinimum: "6.8";
+    };
+    readonly architecture: "x64";
+    readonly libc: { readonly family: "glibc"; readonly version: "2.39" };
+    readonly nodeRange: ">=24.18.0 <25";
+    readonly rustMinimum: "1.88";
+    readonly packageManager: "pnpm@10.33.2";
+    readonly delivery: "controlled-source-build";
+    readonly rootThreatModel: "trusted-stable-local-roots";
+  };
+  readonly features: {
+    readonly recursive: boolean;
+    readonly movedInTreeDiscovery: boolean;
+    readonly explicitWatchLimits: boolean;
+    readonly processNativeWatchBudget: boolean;
+    readonly sharedNativeWatches: boolean;
+    readonly overflowReporting: boolean;
+    readonly dynamicExclusions: boolean;
+    readonly reconciliation: boolean;
+    readonly automaticReconciliation: boolean;
+    readonly rootReplacementRecovery: boolean;
+    readonly exactPathBytes: boolean;
+    readonly orderedBatches: boolean;
+    readonly observedState: boolean;
+  };
+  readonly options: {
+    readonly engine: {
+      readonly nativeWatchBudget: NullableIntegerOptionCapability;
+    };
+    readonly subscription: {
+      readonly watchLimit: NullableIntegerOptionCapability;
+      readonly batchWindowMs: IntegerOptionCapability;
+      readonly maxBatchPaths: IntegerOptionCapability;
+      readonly outputQueueCapacity: IntegerOptionCapability;
+      readonly automaticReconciliation: {
+        readonly forms: readonly ["boolean", "options"];
+        readonly default: false;
+        readonly maxAttempts: IntegerRangeCapability;
+        readonly initialDelayMs: IntegerRangeCapability;
+        readonly maxDelayMs: IntegerRangeCapability;
+        readonly constraint: "maxDelayMs-gte-initialDelayMs";
+      };
+    };
+  };
+  readonly observability: {
+    readonly authoritativeState: "ordered-batches";
+    readonly observedStateBoundary: "before-callback";
+    readonly operationResultsMayLeadObservedState: true;
+    readonly nativeGettersMayLeadObservedState: true;
+    readonly initialCoverage: true;
+    readonly initialRootState: true;
+    readonly subscriptionStats: true;
+    readonly runtimeStats: {
+      readonly scope: "process";
+      readonly nativeWatchAccounting: "unique-native-watches";
+      readonly deferredAccounting: "logical-interests";
+      readonly inactiveSnapshot: "zero";
+    };
+    readonly counterEncoding: {
+      readonly sequences: "bigint";
+      readonly cumulativeCounters: "bigint";
+      readonly gauges: "number";
+    };
+    readonly nativeCallbackQueueCapacity: 1;
+  };
+}
+
+export interface IntegerRangeCapability {
+  readonly default: number;
+  readonly minimum: number;
+  readonly maximum: number;
+}
+
+export interface IntegerOptionCapability extends IntegerRangeCapability {
+  readonly type: "integer";
+  readonly unit: "milliseconds" | "paths" | "batches";
+}
+
+export interface NullableIntegerOptionCapability {
+  readonly type: "integer-or-null";
+  readonly scope: "process-runtime" | "subscription";
+  readonly accounting: "unique-native-watches" | "logical-directories";
+  readonly default: null;
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly nullMeaning: "no-watchbound-limit";
+}
+
+export interface EngineOptions {
+  nativeWatchBudget?: number | null;
+}
+
+export interface RuntimeStats {
+  readonly active: boolean;
+  readonly inotifyInstances: number;
+  readonly workerThreads: number;
+  readonly nativeWatches: number;
+  readonly nativeWatchBudget: number | null;
+  readonly deferredInterests: number;
+  readonly subscriptions: number;
+}
+
+export interface Engine {
+  readonly nativeWatchBudget: number | null;
+  runtimeStats(): Readonly<RuntimeStats>;
+  subscribe(
+    root: string,
+    onBatch: (batch: ChangeBatch) => void,
+    options?: SubscriptionOptions,
+  ): Promise<Subscription>;
 }
 
 export declare const capabilities: Readonly<Capabilities>;
+
+export declare function createEngine(options?: EngineOptions): Engine;
 
 export declare function subscribe(
   root: string,

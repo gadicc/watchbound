@@ -26,9 +26,13 @@ diagnostic rather than a policy surface.
 
 ## Build and test
 
-Requirements are Linux, Rust 1.88 or newer, Node.js 18 or newer, pnpm, and a C
-linker. The native boundary targets Node-API 6; the wrapper additionally uses
-`WeakRef`, and the test suite uses `node:test`. Nothing is published.
+The current workspace manifests still admit Linux with Rust 1.88+, Node.js 18+,
+pnpm, and a C linker during stabilization; that broad install range is not a
+support claim. The pending maintained target is the narrower Node
+`>=24.18.0 <25` Ubuntu 24.04/x64/glibc source build in
+[`docs/support-matrix.md`](docs/support-matrix.md). The native boundary targets
+Node-API 6; the wrapper additionally uses `WeakRef`, and the test suite uses
+`node:test`. Nothing is published.
 
 ```sh
 pnpm install
@@ -47,6 +51,23 @@ baseline. `subscription.observedState` is the frozen projection of that baseline
 or the last ordered batch whose callback entered JavaScript. It is not a live
 native snapshot: operation acknowledgements and native-backed getters may be
 ahead, while ordered batches remain authoritative for JavaScript observation.
+
+JavaScript `createEngine({ nativeWatchBudget })` owns an optional process-wide
+unique-native-watch budget; `null` means no Watchbound-imposed budget. Creating
+an engine is resource-free. The first admitted establishment provisionally
+fixes the one loaded native binary's shared runtime configuration, equal
+configurations coexist, and a mismatch rejects with
+`WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` until the final lease is released
+and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
+default engine. `engine.nativeWatchBudget` is its request, while
+`engine.runtimeStats()` describes actual process-global resources.
+
+The deeply frozen, JSON-serializable `capabilities` export has schema version 1
+and separates versions/build facts, observed runtime facts, the support target,
+features, option defaults and bounds, and observability. Runtime facts are not a
+support claim: the approved narrow source-build target remains
+`target-pending-clean-ci`. See [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
+and [`docs/support-matrix.md`](docs/support-matrix.md).
 
 ## Evaluate
 

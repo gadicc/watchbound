@@ -729,3 +729,120 @@ fn conflicting_runtime_budgets_are_rejected_for_one_runtime_lifetime() {
     );
     second.dispose().unwrap();
 }
+
+#[test]
+fn engine_creation_is_resource_free_and_budget_ownership_is_runtime_scoped() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let first_root = TestDir::new("engine-owner-first");
+    let second_root = TestDir::new("engine-owner-second");
+    let unbounded_root = TestDir::new("engine-owner-unbounded");
+    fs::create_dir_all(first_root.path().join("one/two")).unwrap();
+
+    let first_engine = bounded_engine(2);
+    let same_engine = bounded_engine(2);
+    let conflicting_engine = bounded_engine(3);
+    let unbounded_engine = Engine::new();
+    assert_eq!(first_engine.native_watch_budget(), Some(2));
+    assert_eq!(same_engine.native_watch_budget(), Some(2));
+    assert_eq!(conflicting_engine.native_watch_budget(), Some(3));
+    assert_eq!(unbounded_engine.native_watch_budget(), None);
+    assert_eq!(
+        first_engine.runtime_stats(),
+        watchbound_engine::RuntimeStats::default()
+    );
+
+    let first = first_engine
+        .subscribe(first_root.path(), options())
+        .unwrap();
+    assert!(matches!(
+        first.initial_coverage(),
+        Coverage::Partial {
+            reason: PartialReason::ResourceLimit,
+            watched_directories: 2,
+            deferred_directories: 1,
+        }
+    ));
+    let second = same_engine
+        .subscribe(second_root.path(), options())
+        .unwrap();
+    let active = first_engine.runtime_stats();
+    assert_eq!(active.native_watch_budget, Some(2));
+    assert_eq!(active.native_watches, 2);
+    assert_eq!(active.subscriptions, 2);
+
+    let conflict = match conflicting_engine.subscribe(unbounded_root.path(), options()) {
+        Ok(subscription) => {
+            subscription.dispose().unwrap();
+            panic!("conflicting bounded engine should not subscribe");
+        }
+        Err(error) => error,
+    };
+    assert_eq!(conflict.code(), ErrorCode::RuntimeConfigurationConflict);
+    assert_eq!(conflict.operation(), Operation::Subscribe);
+    let unbounded_conflict = match unbounded_engine.subscribe(unbounded_root.path(), options()) {
+        Ok(subscription) => {
+            subscription.dispose().unwrap();
+            panic!("unbounded engine should conflict with a bounded runtime");
+        }
+        Err(error) => error,
+    };
+    assert_eq!(
+        unbounded_conflict.code(),
+        ErrorCode::RuntimeConfigurationConflict
+    );
+
+    first.dispose().unwrap();
+    second.dispose().unwrap();
+    assert_eq!(
+        first_engine.runtime_stats(),
+        watchbound_engine::RuntimeStats::default()
+    );
+
+    let unbounded = unbounded_engine
+        .subscribe(unbounded_root.path(), options())
+        .unwrap();
+    assert_eq!(unbounded_engine.runtime_stats().native_watch_budget, None);
+    unbounded.dispose().unwrap();
+
+    let reconfigured = conflicting_engine
+        .subscribe(second_root.path(), options())
+        .unwrap();
+    assert_eq!(
+        conflicting_engine.runtime_stats().native_watch_budget,
+        Some(3)
+    );
+    reconfigured.dispose().unwrap();
+}
+
+#[test]
+fn pre_acquire_root_rejection_does_not_pin_an_engine_budget() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let parent = TestDir::new("pre-acquire-rejection");
+    let missing = parent.path().join("missing");
+    let valid = parent.path().join("valid");
+    fs::create_dir(&valid).unwrap();
+
+    let bounded = bounded_engine(2);
+    let error = match bounded.subscribe(&missing, options()) {
+        Ok(subscription) => {
+            subscription.dispose().unwrap();
+            panic!("a missing root should not establish a subscription");
+        }
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), ErrorCode::RootUnavailable);
+    assert_eq!(error.operation(), Operation::Subscribe);
+    assert_eq!(
+        bounded.runtime_stats(),
+        watchbound_engine::RuntimeStats::default()
+    );
+
+    let unbounded = Engine::new();
+    let subscription = unbounded.subscribe(&valid, options()).unwrap();
+    assert_eq!(unbounded.runtime_stats().native_watch_budget, None);
+    subscription.dispose().unwrap();
+}

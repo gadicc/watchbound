@@ -17,6 +17,10 @@ import {
   isWatchboundError,
   normalizeWatchboundError,
 } from "./errors.js";
+import {
+  buildCapabilities,
+  normalizeRuntimeStats,
+} from "./capabilities.js";
 
 export {
   WatchboundError,
@@ -28,13 +32,55 @@ export {
 
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const callbackHolders = new WeakMap();
+const MAX_NATIVE_INTEGER_OPTION = 4_294_967_295;
 
-export const capabilities = Object.freeze({
-  ...invokeWatchbound("create-engine", () => nativeBinding.capabilities()),
-  automaticReconciliation: true,
-});
+export const capabilities = invokeWatchbound("create-engine", () =>
+  buildCapabilities(
+    nativeBinding.capabilities(),
+    nativeBinding.bindingMetadata(),
+  ));
 
 const automaticReconciliationDisabled = Object.freeze({ state: "disabled" });
+let defaultEngine;
+
+export function createEngine(options = {}) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw invalidArgumentError("create-engine", "engine options must be an object");
+  }
+  const nativeWatchBudget = options.nativeWatchBudget ?? null;
+  if (
+    nativeWatchBudget !== null &&
+    (!Number.isSafeInteger(nativeWatchBudget) ||
+      nativeWatchBudget < 1 ||
+      nativeWatchBudget > MAX_NATIVE_INTEGER_OPTION)
+  ) {
+    throw invalidArgumentError(
+      "create-engine",
+      `nativeWatchBudget must be null or an integer from 1 through ${MAX_NATIVE_INTEGER_OPTION}`,
+    );
+  }
+
+  const nativeEngine = invokeWatchbound(
+    "create-engine",
+    () => nativeBinding.createEngine(
+      nativeWatchBudget === null ? {} : { nativeWatchBudget },
+    ),
+  );
+  return Object.freeze({
+    nativeWatchBudget,
+    runtimeStats: () => invokeWatchbound(
+      "create-engine",
+      () => normalizeRuntimeStats(nativeEngine.runtimeStats()),
+    ),
+    subscribe: (root, onBatch, subscriptionOptions) =>
+      subscribeWithEngine(nativeEngine, root, onBatch, subscriptionOptions),
+  });
+}
+
+export function subscribe(root, onBatch, options = {}) {
+  defaultEngine ??= createEngine();
+  return defaultEngine.subscribe(root, onBatch, options);
+}
 
 /**
  * Subscribe to one recursive directory root.
@@ -43,7 +89,7 @@ const automaticReconciliationDisabled = Object.freeze({ state: "disabled" });
  * provides string invalidations: if a child path is not valid UTF-8, it
  * conservatively collapses that invalidation to the representable root.
  */
-export async function subscribe(root, onBatch, options = {}) {
+async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
   if (typeof root !== "string" || root.length === 0) {
     throw invalidArgumentError("subscribe", "root must be a non-empty string");
   }
@@ -76,7 +122,7 @@ export async function subscribe(root, onBatch, options = {}) {
   const weakCallbackHolder = new WeakRef(callbackHolder);
   const nativeSubscription = await invokeWatchbound(
     "subscribe",
-    () => nativeBinding.subscribe(
+    () => nativeEngine.subscribe(
       absoluteRoot,
       nativeOptions,
       createNativeCallback(weakCallbackHolder, resolvedRoot),

@@ -95,6 +95,13 @@ test("Watchbound advertises reconciliation only for the complete public operatio
     true,
   );
   assert.equal(
+    advertisesReconciliation(
+      { features: { reconciliation: true } },
+      completeOperation,
+    ),
+    true,
+  );
+  assert.equal(
     advertisesReconciliation({ reconciliation: false }, completeOperation),
     false,
   );

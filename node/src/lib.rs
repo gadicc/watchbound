@@ -9,7 +9,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use napi::bindgen_prelude::{AsyncTask, BigInt, Buffer, FnArgs, Function, ToNapiValue};
+use napi::bindgen_prelude::{
+    AsyncTask, BigInt, Buffer, Either, FnArgs, Function, Null, ToNapiValue,
+};
 use napi::threadsafe_function::{
     ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
@@ -19,8 +21,9 @@ use watchbound_engine::{
     ChangeBatch, Coverage, Engine, ErrorCode, ExclusionHandle, MAX_ERROR_MESSAGE_BYTES, Operation,
     PartialReason, ReconciliationHandle, ReconciliationResult, RootAttachment, RootIdentity,
     RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
-    RootRecoveryHandle, RootRecoveryResult, RootState, RootStateHandle, Stats, StatsHandle,
-    Subscription, SubscriptionOptions, SystemCause, UncertainReason, WatchboundError,
+    RootRecoveryHandle, RootRecoveryResult, RootState, RootStateHandle, RuntimeStats, Stats,
+    StatsHandle, Subscription, SubscriptionOptions, SystemCause, UncertainReason, VERSION,
+    WatchboundError,
 };
 
 type BatchThreadsafeFunction =
@@ -30,6 +33,9 @@ type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
 type TaskOutcome<T> = NodeResult<T>;
 
 const MAX_SYSTEM_DETAIL_BYTES: usize = 128;
+const BINDING_API_VERSION: u32 = 1;
+const CAPABILITY_SCHEMA_VERSION: u32 = 1;
+const NODE_API_VERSION: u32 = 6;
 
 #[derive(Clone, Debug)]
 enum NodeSystemCode {
@@ -211,19 +217,19 @@ impl JsSubscriptionOptions {
         let defaults = SubscriptionOptions::default();
         let watch_limit = self
             .watch_limit
-            .map(|value| positive_u32_option(value, "watchLimit"))
+            .map(|value| positive_u32_option(value, "watchLimit", Operation::Subscribe))
             .transpose()?;
         let batch_window_ms = self
             .batch_window_ms
-            .map(|value| positive_u32_option(value, "batchWindowMs"))
+            .map(|value| positive_u32_option(value, "batchWindowMs", Operation::Subscribe))
             .transpose()?;
         let max_batch_paths = self
             .max_batch_paths
-            .map(|value| positive_u32_option(value, "maxBatchPaths"))
+            .map(|value| positive_u32_option(value, "maxBatchPaths", Operation::Subscribe))
             .transpose()?;
         let output_queue_capacity = self
             .output_queue_capacity
-            .map(|value| positive_u32_option(value, "outputQueueCapacity"))
+            .map(|value| positive_u32_option(value, "outputQueueCapacity", Operation::Subscribe))
             .transpose()?;
         Ok(SubscriptionOptions {
             watch_limit: watch_limit.map(|value| value as usize),
@@ -238,11 +244,11 @@ impl JsSubscriptionOptions {
     }
 }
 
-fn positive_u32_option(value: f64, name: &str) -> NodeResult<u32> {
+fn positive_u32_option(value: f64, name: &str, operation: Operation) -> NodeResult<u32> {
     if !value.is_finite() || value < 1.0 || value > f64::from(u32::MAX) || value.fract() != 0.0 {
         return Err(NodeErrorDetails::new(
             ErrorCode::InvalidArgument,
-            Operation::Subscribe,
+            operation,
             format!(
                 "{name} must be a finite positive integer no greater than {}",
                 u32::MAX
@@ -250,6 +256,24 @@ fn positive_u32_option(value: f64, name: &str) -> NodeResult<u32> {
         ));
     }
     Ok(value as u32)
+}
+
+#[napi(object)]
+pub struct JsEngineOptions {
+    pub native_watch_budget: Option<Either<f64, Null>>,
+}
+
+impl JsEngineOptions {
+    fn into_engine(self) -> NodeResult<Engine> {
+        match self.native_watch_budget {
+            None | Some(Either::B(_)) => Ok(Engine::new()),
+            Some(Either::A(value)) => {
+                let budget =
+                    positive_u32_option(value, "nativeWatchBudget", Operation::CreateEngine)?;
+                Engine::with_runtime_watch_budget(budget as usize).map_err(NodeErrorDetails::from)
+            }
+        }
+    }
 }
 
 #[napi(object, object_from_js = false)]
@@ -428,7 +452,53 @@ impl JsStats {
 }
 
 #[napi(object, object_from_js = false)]
+pub struct JsRuntimeStats {
+    pub active: bool,
+    pub inotify_instances: u32,
+    pub worker_threads: u32,
+    pub native_watches: u32,
+    pub native_watch_budget: Option<u32>,
+    pub deferred_interests: u32,
+    pub subscriptions: u32,
+}
+
+impl From<RuntimeStats> for JsRuntimeStats {
+    fn from(stats: RuntimeStats) -> Self {
+        Self {
+            active: stats.inotify_instances != 0,
+            inotify_instances: saturating_u32(stats.inotify_instances),
+            worker_threads: saturating_u32(stats.worker_threads),
+            native_watches: saturating_u32(stats.native_watches),
+            native_watch_budget: stats.native_watch_budget.map(saturating_u32),
+            deferred_interests: saturating_u32(stats.deferred_interests),
+            subscriptions: saturating_u32(stats.subscriptions),
+        }
+    }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsSubscriptionDefaults {
+    pub watch_limit: Option<u32>,
+    pub batch_window_ms: u32,
+    pub max_batch_paths: u32,
+    pub output_queue_capacity: u32,
+}
+
+impl From<SubscriptionOptions> for JsSubscriptionDefaults {
+    fn from(options: SubscriptionOptions) -> Self {
+        Self {
+            watch_limit: options.watch_limit.map(saturating_u32),
+            batch_window_ms: u32::try_from(options.batch_window.as_millis())
+                .expect("the Rust default batch window must fit in u32 milliseconds"),
+            max_batch_paths: saturating_u32(options.max_batch_paths),
+            output_queue_capacity: saturating_u32(options.output_queue_capacity),
+        }
+    }
+}
+
+#[napi(object, object_from_js = false)]
 pub struct JsCapabilities {
+    pub schema_version: u32,
     pub recursive: bool,
     pub moved_in_tree_discovery: bool,
     pub explicit_watch_limits: bool,
@@ -437,12 +507,18 @@ pub struct JsCapabilities {
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
     pub exact_path_bytes: bool,
+    pub process_native_watch_budget: bool,
+    pub shared_native_watches: bool,
+    pub subscription_defaults: JsSubscriptionDefaults,
+    pub positive_integer_minimum: u32,
+    pub positive_integer_maximum: u32,
 }
 
 #[napi]
 pub fn capabilities() -> JsCapabilities {
     let capabilities = Engine::new().capabilities();
     JsCapabilities {
+        schema_version: CAPABILITY_SCHEMA_VERSION,
         recursive: capabilities.recursive,
         moved_in_tree_discovery: capabilities.moved_in_tree_discovery,
         explicit_watch_limits: capabilities.explicit_watch_limits,
@@ -451,7 +527,75 @@ pub fn capabilities() -> JsCapabilities {
         reconciliation: capabilities.reconciliation,
         root_replacement_recovery: capabilities.root_replacement_recovery,
         exact_path_bytes: true,
+        process_native_watch_budget: capabilities.process_native_watch_budget,
+        shared_native_watches: capabilities.shared_native_watches,
+        subscription_defaults: SubscriptionOptions::default().into(),
+        positive_integer_minimum: 1,
+        positive_integer_maximum: u32::MAX,
     }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsBindingMetadata {
+    pub schema_version: u32,
+    pub binding_api_version: u32,
+    pub native_version: String,
+    pub engine_version: String,
+    pub node_api_version: u32,
+    pub target_triple: String,
+    pub build_profile: String,
+}
+
+#[napi]
+pub fn binding_metadata() -> JsBindingMetadata {
+    JsBindingMetadata {
+        schema_version: 1,
+        binding_api_version: BINDING_API_VERSION,
+        native_version: env!("CARGO_PKG_VERSION").to_owned(),
+        engine_version: VERSION.to_owned(),
+        node_api_version: NODE_API_VERSION,
+        target_triple: env!("WATCHBOUND_TARGET_TRIPLE").to_owned(),
+        build_profile: env!("WATCHBOUND_BUILD_PROFILE").to_owned(),
+    }
+}
+
+#[napi]
+pub struct NativeEngine {
+    engine: Engine,
+}
+
+#[napi]
+impl NativeEngine {
+    #[napi(getter)]
+    pub fn native_watch_budget(&self) -> Option<u32> {
+        self.engine.native_watch_budget().map(saturating_u32)
+    }
+
+    #[napi]
+    pub fn runtime_stats(&self) -> JsRuntimeStats {
+        self.engine.runtime_stats().into()
+    }
+
+    #[napi(ts_return_type = "Promise<NativeSubscription>")]
+    pub fn subscribe(
+        &self,
+        env: Env,
+        root: String,
+        options: Option<JsSubscriptionOptions>,
+        callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+    ) -> Result<AsyncTask<SubscribeTask>> {
+        prepare_subscribe(env, self.engine, root, options, callback)
+    }
+}
+
+#[napi]
+pub fn create_engine(env: Env, options: Option<JsEngineOptions>) -> Result<NativeEngine> {
+    let engine = options
+        .map(JsEngineOptions::into_engine)
+        .transpose()
+        .map_err(|error| sync_error(&env, error))?
+        .unwrap_or_default();
+    Ok(NativeEngine { engine })
 }
 
 fn resolve_root(root: String) -> NodeResult<PathBuf> {
@@ -475,6 +619,16 @@ fn resolve_root(root: String) -> NodeResult<PathBuf> {
 #[napi(ts_return_type = "Promise<NativeSubscription>")]
 pub fn subscribe(
     env: Env,
+    root: String,
+    options: Option<JsSubscriptionOptions>,
+    callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+) -> Result<AsyncTask<SubscribeTask>> {
+    prepare_subscribe(env, Engine::new(), root, options, callback)
+}
+
+fn prepare_subscribe(
+    env: Env,
+    engine: Engine,
     root: String,
     options: Option<JsSubscriptionOptions>,
     callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
@@ -509,6 +663,7 @@ pub fn subscribe(
         register_environment_cleanup(&env, &shutdown).map_err(|error| sync_error(&env, error))?;
 
     Ok(AsyncTask::new(SubscribeTask {
+        engine,
         root,
         options,
         threadsafe_function: Some(threadsafe_function),
@@ -518,6 +673,7 @@ pub fn subscribe(
 }
 
 pub struct SubscribeTask {
+    engine: Engine,
     root: PathBuf,
     options: SubscriptionOptions,
     threadsafe_function: Option<BatchThreadsafeFunction>,
@@ -538,7 +694,8 @@ impl Task for SubscribeTask {
                     "Node environment teardown interrupted subscription setup",
                 ));
             }
-            let subscription = Engine::new()
+            let subscription = self
+                .engine
                 .subscribe(&self.root, self.options.clone())
                 .map_err(NodeErrorDetails::from)?;
             if self.shutdown.stop.load(Ordering::Acquire) {

@@ -6,8 +6,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { createEngine } from "../js/index.js";
 
-const CYCLE_COUNT = 5;
-const HARD_DEADLINE_MS = 60_000;
+const CYCLE_COUNT = 25;
+const HARD_DEADLINE_MS = 90_000;
 const WAIT_TIMEOUT_MS = 4_000;
 const POLL_INTERVAL_MS = 10;
 const POST_DISPOSAL_QUIET_MS = 50;

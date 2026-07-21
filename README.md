@@ -99,7 +99,7 @@ scenarios are removed by `--quick` and require both explicit quiet-host
 confirmation and the `--allow-forced-overflow` acknowledgement. The flag is a
 safety interlock, not evidence that the host is ready.
 
-`pnpm test:soak` runs five bounded lifecycle cycles without inducing overflow
+`pnpm test:soak` runs 25 bounded lifecycle cycles without inducing overflow
 or recording benchmark evidence. It covers deferred promotion, exclusion
 replacement, callback failure containment, topology churn, reconciliation,
 joined disposal, and final process-resource baselines. The root-recovery stress

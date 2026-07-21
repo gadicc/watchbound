@@ -240,7 +240,7 @@ directories), no output report is written, and no forced-overflow scenario is
 selected.
 
 `pnpm test:soak` is a bounded correctness and cleanup test, not a benchmark. It
-runs five ordinary lifecycle cycles under a 60-second watchdog and checks
+runs 25 ordinary lifecycle cycles under a 90-second watchdog and checks
 native-watch budgeting, deferred promotion, exclusions, callback exceptions,
 topology churn, reconciliation, joined disposal, and final `/proc` descriptor
 and task baselines. It does not attempt to fill the inotify queue.

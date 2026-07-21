@@ -569,10 +569,23 @@ struct Interest {
     path: PathBuf,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct WatchLifetime(u64);
+
 struct NativeWatch {
+    lifetime: WatchLifetime,
     identity: Option<RootIdentity>,
     interests: BTreeSet<Interest>,
+    expects_ignored: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExpectedIgnoredLifetimes {
+    // A descriptor's generations remain contiguous while ignored records are
+    // outstanding. The closed range therefore represents any number of
+    // retired lifetimes without a per-event allocation.
+    first: WatchLifetime,
+    last: WatchLifetime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1068,7 +1081,8 @@ struct Worker {
     subscriptions: HashMap<SubscriptionId, SubscriptionState>,
     watches: HashMap<i32, NativeWatch>,
     watch_identities: HashMap<RootIdentity, i32>,
-    expected_ignored: BTreeSet<i32>,
+    retired_ignored_lifetimes: HashMap<i32, ExpectedIgnoredLifetimes>,
+    exhausted_watch_descriptors: BTreeSet<i32>,
     topology_runnable: VecDeque<SubscriptionId>,
     topology_scheduled: BTreeSet<SubscriptionId>,
     allocator_order: VecDeque<SubscriptionId>,
@@ -1096,7 +1110,8 @@ impl Worker {
             subscriptions: HashMap::new(),
             watches: HashMap::new(),
             watch_identities: HashMap::new(),
-            expected_ignored: BTreeSet::new(),
+            retired_ignored_lifetimes: HashMap::new(),
+            exhausted_watch_descriptors: BTreeSet::new(),
             topology_runnable: VecDeque::new(),
             topology_scheduled: BTreeSet::new(),
             allocator_order: VecDeque::new(),
@@ -1133,6 +1148,8 @@ impl Worker {
         self.shutdown_all_subscriptions();
         self.watches.clear();
         self.watch_identities.clear();
+        self.retired_ignored_lifetimes.clear();
+        self.exhausted_watch_descriptors.clear();
         self.allocator_order.clear();
         self.counters.native_watches.store(0, Ordering::Release);
         self.counters.deferred_interests.store(0, Ordering::Release);
@@ -1609,8 +1626,12 @@ impl Worker {
         if mask & libc::IN_DELETE_SELF != 0 {
             if directory == state.root {
                 state.mark_root_lost(RootLossEvidence::RootSelfEvent);
-            } else {
-                self.expected_ignored.insert(descriptor);
+            } else if let Some(watch) = self.watches.get_mut(&descriptor) {
+                // IN_DELETE_SELF is followed by one IN_IGNORED for this
+                // specific kernel-watch lifetime. Keep that expectation on
+                // the live watch so an older queued record for a recycled
+                // numeric descriptor cannot consume it.
+                watch.expects_ignored = true;
             }
         } else if mask & libc::IN_MOVE_SELF != 0 && directory == state.root {
             state.mark_root_lost(RootLossEvidence::RootSelfEvent);
@@ -1624,12 +1645,11 @@ impl Worker {
             && !state.pending_paths.contains(&state.root)
         {
             state.mark_uncertain(UncertainReason::ConsumerBackpressure, state.root.clone());
+        } else if state.reconciliation.is_some() || state.root_recovery.is_some() || state.root_lost
+        {
+            state.queue_path(state.root.clone());
         } else {
-            if state.reconciliation.is_some() || state.root_recovery.is_some() || state.root_lost {
-                state.queue_path(state.root.clone());
-            } else {
-                state.queue_path(event_path.clone());
-            }
+            state.queue_path(event_path.clone());
         }
         if state.root_lost && state.root_recovery.is_none() {
             return;
@@ -1671,11 +1691,128 @@ impl Worker {
         }
     }
 
+    fn next_watch_lifetime(&self, descriptor: i32) -> io::Result<WatchLifetime> {
+        let latest = self
+            .retired_ignored_lifetimes
+            .get(&descriptor)
+            .map(|lifetimes| lifetimes.last)
+            .into_iter()
+            .chain(self.watches.get(&descriptor).map(|watch| watch.lifetime))
+            .max();
+        match latest {
+            Some(WatchLifetime(lifetime)) => lifetime
+                .checked_add(1)
+                .map(WatchLifetime)
+                .ok_or_else(|| io::Error::from_raw_os_error(libc::EOVERFLOW)),
+            None => Ok(WatchLifetime(1)),
+        }
+    }
+
+    fn claim_new_watch_lifetime(&mut self, descriptor: i32) -> io::Result<WatchLifetime> {
+        if self.exhausted_watch_descriptors.contains(&descriptor) {
+            // SAFETY: this is called only after inotify_add_watch returned a
+            // descriptor that has no live registry entry. Quarantined numeric
+            // descriptors are never admitted again.
+            unsafe {
+                libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
+            }
+            return Err(io::Error::from_raw_os_error(libc::EOVERFLOW));
+        }
+        match self.next_watch_lifetime(descriptor) {
+            Ok(lifetime) => Ok(lifetime),
+            Err(error) => {
+                self.exhausted_watch_descriptors.insert(descriptor);
+                // SAFETY: as above, the successful add is not represented by
+                // a live registry entry. Remove it before reporting failure.
+                unsafe {
+                    libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn mark_reused_descriptor_uncertain(&self, state: &mut SubscriptionState, descriptor: i32) {
+        if self.retired_ignored_lifetimes.contains_key(&descriptor) {
+            // The expected IN_IGNORED record is lifetime-ordered, but any
+            // other queued record with the reused numeric descriptor remains
+            // ambiguous. Every sharing subscription therefore inherits the
+            // same conservative coverage state.
+            state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
+        }
+    }
+
+    fn expect_ignored(&mut self, descriptor: i32, lifetime: WatchLifetime) {
+        let ordered = match self.retired_ignored_lifetimes.get_mut(&descriptor) {
+            Some(lifetimes) => {
+                if lifetime == lifetimes.last {
+                    true
+                } else if lifetimes.last.0.checked_add(1) == Some(lifetime.0) {
+                    lifetimes.last = lifetime;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                self.retired_ignored_lifetimes.insert(
+                    descriptor,
+                    ExpectedIgnoredLifetimes {
+                        first: lifetime,
+                        last: lifetime,
+                    },
+                );
+                true
+            }
+        };
+        if !ordered {
+            // A gap would make a compact range consume an ignored event for a
+            // lifetime that was never retired. Permanently quarantine the
+            // numeric descriptor instead of weakening attribution.
+            self.exhausted_watch_descriptors.insert(descriptor);
+        }
+    }
+
+    fn remove_native_watch_lifetime(&mut self, descriptor: i32, lifetime: WatchLifetime) {
+        self.expect_ignored(descriptor, lifetime);
+        // SAFETY: inotify is live. Failure is benign when the kernel already
+        // removed this exact lifetime and queued its IN_IGNORED record.
+        unsafe {
+            libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
+        }
+    }
+
+    fn consume_expected_ignored(&mut self, descriptor: i32) -> Option<WatchLifetime> {
+        let (lifetime, exhausted) = {
+            let lifetimes = self.retired_ignored_lifetimes.get_mut(&descriptor)?;
+            let lifetime = lifetimes.first;
+            if lifetimes.first == lifetimes.last {
+                (lifetime, true)
+            } else {
+                lifetimes.first = WatchLifetime(lifetimes.first.0 + 1);
+                (lifetime, false)
+            }
+        };
+        if exhausted {
+            self.retired_ignored_lifetimes.remove(&descriptor);
+        }
+        Some(lifetime)
+    }
+
     fn handle_ignored(&mut self, descriptor: i32) {
-        let expected = self.expected_ignored.remove(&descriptor);
+        if let Some(retired_lifetime) = self.consume_expected_ignored(descriptor) {
+            debug_assert!(
+                self.watches
+                    .get(&descriptor)
+                    .is_none_or(|watch| watch.lifetime > retired_lifetime),
+                "an expected ignored record must precede a reused live lifetime"
+            );
+            return;
+        }
         let Some(watch) = self.watches.remove(&descriptor) else {
             return;
         };
+        let expected = watch.expects_ignored;
         self.watch_identities
             .retain(|_, candidate| *candidate != descriptor);
         let mut schedule = Vec::new();
@@ -2807,6 +2944,7 @@ impl Worker {
                 state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
                 return Err(io::Error::from_raw_os_error(libc::ESTALE));
             }
+            self.mark_reused_descriptor_uncertain(state, descriptor);
             self.insert_interest(state, path, descriptor);
             return Ok(InterestAllocation::Added {
                 created_native_watch: false,
@@ -2836,6 +2974,17 @@ impl Worker {
             return Err(io::Error::last_os_error());
         }
         let created_native_watch = !self.watches.contains_key(&descriptor);
+        let created_lifetime = if created_native_watch {
+            match self.claim_new_watch_lifetime(descriptor) {
+                Ok(lifetime) => Some(lifetime),
+                Err(error) => {
+                    state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let identity_after = directory_identity(path);
         if identity_after.as_ref().ok() != Some(&identity)
             || self
@@ -2845,24 +2994,30 @@ impl Worker {
                 .is_some_and(|watched| watched != identity)
         {
             if created_native_watch {
-                self.expected_ignored.insert(descriptor);
-                // SAFETY: inotify is live and this call only removes the watch
-                // created by the mismatched add above.
-                unsafe {
-                    libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
-                }
+                self.remove_native_watch_lifetime(
+                    descriptor,
+                    created_lifetime.expect("a newly created watch must have a lifetime"),
+                );
             }
             state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
             return Err(io::Error::from_raw_os_error(libc::ESTALE));
         }
-        if self.expected_ignored.contains(&descriptor) {
-            // Linux may recycle a removed watch descriptor before its queued
-            // IN_IGNORED record is consumed. The later record cannot be
-            // attributed safely to the old or new lifetime, so preserve the
-            // new interest but make its coverage explicitly uncertain.
-            state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
+        self.mark_reused_descriptor_uncertain(state, descriptor);
+        if created_native_watch {
+            self.watches.insert(
+                descriptor,
+                NativeWatch {
+                    lifetime: created_lifetime.expect("a newly created watch must have a lifetime"),
+                    identity: None,
+                    interests: BTreeSet::new(),
+                    expects_ignored: false,
+                },
+            );
         }
-        let watch = self.watches.entry(descriptor).or_default();
+        let watch = self
+            .watches
+            .get_mut(&descriptor)
+            .expect("a successful native watch must be registered");
         watch.identity.get_or_insert(identity);
         self.watch_identities.insert(identity, descriptor);
         self.insert_interest(state, path, descriptor);
@@ -2913,15 +3068,13 @@ impl Worker {
             false
         };
         if remove_native {
-            self.watches.remove(&descriptor);
+            let watch = self
+                .watches
+                .remove(&descriptor)
+                .expect("the final logical interest must own a native watch");
             self.watch_identities
                 .retain(|_, candidate| *candidate != descriptor);
-            self.expected_ignored.insert(descriptor);
-            // SAFETY: inotify is live. Failure is benign when the kernel has
-            // already removed the watch for a deleted inode.
-            unsafe {
-                libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
-            }
+            self.remove_native_watch_lifetime(descriptor, watch.lifetime);
             self.publish_native_watch_count();
         }
     }
@@ -3492,6 +3645,256 @@ mod tests {
             Arc::new(RuntimeCounters::default()),
             None,
         )
+    }
+
+    fn install_synthetic_watch(
+        worker: &mut Worker,
+        state: &mut SubscriptionState,
+        descriptor: i32,
+        lifetime: WatchLifetime,
+        path: &Path,
+        expects_ignored: bool,
+    ) {
+        let identity = directory_identity(path).unwrap();
+        let interest = Interest {
+            subscription_id: state.id,
+            path: path.to_path_buf(),
+        };
+        state.watched_paths.insert(path.to_path_buf(), descriptor);
+        worker.watches.insert(
+            descriptor,
+            NativeWatch {
+                lifetime,
+                identity: Some(identity),
+                interests: BTreeSet::from([interest]),
+                expects_ignored,
+            },
+        );
+        worker.watch_identities.insert(identity, descriptor);
+        worker.publish_native_watch_count();
+    }
+
+    #[test]
+    fn ignored_for_retired_lifetime_does_not_remove_reused_descriptor() {
+        let root = TestRoot::new("retired-ignored-reuse");
+        let child = root.0.join("child");
+        fs::create_dir(&child).unwrap();
+        let (mut state, _batches) = state(&root.0, SubscriptionOptions::default());
+        let mut worker = worker();
+        let descriptor = 41;
+
+        install_synthetic_watch(
+            &mut worker,
+            &mut state,
+            descriptor,
+            WatchLifetime(1),
+            &child,
+            false,
+        );
+        state.watched_paths.remove(&child);
+        worker.remove_interest(state.id, &child, descriptor);
+        assert_eq!(
+            worker.next_watch_lifetime(descriptor).unwrap(),
+            WatchLifetime(2)
+        );
+        install_synthetic_watch(
+            &mut worker,
+            &mut state,
+            descriptor,
+            WatchLifetime(2),
+            &child,
+            false,
+        );
+        state.mark_uncertain(UncertainReason::TopologyRace, root.0.clone());
+        worker.subscriptions.insert(state.id, state);
+
+        worker.handle_ignored(descriptor);
+
+        let state = worker.subscriptions.get(&1).unwrap();
+        assert_eq!(state.watched_paths.get(&child), Some(&descriptor));
+        assert!(worker.watches.contains_key(&descriptor));
+        assert!(!worker.retired_ignored_lifetimes.contains_key(&descriptor));
+        assert_eq!(worker.watch_identities.len(), 1);
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 1);
+
+        worker.handle_ignored(descriptor);
+
+        let state = worker.subscriptions.get(&1).unwrap();
+        assert!(!state.watched_paths.contains_key(&child));
+        assert!(!worker.watches.contains_key(&descriptor));
+        assert!(worker.watch_identities.is_empty());
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+        assert_eq!(
+            state.coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::TopologyRace,
+            }
+        );
+    }
+
+    #[test]
+    fn reused_root_is_lost_only_when_current_lifetime_is_ignored() {
+        let root = TestRoot::new("retired-ignored-root-reuse");
+        let (mut state, _batches) = state(&root.0, SubscriptionOptions::default());
+        let mut worker = worker();
+        let descriptor = 43;
+
+        // Model the identity-mismatch rollback path: the newly created old
+        // lifetime was removed before it was ever entered in `watches`.
+        worker.remove_native_watch_lifetime(descriptor, WatchLifetime(1));
+        assert_eq!(
+            worker.next_watch_lifetime(descriptor).unwrap(),
+            WatchLifetime(2)
+        );
+        install_synthetic_watch(
+            &mut worker,
+            &mut state,
+            descriptor,
+            WatchLifetime(2),
+            &root.0,
+            false,
+        );
+        state.mark_uncertain(UncertainReason::TopologyRace, root.0.clone());
+        worker.subscriptions.insert(state.id, state);
+
+        worker.handle_ignored(descriptor);
+
+        let state = worker.subscriptions.get(&1).unwrap();
+        assert_eq!(state.root_state().attachment, RootAttachment::Attached);
+        assert_eq!(state.root_state().loss_evidence, None);
+        assert_eq!(state.watched_paths.get(&root.0), Some(&descriptor));
+
+        worker.handle_ignored(descriptor);
+
+        let state = worker.subscriptions.get(&1).unwrap();
+        assert_eq!(state.root_state().attachment, RootAttachment::Lost);
+        assert_eq!(
+            state.root_state().loss_evidence,
+            Some(RootLossEvidence::RootWatchLoss)
+        );
+        assert_eq!(
+            state.coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::RootReplaced,
+            }
+        );
+        assert!(!worker.watches.contains_key(&descriptor));
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn delete_self_expectation_is_scoped_to_the_live_watch_lifetime() {
+        let root = TestRoot::new("delete-self-lifetime");
+        let child = root.0.join("child");
+        fs::create_dir(&child).unwrap();
+        let (mut state, _batches) = state(&root.0, SubscriptionOptions::default());
+        let mut worker = worker();
+        let descriptor = 47;
+
+        install_synthetic_watch(
+            &mut worker,
+            &mut state,
+            descriptor,
+            WatchLifetime(1),
+            &child,
+            false,
+        );
+        worker.subscriptions.insert(state.id, state);
+
+        worker.handle_native_event(ParsedEvent {
+            descriptor,
+            mask: libc::IN_DELETE_SELF | libc::IN_ISDIR,
+            name: None,
+        });
+        assert!(worker.watches[&descriptor].expects_ignored);
+
+        worker.handle_native_event(ParsedEvent {
+            descriptor,
+            mask: libc::IN_IGNORED,
+            name: None,
+        });
+
+        let state = worker.subscriptions.get(&1).unwrap();
+        assert!(!state.watched_paths.contains_key(&child));
+        assert_eq!(state.coverage(), Coverage::Complete);
+        assert!(!worker.watches.contains_key(&descriptor));
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn sharing_a_reused_descriptor_preserves_peer_coverage_truth() {
+        let root = TestRoot::new("shared-retired-ignored-reuse");
+        let child = root.0.join("child");
+        fs::create_dir(&child).unwrap();
+        let (mut owner, _owner_batches) = state(&root.0, SubscriptionOptions::default());
+        let (mut peer, _peer_batches) = state(&root.0, SubscriptionOptions::default());
+        peer.id = 2;
+        let mut worker = worker();
+        let descriptor = 53;
+
+        worker.remove_native_watch_lifetime(descriptor, WatchLifetime(1));
+        install_synthetic_watch(
+            &mut worker,
+            &mut owner,
+            descriptor,
+            WatchLifetime(2),
+            &child,
+            false,
+        );
+
+        assert_eq!(
+            worker.add_interest(&mut peer, &child, true).unwrap(),
+            InterestAllocation::Added {
+                created_native_watch: false,
+            }
+        );
+
+        assert_eq!(worker.watches[&descriptor].interests.len(), 2);
+        assert_eq!(
+            peer.coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::TopologyRace,
+            }
+        );
+    }
+
+    #[test]
+    fn exhausted_watch_lifetime_is_removed_and_permanently_quarantined() {
+        let mut worker = worker();
+        let descriptor = 59;
+
+        worker.expect_ignored(descriptor, WatchLifetime(u64::MAX));
+
+        let error = worker.claim_new_watch_lifetime(descriptor).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EOVERFLOW));
+        assert!(worker.exhausted_watch_descriptors.contains(&descriptor));
+        assert!(!worker.watches.contains_key(&descriptor));
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+
+        // Even after the old expected record is gone, this numeric descriptor
+        // cannot reset to lifetime 1 and alias the unrepresentable removal.
+        worker.retired_ignored_lifetimes.remove(&descriptor);
+        let error = worker.claim_new_watch_lifetime(descriptor).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EOVERFLOW));
+        assert!(!worker.watches.contains_key(&descriptor));
+    }
+
+    #[test]
+    fn compact_retired_range_rejects_a_lifetime_gap() {
+        let mut worker = worker();
+        let descriptor = 61;
+
+        worker.expect_ignored(descriptor, WatchLifetime(1));
+        worker.remove_native_watch_lifetime(descriptor, WatchLifetime(3));
+
+        assert_eq!(
+            worker.retired_ignored_lifetimes.get(&descriptor),
+            Some(&ExpectedIgnoredLifetimes {
+                first: WatchLifetime(1),
+                last: WatchLifetime(1),
+            })
+        );
+        assert!(worker.exhausted_watch_descriptors.contains(&descriptor));
     }
 
     #[test]

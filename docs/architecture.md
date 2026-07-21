@@ -288,6 +288,20 @@ and `native_watches` gauge count unique live kernel watches instead. Adding or
 removing an overlapping logical interest therefore neither consumes nor returns
 a runtime token; only the first or final interest changes the unique count.
 
+Numeric inotify watch descriptors are paired with an engine lifetime. When the
+final interest is removed, the expected `IN_IGNORED` lifetime is retained in a
+compact per-descriptor generation range until its record is consumed. If Linux
+recycles the same number first, an ignored record for the retired lifetime does
+not detach the new registry entry; the new lifetime's own ignored record still
+does. `IN_DELETE_SELF` expectations remain attached to the live lifetime. The
+range representation keeps this bookkeeping fixed-size per numeric descriptor,
+and shutdown clears both live and retired lifetime state. A generation gap or
+counter exhaustion permanently quarantines that numeric descriptor for the
+runtime: each newly returned watch is removed before the allocation fails, and
+the descriptor is never admitted with a reset lifetime. Descriptor reuse still
+makes other already-queued records ambiguous, so the affected subscription is
+marked `topology-race` uncertain rather than claiming detailed coverage.
+
 `Engine::new()` preserves the unbounded prototype behavior. A caller can use
 `Engine::with_runtime_watch_budget` to request a positive unique-watch budget;
 JavaScript exposes the same resource owner through

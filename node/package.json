@@ -28,7 +28,7 @@
   },
   "scripts": {
     "build": "napi build --platform --release --output-dir . --no-js --dts native.generated.d.ts",
-    "test": "node test/smoke.cjs && node --test test/loader.cjs test/lifecycle.cjs"
+    "test": "node test/smoke.cjs && node --test test/loader.cjs test/lifecycle.cjs test/environment-teardown.cjs"
   },
   "napi": {
     "binaryName": "watchbound"

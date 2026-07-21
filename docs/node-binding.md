@@ -158,6 +158,13 @@ finalization launches a reaper for best-effort joined cleanup. Teardown cannot
 depend on JavaScript callbacks running, and explicit disposal remains the only
 full user-visible guarantee.
 
+The ordinary Node suite destroys a worker environment while its production
+binding has a live, callback-proven subscription. The parent process observes
+the shared runtime return to its exact inactive baseline and then establishes,
+uses, and explicitly disposes a fresh subscription. This is cleanup evidence,
+not an upgrade of best-effort environment teardown into the joined public
+disposal guarantee.
+
 The JavaScript wrapper owns the callback strongly through the returned
 subscription, while the native callback closure reaches that holder through a
 `WeakRef`. This breaks callback-captures-subscription GC cycles without letting

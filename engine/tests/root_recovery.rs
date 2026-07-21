@@ -387,6 +387,70 @@ fn shared_old_root_watch_can_make_new_root_explicitly_unavailable() {
 }
 
 #[test]
+fn replacement_recovery_moves_between_shared_old_and_new_root_identities() {
+    let _serial = serial();
+    let parent = TestDir::new("shared-identities");
+    let root = parent.path().join("root");
+    let moved = parent.path().join("moved");
+    fs::create_dir(&root).unwrap();
+    let engine = Engine::new();
+    let primary = engine.subscribe(&root, options()).unwrap();
+    let original = primary.root_state();
+
+    fs::rename(&root, &moved).unwrap();
+    wait_for_root_loss(&primary, &root);
+    let old_identity_peer = engine.subscribe(&moved, options()).unwrap();
+    assert_eq!(old_identity_peer.root_state().identity, original.identity);
+
+    fs::create_dir(&root).unwrap();
+    let new_identity_peer = engine.subscribe(&root, options()).unwrap();
+    let replacement = new_identity_peer.root_state();
+    assert_ne!(replacement.identity, original.identity);
+    assert_eq!(engine.runtime_stats().native_watches, 2);
+
+    let recovered = primary
+        .recover_root(RootIdentityPolicy::AcceptReplacement)
+        .unwrap();
+    assert_eq!(
+        recovered.attachment,
+        RootRecoveryAttachment::ReplacementAdopted
+    );
+    assert_eq!(recovered.previous_root_state.identity, original.identity);
+    assert_eq!(recovered.candidate_identity, Some(replacement.identity));
+    assert_eq!(recovered.current_root_state.identity, replacement.identity);
+    assert_eq!(primary.stats().watched_directories, 1);
+    assert_eq!(old_identity_peer.stats().watched_directories, 1);
+    assert_eq!(new_identity_peer.stats().watched_directories, 1);
+    assert_eq!(engine.runtime_stats().native_watches, 2);
+
+    let old_before_dispose = moved.join("old-before-primary-dispose");
+    fs::write(&old_before_dispose, b"old").unwrap();
+    wait_for_path(&old_identity_peer, &old_before_dispose);
+    let new_before_dispose = root.join("new-before-primary-dispose");
+    fs::write(&new_before_dispose, b"new").unwrap();
+    wait_for_path(&primary, &new_before_dispose);
+    wait_for_path(&new_identity_peer, &new_before_dispose);
+
+    primary.dispose().unwrap();
+    assert_eq!(engine.runtime_stats().subscriptions, 2);
+    assert_eq!(engine.runtime_stats().native_watches, 2);
+
+    let old_after_dispose = moved.join("old-after-primary-dispose");
+    fs::write(&old_after_dispose, b"old").unwrap();
+    wait_for_path(&old_identity_peer, &old_after_dispose);
+    let new_after_dispose = root.join("new-after-primary-dispose");
+    fs::write(&new_after_dispose, b"new").unwrap();
+    wait_for_path(&new_identity_peer, &new_after_dispose);
+
+    old_identity_peer.dispose().unwrap();
+    new_identity_peer.dispose().unwrap();
+    assert_eq!(
+        engine.runtime_stats(),
+        watchbound_engine::RuntimeStats::default()
+    );
+}
+
+#[test]
 fn candidate_identity_change_during_scan_is_not_followed() {
     let _serial = serial();
     let parent = TestDir::new("unstable");

@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchbound-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-build:
+    name: Source build (${{ matrix.lane }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: floor
+            node-version: 24.18.0
+            node-check-latest: false
+            rust-toolchain: 1.88.0
+          - lane: moving
+            node-version: 24.x
+            node-check-latest: true
+            rust-toolchain: stable
+
+    steps:
+      - name: Check out source only
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Reject checked-in native artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked_native="$(git ls-files -- 'node/*.node' 'node/*.so')"
+          test -z "$tracked_native"
+          checkout_native="$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
+          test -z "$checkout_native"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          architecture: x64
+          check-latest: ${{ matrix.node-check-latest }}
+          package-manager-cache: false
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "${{ matrix.rust-toolchain }}" \
+            --profile minimal \
+            --component clippy \
+            --component rustfmt
+          rustup default "${{ matrix.rust-toolchain }}"
+
+      - name: Assert and record target host
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 24.04
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          test "$(node -p 'process.platform')" = linux
+          test "$(node -p 'process.arch')" = x64
+          node -e 'if (Number(process.versions.napi) < 6) process.exit(1)'
+
+          glibc_version="$(getconf GNU_LIBC_VERSION)"
+          test "$glibc_version" = "glibc 2.39"
+
+          kernel_release="$(uname -r)"
+          kernel_version="${kernel_release%%-*}"
+          dpkg --compare-versions "$kernel_version" ge 6.8
+
+          command -v cc
+          command -v c++
+          command -v ld
+
+          uname -a
+          printf 'distribution=%s %s\n' "$ID" "$VERSION_ID"
+          printf 'glibc=%s\n' "$glibc_version"
+          printf 'kernel=%s\n' "$kernel_release"
+          cc --version
+          c++ --version
+          ld --version
+          node --version
+          printf 'node_api=%s\n' "$(node -p 'process.versions.napi')"
+          rustc --version --verbose
+          cargo --version
+
+          if test "${{ matrix.lane }}" = floor; then
+            test "$(node --version)" = v24.18.0
+            rustc --version | grep -Eq '^rustc 1\.88\.0 '
+          else
+            node -e 'if (process.versions.node.split(".")[0] !== "24") process.exit(1)'
+            rustup show active-toolchain | grep -Eq '^stable-x86_64-unknown-linux-gnu '
+          fi
+
+      - name: Enable the pinned pnpm release
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(pnpm --version)" = 10.33.2
+
+      - name: Install from the lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the native binding from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm build:node
+          test -f node/watchbound.linux-x64-gnu.node
+          test "$(find node -maxdepth 1 -type f -name '*.node' -print | wc -l)" -eq 1
+          test -z "$(find node -maxdepth 1 -type f -name '*.so' -print -quit)"
+          file node/watchbound.linux-x64-gnu.node
+          git diff --exit-code -- node/index.js node/index.d.ts node/load-native.cjs
+
+      - name: Compile public TypeScript contracts
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Run repository checks
+        run: pnpm check
+
+      - name: Run bounded maintenance gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm test:soak
+          pnpm test:root-recovery-stress
+
+      - name: Run strict ordinary conformance serially
+        shell: bash
+        run: |
+          set -euo pipefail
+          node benches/conformance.mjs \
+            --adapter watchbound \
+            --scenarios normal-deep-change,moved-in-subtree,root-replacement,root-replacement-recovery,watch-limit,bridge-backpressure,dynamic-exclusions,reconciliation,automatic-reconciliation,burst-files,burst-directories,burst-renames,disposal \
+            --quick \
+            --order rotating \
+            --strict

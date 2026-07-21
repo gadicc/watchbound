@@ -36,6 +36,14 @@ document/schema update can change support status or scope.
 The package remains Linux-only and source-built. No prebuilt native artifact
 is produced or distributed in this phase.
 
+The checked-in CI definition has a floor lane for Node 24.18.0 and Rust 1.88.0
+and a moving lane for the latest Node 24 and stable Rust, both on GitHub's x64
+Ubuntu 24.04 runner. Each lane asserts the target host, performs the controlled
+source build, and runs TypeScript, tests, repository checks, bounded soak/root
+recovery stress, and strict ordinary conformance. It deliberately has no
+artifact upload, cache, publishing, or prebuild step. This describes the gate;
+it is not a claim that a clean hosted run has completed.
+
 ## Explicitly unsupported
 
 The maintained-unpublished claim does not cover:

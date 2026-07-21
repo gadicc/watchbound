@@ -60,7 +60,8 @@ A qualifying clean job must:
 5. prove native generation did not modify hand-owned entry files;
 6. load the addon through the production metadata/version handshake;
 7. run TypeScript fixtures, tests, repository checks, real environment
-   teardown, and strict ordinary conformance serially.
+   teardown, bounded maintenance/root-recovery stress, and strict ordinary
+   conformance serially.
 
 The CI definition is evidence only after a clean run completes. A workflow file
 or a successful build on a different host does not change

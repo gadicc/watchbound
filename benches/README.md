@@ -1,9 +1,9 @@
 # Watchbound baseline harness
 
 This directory contains a standalone Linux benchmark and conformance harness for the local
-prototype and two exact baselines:
+maintained-unpublished source-build candidate and two exact baselines:
 
-- the Watchbound Rust engine through its Node-API proof;
+- the Watchbound Rust engine through its maintained local Node-API binding;
 - the current Codex JavaScript directory watcher exported by `patch.js`;
 - `@parcel/watcher` 2.5.6 with its `inotify` backend selected explicitly.
 
@@ -37,7 +37,7 @@ report includes raw trials and median/min/max/mean aggregates.
 The adapter records the loaded file's SHA-256 digest, size, and modification time. Parcel must
 resolve to exactly version 2.5.6. `WATCHBOUND_PARCEL_WATCHER_PATH` can point at that package when it
 is not resolvable from this workspace. The Watchbound adapter records the resolved native binary's
-path, SHA-256, size, modification time, expected release build command, and batching/queue options;
+path, SHA-256, size, modification time, controlled root release build command, and batching/queue options;
 the report records a deterministic source-input digest and Git state as well.
 
 ## Scenarios and accounting

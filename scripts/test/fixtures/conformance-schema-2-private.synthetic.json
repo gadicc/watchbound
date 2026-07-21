@@ -63,7 +63,7 @@
     "sourceSha256": "2222222222222222222222222222222222222222222222222222222222222222",
     "sourceFileCount": 19,
     "expectedBuildProfile": "release",
-    "expectedBuildCommand": "pnpm --dir node build"
+    "expectedBuildCommand": "pnpm build:node"
   },
   "adapterProbes": {
     "watchbound": {
@@ -82,7 +82,7 @@
           },
           "build": {
             "expectedProfile": "release",
-            "command": "pnpm --dir node build",
+            "command": "pnpm build:node",
             "nativeLibraryOverride": null
           }
         },

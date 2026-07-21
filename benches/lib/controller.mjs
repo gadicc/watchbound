@@ -6,6 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serializeError } from "./metrics.mjs";
 import { scenarioRequirement } from "./scenarios.mjs";
+import {
+  WATCHBOUND_BUILD_COMMAND,
+  WATCHBOUND_SOURCE_INPUTS,
+} from "./watchbound-identity.mjs";
 
 const childPath = fileURLToPath(new URL("../run-child.mjs", import.meta.url));
 const workspaceRoot = path.dirname(path.dirname(childPath));
@@ -501,7 +505,7 @@ function tempFilesystemIdentity(tempDir) {
   }
 }
 
-function workspaceSourceIdentity() {
+export function workspaceSourceIdentity() {
   const headResult = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd: workspaceRoot,
     encoding: "utf8",
@@ -512,25 +516,12 @@ function workspaceSourceIdentity() {
     { cwd: workspaceRoot, encoding: "utf8" },
   );
   const files = [];
-  for (const relative of [
-    "Cargo.toml",
-    "Cargo.lock",
-    "package.json",
-    "pnpm-lock.yaml",
-    "engine/Cargo.toml",
-    "engine/src",
-    "node/Cargo.toml",
-    "node/build.rs",
-    "node/src",
-    "node/index.js",
-    "node/index.d.ts",
-    "node/package.json",
-    "js/automatic-reconciliation.js",
-    "js/index.js",
-    "js/index.d.ts",
-    "js/package.json",
-  ]) {
-    collectSourceFiles(path.join(workspaceRoot, relative), files);
+  for (const relative of WATCHBOUND_SOURCE_INPUTS) {
+    const candidate = path.join(workspaceRoot, relative);
+    if (!fs.existsSync(candidate)) {
+      throw new Error(`Configured Watchbound source input is missing: ${relative}`);
+    }
+    collectSourceFiles(candidate, files);
   }
   files.sort();
   const hash = crypto.createHash("sha256");
@@ -552,7 +543,7 @@ function workspaceSourceIdentity() {
     sourceSha256: hash.digest("hex"),
     sourceFileCount: files.length,
     expectedBuildProfile: "release",
-    expectedBuildCommand: "pnpm --dir node build",
+    expectedBuildCommand: WATCHBOUND_BUILD_COMMAND,
   };
 }
 

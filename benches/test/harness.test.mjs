@@ -3,10 +3,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import {
   advertisesReconciliation,
+  createAdapterMetadata,
   reconcileExistingSubscription,
 } from "../adapters/watchbound.mjs";
 import { parseOptions, strictSummaryFailed } from "../lib/cli.mjs";
-import { aggregateResults } from "../lib/controller.mjs";
+import {
+  aggregateResults,
+  workspaceSourceIdentity,
+} from "../lib/controller.mjs";
 import { outcomeFromChecks } from "../lib/outcomes.mjs";
 import { createRecorder } from "../lib/recorder.mjs";
 import {
@@ -14,6 +18,11 @@ import {
   rootReplacementCoveragePreserved,
   scenarioRequirement,
 } from "../lib/scenarios.mjs";
+import {
+  WATCHBOUND_ADAPTER_LABEL,
+  WATCHBOUND_BUILD_COMMAND,
+  WATCHBOUND_SOURCE_INPUTS,
+} from "../lib/watchbound-identity.mjs";
 
 test("informational setup checks do not turn unsupported scenarios into passes", () => {
   assert.equal(
@@ -110,6 +119,48 @@ test("Watchbound advertises reconciliation only for the complete public operatio
     advertisesReconciliation({ reconciliation: true }, { reconcile: null }),
     false,
   );
+});
+
+test("Watchbound evidence identifies the controlled unpublished source build", () => {
+  const metadata = createAdapterMetadata(
+    {
+      capabilities: {
+        versions: { engine: "0.0.0" },
+        build: {
+          nodeApi: 6,
+          profile: "release",
+          targetTriple: "x86_64-unknown-linux-gnu",
+        },
+      },
+    },
+    { path: "/synthetic/watchbound.node", sha256: "a".repeat(64) },
+  );
+
+  assert.equal(
+    WATCHBOUND_ADAPTER_LABEL,
+    "Watchbound maintained-unpublished source-build candidate",
+  );
+  assert.equal(metadata.label, WATCHBOUND_ADAPTER_LABEL);
+  assert.equal(metadata.build.command, WATCHBOUND_BUILD_COMMAND);
+  assert.equal(metadata.build.nativeLibraryOverride, null);
+  assert.equal(
+    workspaceSourceIdentity().expectedBuildCommand,
+    WATCHBOUND_BUILD_COMMAND,
+  );
+  assert.equal(
+    new Set(WATCHBOUND_SOURCE_INPUTS).size,
+    WATCHBOUND_SOURCE_INPUTS.length,
+  );
+  for (const requiredInput of [
+    "pnpm-workspace.yaml",
+    "node/load-native.cjs",
+    "js/capabilities.js",
+    "js/errors.js",
+    "js/observed-state.js",
+    "scripts/build-node.mjs",
+  ]) {
+    assert.equal(WATCHBOUND_SOURCE_INPUTS.includes(requiredInput), true);
+  }
 });
 
 test("Watchbound reconciliation calls the existing subscription and normalizes its generation", async () => {

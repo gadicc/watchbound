@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import {
+  WATCHBOUND_ADAPTER_LABEL,
+  WATCHBOUND_BUILD_COMMAND,
+} from "../lib/watchbound-identity.mjs";
 
 const require = createRequire(import.meta.url);
 const subscriptionOptions = Object.freeze({
@@ -93,7 +97,7 @@ export async function loadAdapter() {
     return {
       id,
       available: false,
-      reason: "Could not load the local Watchbound Node-API proof; run pnpm build:node first",
+      reason: "Could not load the local Watchbound native binding; run pnpm build:node first",
       error: { code: error?.code ?? null, message: error?.message ?? String(error) },
     };
   }
@@ -107,21 +111,7 @@ export async function loadAdapter() {
       nativeArtifact,
     };
   }
-  const metadata = {
-    id,
-    label: "Watchbound Rust/Node-API feasibility prototype",
-    engineVersion: implementation.capabilities.versions.engine,
-    binding:
-      `napi-rs / Node-API ${implementation.capabilities.build.nodeApi}`,
-    nativeArtifact,
-    build: {
-      expectedProfile: implementation.capabilities.build.profile,
-      targetTriple: implementation.capabilities.build.targetTriple,
-      command: "pnpm --dir node build",
-      nativeLibraryOverride: process.env.NAPI_RS_NATIVE_LIBRARY_PATH ?? null,
-    },
-    subscriptionOptions,
-  };
+  const metadata = createAdapterMetadata(implementation, nativeArtifact);
   const nativeCapabilities = implementation.capabilities;
   const nativeFeatures = nativeCapabilities.features;
   const capabilities = {
@@ -281,6 +271,24 @@ export async function loadAdapter() {
         },
       };
     },
+  };
+}
+
+export function createAdapterMetadata(implementation, nativeArtifact) {
+  return {
+    id,
+    label: WATCHBOUND_ADAPTER_LABEL,
+    engineVersion: implementation.capabilities.versions.engine,
+    binding:
+      `napi-rs / Node-API ${implementation.capabilities.build.nodeApi}`,
+    nativeArtifact,
+    build: {
+      expectedProfile: implementation.capabilities.build.profile,
+      targetTriple: implementation.capabilities.build.targetTriple,
+      command: WATCHBOUND_BUILD_COMMAND,
+      nativeLibraryOverride: null,
+    },
+    subscriptionOptions,
   };
 }
 

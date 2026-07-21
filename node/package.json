@@ -6,8 +6,8 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "build": "napi build --platform --release --output-dir .",
-    "test": "node test/smoke.cjs && node --test test/lifecycle.cjs"
+    "build": "napi build --platform --release --output-dir . --no-js --dts native.generated.d.ts",
+    "test": "node test/smoke.cjs && node --test test/loader.cjs test/lifecycle.cjs"
   },
   "napi": {
     "binaryName": "watchbound"

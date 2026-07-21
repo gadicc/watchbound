@@ -2,5 +2,6 @@
 /node_modules/
 /node/*.node
 /node/*.so
+/node/native.generated.d.ts
 /benches/results/*.json
 !/benches/results/.gitkeep

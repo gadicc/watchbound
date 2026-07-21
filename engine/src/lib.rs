@@ -358,6 +358,14 @@ impl Engine {
             ));
         }
 
+        self.subscribe_validated_root(root, options)
+    }
+
+    fn subscribe_validated_root(
+        &self,
+        root: PathBuf,
+        options: SubscriptionOptions,
+    ) -> Result<Subscription> {
         let stats = Arc::new(SharedStats::new());
         let runtime = acquire_runtime(self.runtime_watch_budget)?;
         let established = match runtime.subscribe(root, options, Arc::clone(&stats)) {
@@ -905,6 +913,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    static SERIAL: Mutex<()> = Mutex::new(());
 
     fn assert_error_contract(
         error: &WatchboundError,
@@ -1026,6 +1035,9 @@ mod tests {
 
     #[test]
     fn concurrent_reconciliation_request_is_rejected_explicitly() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = TestRoot::new("reconciliation-conflict");
         let subscription = Engine::new()
             .subscribe(&root.0, SubscriptionOptions::default())
@@ -1051,6 +1063,9 @@ mod tests {
 
     #[test]
     fn reconciliation_and_exclusion_update_conflict_explicitly() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = TestRoot::new("exclusion-conflict");
         let subscription = Engine::new()
             .subscribe(&root.0, SubscriptionOptions::default())
@@ -1076,6 +1091,9 @@ mod tests {
 
     #[test]
     fn post_disposal_operations_are_closed_not_interrupted() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = TestRoot::new("closed-operations");
         let subscription = Engine::new()
             .subscribe(&root.0, SubscriptionOptions::default())
@@ -1108,6 +1126,9 @@ mod tests {
 
     #[test]
     fn recovery_while_attached_is_a_root_state_conflict() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = TestRoot::new("attached-recovery-conflict");
         let subscription = Engine::new()
             .subscribe(&root.0, SubscriptionOptions::default())
@@ -1124,5 +1145,45 @@ mod tests {
             Some(RetryAfter::RootStateChanges),
         );
         subscription.dispose().unwrap();
+    }
+
+    #[test]
+    fn failed_establishment_releases_provisional_runtime_ownership() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let vanished = TestRoot::new("post-acquire-rejection");
+        let valid = TestRoot::new("post-acquire-reconfiguration");
+        std::fs::remove_dir(&vanished.0).unwrap();
+
+        let first_engine = Engine::with_runtime_watch_budget(2).unwrap();
+        let error = match first_engine
+            .subscribe_validated_root(vanished.0.clone(), SubscriptionOptions::default())
+        {
+            Ok(subscription) => {
+                subscription.dispose().unwrap();
+                panic!("a vanished admitted root should not establish a subscription");
+            }
+            Err(error) => error,
+        };
+        assert_error_contract(
+            &error,
+            ErrorCode::RootUnavailable,
+            Operation::Subscribe,
+            true,
+            Some(RetryAfter::FilesystemStateChanges),
+        );
+        assert_eq!(first_engine.runtime_stats(), RuntimeStats::default());
+
+        let reconfigured_engine = Engine::with_runtime_watch_budget(3).unwrap();
+        let subscription = reconfigured_engine
+            .subscribe(&valid.0, SubscriptionOptions::default())
+            .unwrap();
+        assert_eq!(
+            reconfigured_engine.runtime_stats().native_watch_budget,
+            Some(3)
+        );
+        subscription.dispose().unwrap();
+        assert_eq!(reconfigured_engine.runtime_stats(), RuntimeStats::default());
     }
 }

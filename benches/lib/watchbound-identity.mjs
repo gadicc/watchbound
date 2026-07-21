@@ -1,5 +1,5 @@
 export const WATCHBOUND_ADAPTER_LABEL =
-  "Watchbound maintained-unpublished source-build candidate";
+  "Watchbound maintained-unpublished source-build package";
 
 export const WATCHBOUND_BUILD_COMMAND = "pnpm build:node";
 

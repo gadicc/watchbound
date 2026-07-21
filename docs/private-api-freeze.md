@@ -1,8 +1,9 @@
 # Private 0.1.0 API freeze
 
-Status: frozen private candidate on 2026-07-21; capability support remains
-`target-pending-clean-ci` until this exact version passes the clean target gate
-and a separate support-qualification commit passes the same gate.
+Status: frozen private API on 2026-07-21. The exact 0.1.0 freeze passed both
+clean target lanes, and the subsequent support-qualification declaration emits
+`supported` for only the recorded narrow target. That declaration is accepted
+only after its exact commit also passes both lanes.
 
 This freeze does not publish a package or crate, create a release or tag,
 produce or distribute a prebuild, upload an artifact, or authorize consumer
@@ -83,8 +84,8 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; version 0.1.0 initially emits only
-the former. Exhaustive narrowing fixtures compile in the ordinary gate.
+`target-pending-clean-ci` and `supported`; the qualified 0.1.0 API emits
+`supported`. Exhaustive narrowing fixtures compile in the ordinary gate.
 
 Patch releases may make compatible fixes, documentation/test changes, and
 internal changes that preserve this contract. Any externally observable option,
@@ -104,7 +105,7 @@ lifecycle contract; garbage-collection cleanup remains best effort.
 
 ## Target and exclusions
 
-The only candidate support target is a controlled source build on Ubuntu 24.04
+The only supported target is a controlled source build on Ubuntu 24.04
 x86_64, Linux 6.8 or newer within that support line, glibc 2.39, Node
 `>=24.18.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
 pnpm 10.33.2, and a working Ubuntu C toolchain under trusted stable local roots.

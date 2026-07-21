@@ -342,9 +342,9 @@ native callback queue.
 
 The `runtime` section is observed information about the process that loaded the
 single native binary, not evidence that the host is supported. The separate
-`support` section remains `target-pending-clean-ci` for the narrow controlled
-source-build target in `support-matrix.md`; matching facts do not change that
-status and nonmatching facts do not broaden it.
+`support` section is `supported` for the narrow controlled source-build target
+in `support-matrix.md`; matching facts do not widen that fixed target and
+nonmatching facts do not broaden it.
 
 ### Allocator and promotion state machine
 

@@ -1,7 +1,8 @@
 # Initial maintained source-build target
 
-Status: approved target on 2026-07-21; implementation and clean-CI validation
-are required before the repository may claim that the target passes.
+Status: supported maintained-unpublished target on 2026-07-21, based on the
+exact-commit clean-CI evidence recorded below. This does not authorize
+publication, prebuilds, artifacts, releases, or consumer integration.
 
 ## Supported target
 
@@ -21,17 +22,17 @@ The initial maintained-unpublished target is deliberately narrow:
 | TypeScript validation | TypeScript 6.0.3 |
 
 Support means that a clean controlled source build, native load, tests,
-ordinary conformance, TypeScript fixtures, and environment teardown have
-passed on this exact class of host. Until clean CI records that evidence, the
-table is a target rather than a completed claim.
+ordinary conformance, TypeScript fixtures, and environment teardown passed on
+this exact class of host. It does not extend beyond the table.
 
 Capability schema version 1 mirrors this table under `capabilities.support`
-with `status: "target-pending-clean-ci"`. The adjacent `capabilities.runtime`
+with `status: "supported"`. The adjacent `capabilities.runtime`
 section reports the platform, architecture, kernel, libc, Node, and Node-API
 facts observed in the process that loaded the native binary. Those facts are
-diagnostic only: a match does not promote the target to supported, and a
-nonmatch does not broaden the table. Only clean target evidence and a deliberate
-document/schema update can change support status or scope.
+diagnostic only: a match does not independently establish or widen support, and
+a nonmatch does not broaden the table. Only clean target evidence and a
+deliberate document/schema update backed by target-specific clean evidence can
+change support status or scope.
 
 The package remains Linux-only and source-built. No prebuilt native artifact
 is produced or distributed in this phase.
@@ -41,8 +42,30 @@ and a moving lane for the latest Node 24 and stable Rust, both on GitHub's x64
 Ubuntu 24.04 runner. Each lane asserts the target host, performs the controlled
 source build, and runs TypeScript, tests, repository checks, bounded soak/root
 recovery stress, and strict ordinary conformance. It deliberately has no
-artifact upload, cache, publishing, or prebuild step. This describes the gate;
-it is not a claim that a clean hosted run has completed.
+artifact upload, cache, publishing, or prebuild step.
+
+## Qualification evidence
+
+The deterministic root-recovery barrier commit
+[`243f4e3db736576f3b34fcb716b336a51b70a92f`](https://github.com/gadicc/watchbound/commit/243f4e3db736576f3b34fcb716b336a51b70a92f)
+passed both lanes in [CI run 29827608740](https://github.com/gadicc/watchbound/actions/runs/29827608740).
+The exact private 0.1.0 freeze
+[`9af10f08f01fd15c0d2b39801b00420e65daed3c`](https://github.com/gadicc/watchbound/commit/9af10f08f01fd15c0d2b39801b00420e65daed3c)
+then passed both lanes in [CI run 29829260196](https://github.com/gadicc/watchbound/actions/runs/29829260196).
+
+Both freeze jobs passed every step: floor job `88629760074` and moving job
+`88629760120`. They ran on Ubuntu 24.04 x86_64, glibc 2.39, Linux
+6.17.0-1020-azure, Node 24.18.0, and pnpm 10.33.2. The floor used rustc/cargo
+1.88.0; the moving lane used rustc/cargo 1.97.1. Each started from a
+source-only checkout, built 0.1.0 locally, compiled the public TypeScript
+contracts, passed tests and warnings-denied checks, completed the bounded
+25-cycle soak and three-run root-recovery stress, and passed all 13 allowed
+strict ordinary conformance scenarios with forced overflow disabled. No
+artifact, cache, package, prebuild, or evidence derivative was uploaded.
+
+The separate commit changing the declared status to `supported` is subject to
+the same exact-commit two-lane gate. Landing it is not by itself qualification;
+maintainer recognition requires its completed green run.
 
 ## Explicitly unsupported
 

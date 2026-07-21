@@ -1,7 +1,7 @@
 # Native delivery contract
 
 Status: controlled source build selected for the maintained-unpublished
-candidate. No prebuilt artifact, publication, upload, or install-time fallback
+package. No prebuilt artifact, publication, upload, or install-time fallback
 is authorized.
 
 ## Current decision
@@ -63,9 +63,9 @@ A qualifying clean job must:
    teardown, bounded maintenance/root-recovery stress, and strict ordinary
    conformance serially.
 
-The CI definition is evidence only after a clean run completes. A workflow file
-or a successful build on a different host does not change
-`target-pending-clean-ci`.
+The recorded qualification runs in `support-matrix.md` completed this source-
+build gate. A workflow file or a successful build on a different host cannot
+widen the supported target.
 
 ## Requirements before any future prebuild proposal
 

@@ -15,13 +15,13 @@ triage, and release-gate evidence.
 ## Project state
 
 Watchbound remains private and unpublished. Version `0.1.0` is the first frozen
-private API candidate. The repository may support controlled source builds on
-the target in `support-matrix.md`, but it must not imply a public or
-consumer-ready compatibility promise.
+private API. The repository supports controlled source builds only on the
+target in `support-matrix.md`; that narrow maintained-unpublished status must
+not imply a public or consumer-ready compatibility promise.
 
-Recognition as maintained-unpublished requires all ordinary verification and
-documentation gates in `consumer-api-stabilization.md` to pass. Approval to do
-the work is not itself evidence that those gates pass.
+The exact-commit verification and documentation gates supporting recognition
+as maintained-unpublished are recorded in `consumer-api-stabilization.md`.
+Approval to do work is not itself evidence that a future gate passes.
 
 ## Compatibility policy
 
@@ -30,7 +30,7 @@ coverage, loss, exact-byte, root-identity, exclusion-generation, boundedness,
 peer-truthfulness, and joined-disposal contracts are compatibility-sensitive.
 They must not be weakened in a patch release.
 
-For the frozen private `0.1.0` candidate and later private `0.x` revisions:
+For the frozen private `0.1.0` API and later private `0.x` revisions:
 
 - patch releases may contain compatible bug fixes, documentation, tests, and
   internal implementation changes;

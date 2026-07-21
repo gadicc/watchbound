@@ -1,14 +1,14 @@
 # Watchbound
 
-Watchbound is an experimental Linux recursive directory watcher and
-maintained-unpublished stabilization candidate. It treats filesystem coverage
+Watchbound is an experimental Linux recursive directory watcher maintained as
+an unpublished private package. It treats filesystem coverage
 as an explicit result rather than an assumption, uses one inotify watch per
 included directory, batches invalidations, and reports partial or uncertain
 coverage when it cannot safely claim completeness.
 
-The packages remain private and unpublished at the first frozen `0.1.0` API
-candidate. The maintained target remains pending clean CI evidence on that
-exact candidate; private `0.x` does not claim public major-version stability.
+The packages remain private and unpublished at the first frozen `0.1.0` API.
+The narrow controlled-source-build target below is supported by the recorded
+clean CI evidence; private `0.x` does not claim public major-version stability.
 It is intentionally independent of Codex Desktop and does not contain
 Git-ignore or application policy.
 
@@ -30,7 +30,7 @@ diagnostic rather than a policy surface.
 ## Build and test
 
 The manifests intentionally admit only Node `>=24.18.0 <25`, Linux x64, and
-glibc. The pending maintained target is Ubuntu 24.04 with Linux 6.8+, glibc
+glibc. The maintained target is Ubuntu 24.04 with Linux 6.8+, glibc
 2.39, Rust 1.88+, pnpm 10.33.2, `build-essential`, and a working C linker; see
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
 floor, not a broader support claim. Nothing is published.
@@ -71,9 +71,9 @@ default engine. `engine.nativeWatchBudget` is its request, while
 
 The deeply frozen, JSON-serializable `capabilities` export has schema version 1
 and separates versions/build facts, observed runtime facts, the support target,
-features, option defaults and bounds, and observability. Runtime facts are not a
-support claim: the approved narrow source-build target remains
-`target-pending-clean-ci`. See [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
+features, option defaults and bounds, and observability. Runtime facts do not
+widen support: only the approved narrow source-build target has status
+`supported`. See [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
 and [`docs/support-matrix.md`](docs/support-matrix.md). The frozen private API
 surface and compatibility policy are recorded in
 [`docs/private-api-freeze.md`](docs/private-api-freeze.md).

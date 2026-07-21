@@ -57,7 +57,7 @@ test("capability schema v1 reports facts, target support, defaults, and bounds",
       typeof capabilities.runtime.libc.version === "string",
   );
   assert.deepEqual(capabilities.support, {
-    status: "target-pending-clean-ci",
+    status: "supported",
     operatingSystem: {
       family: "linux",
       distribution: "ubuntu",

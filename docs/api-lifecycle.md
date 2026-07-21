@@ -90,7 +90,7 @@ has these top-level sections:
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Controlled-source-build delivery, `prebuilt: false`, build profile and target triple, Node-API 6, and Rust 1.88 minimum. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; the 0.1.0 freeze emits the pending value until separate qualification. |
+| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; qualified 0.1.0 emits `supported`. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, and observed state. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, and the native callback-queue bound. |
@@ -105,8 +105,8 @@ Feature booleans are `recursive`, `movedInTreeDiscovery`,
 `orderedBatches`, and `observedState`.
 
 Runtime facts describe the process that loaded the binding; they are not a
-support claim and do not widen the fixed `support` target. Even an exact runtime
-match remains pending until clean CI records the complete target gate.
+support claim and do not widen the fixed `support` target. Qualification comes
+only from the exact-commit clean CI recorded in `support-matrix.md`.
 
 Positive JavaScript options crossing the native boundary share bounds 1 through
 `2^32 - 1`. `options.engine.nativeWatchBudget` defaults to `null`, has scope

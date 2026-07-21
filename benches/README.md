@@ -1,7 +1,7 @@
 # Watchbound baseline harness
 
 This directory contains a standalone Linux benchmark and conformance harness for the local
-maintained-unpublished source-build candidate and two exact baselines:
+maintained-unpublished source-build package and two exact baselines:
 
 - the Watchbound Rust engine through its maintained local Node-API binding;
 - the current Codex JavaScript directory watcher exported by `patch.js`;

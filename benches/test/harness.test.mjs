@@ -138,7 +138,7 @@ test("Watchbound evidence identifies the controlled unpublished source build", (
 
   assert.equal(
     WATCHBOUND_ADAPTER_LABEL,
-    "Watchbound maintained-unpublished source-build candidate",
+    "Watchbound maintained-unpublished source-build package",
   );
   assert.equal(metadata.label, WATCHBOUND_ADAPTER_LABEL);
   assert.equal(metadata.build.command, WATCHBOUND_BUILD_COMMAND);

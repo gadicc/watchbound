@@ -1,8 +1,7 @@
 # Node binding decision
 
-Status: selected for the maintained-unpublished source-build candidate; the
-exact target still requires a clean CI run and is not a stable public package
-commitment.
+Status: selected for the maintained-unpublished source-build package and
+qualified narrow target. This is not a stable public package commitment.
 
 ## Choice
 
@@ -70,8 +69,8 @@ JSON-serializable. Under `schemaVersion: 1`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision;
-`support.status` remains `target-pending-clean-ci` even when every runtime fact
-matches the narrow target.
+`support.status` is `supported` for the fixed narrow target regardless of the
+current process facts, and those facts never broaden that target.
 
 Node exposes a cheap `NativeEngine`, and the wrapper exposes
 `createEngine({ nativeWatchBudget: number | null })`. Creation stores a request
@@ -112,7 +111,7 @@ Definitive loader failures have bounded `WATCHBOUND_UNSUPPORTED_PLATFORM`,
 `WATCHBOUND_NATIVE_NOT_BUILT`, `WATCHBOUND_NATIVE_LOAD_FAILED`,
 `WATCHBOUND_NATIVE_VERSION_MISMATCH`, or `WATCHBOUND_NATIVE_API_MISMATCH`
 codes. These import-time packaging diagnostics are separate from the
-schema-version-1 operational error taxonomy. Runtime facts outside the pending
+schema-version-1 operational error taxonomy. Runtime facts outside the fixed
 support matrix do not become supported merely because a locally built addon can
 load. The full delivery decision and future prebuild gates are in
 [`native-delivery.md`](native-delivery.md).
@@ -175,7 +174,6 @@ joins it.
 
 ## Still gated
 
-- clean-CI qualification of the approved Node 24.18/Ubuntu 24.04 target;
 - whether a separately approved later milestone should design or produce a
   prebuilt platform/libc matrix;
 - package signing, provenance, SBOM, attestation, reproducibility, and release

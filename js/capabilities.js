@@ -40,7 +40,7 @@ export function buildCapabilities(native, metadata) {
     },
     runtime,
     support: {
-      status: "target-pending-clean-ci",
+      status: "supported",
       operatingSystem: {
         family: "linux",
         distribution: "ubuntu",

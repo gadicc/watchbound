@@ -1,167 +1,142 @@
 # Consumer and API stabilization decision
 
-Status: stabilization authorized on 2026-07-21; implementation and validation
-in progress.
-This record does not publish a package, change package visibility, produce a
-prebuild, or authorize integration with any consumer.
+Status: final readiness audit completed on 2026-07-21. The approved
+stabilization work is implemented as a **maintained-unpublished candidate**, but
+Watchbound remains a feasibility prototype until the blocked gates below pass.
+Its capability support status remains `target-pending-clean-ci`.
 
-## Decision
+This decision does not publish a package, change package visibility, produce a
+prebuild, upload an artifact, or authorize consumer integration.
 
-Develop Watchbound into a **maintained unpublished Linux package**. Gadi Cohen
-<dragon@wastelands.net> owns the initial maintenance phase, and the narrow
-deployment target is recorded in `support-matrix.md`. Keep it private at
-`0.0.0` until the entry and verification criteria below pass. Do not prepare
-consumer integration yet.
+## Current decision
 
-This is the middle of the three evaluated choices. The feasibility prototype
-has now demonstrated the differentiating contract—explicit coverage and loss,
-bounded shared resources, in-place reconciliation, explicit root identity
-recovery, and joined disposal—through the engine, Node binding, wrapper, and
-ordinary conformance. Retaining it only as an experiment would preserve the
-evidence but leave the API and build assumptions to decay. Integration is
-premature because clean validation of the support target, native artifact
-production, and the broader compatibility policy are not yet stable. Operation
-failures now have the schema-version-1 contract in
-[`error-contract.md`](error-contract.md).
+Continue preserving the candidate in its private `0.0.0` state. The work
+substantially hardened the feasibility implementation: the operational API,
+runtime ownership, TypeScript surface, native loader, source-build boundary,
+maintenance tests, threat model, and evidence sanitizer now have explicit
+contracts. Gadi Cohen <dragon@wastelands.net> owns the initial maintenance
+phase.
 
-“Maintained unpublished” means a deliberately supported private package, not a
-hidden product dependency. It may be built and tested in controlled Linux
-environments while its API is still revised. Any package-visibility change,
-prebuild production, publishing machinery, or consumer integration still
-requires explicit approval.
+Recognition as a maintained unpublished package is still withheld. A checked-in
+CI definition is not clean target evidence, and the root-recovery suite does
+not yet deterministically mutate the candidate at every identity-validation
+barrier. The first private `0.x` API freeze and any consumer boundary also
+require separate approval.
 
-The compatibility and release policy is in `maintenance-policy.md`; the
-approved non-adversarial path boundary is in `security-threat-model.md`.
+Ordered batches remain the authoritative observation stream. Coverage and root
+state stay explicit; work, queues, timers, traversals, diagnostics, and
+disposal remain bounded. No result claims reconstructed detail after
+uncertainty.
 
 ## Resulting contract audit
 
-| Area | Implemented contract | Stabilization gap |
+| Area | Implemented contract | Remaining boundary |
 | --- | --- | --- |
-| Capability reporting | Schema version 1 is deeply frozen and JSON-serializable. It separates versions/build identity, observed runtime facts, pending support target, features, machine-readable option defaults/hard bounds/accounting, and observability. The conformance adapter gates complete operations through `features`. | `support.status` remains `target-pending-clean-ci`; matching runtime facts are diagnostic rather than support evidence. The schema is compatibility-sensitive while private at `0.0.0`. |
-| Coverage and uncertainty | `complete`, reasoned `partial`, and reasoned `uncertain` are explicit. Stronger loss stays sticky, batches are bounded, and no detailed reconstruction is claimed after uncertainty. Immutable `initialCoverage`/`initialRootState` define the exact sequence-zero establishment baseline; frozen `observedState` projects that baseline or the last batch whose callback entered JavaScript. | `observedState` intentionally is not an atomic live-native snapshot. Live getters and operation acknowledgements may be ahead, and an operation that emits no batch can leave it behind indefinitely; ordered batches remain authoritative for JavaScript observation. |
-| Manual reconciliation | `reconcile()` rebuilds the original identity under the committed exclusions and earns only one root boundary after bounded enqueue. Rejections use stable codes for topology conflicts, root-state conflicts, backpressure, interruption, and closure. | A successful acknowledgement can precede its callback and therefore never advances `observedState` optimistically. Consumers that need JavaScript-observed state use the ordered batch projection rather than the operation result. |
-| Automatic reconciliation | Disabled by default; finite attempts and timers; one immutable status; never adopts a root; disposal joins active work. Retry and blocking policy uses exact `WATCHBOUND_*` codes and derived retry conditions, never message matching. Defaults, bounds, and the delay-order constraint are capability data. | Policy status is observational, not a durable event stream. |
-| Root replacement | Root identity, generation, attachment, and bounded loss evidence travel on every batch. `recoverRoot` requires `original-only` or `accept-replacement`, preserves one subscription and exclusion generation, and returns structured expected filesystem outcomes. Lifecycle, transaction, and internal rejections use the same stable operation-error schema. | `(device, inode)` is non-cryptographic and susceptible to inode reuse. Path checks are deliberately non-adversarial and not fd-anchored. |
-| Options | Positive integer native options use finite `u32` bounds exposed in capabilities. `createEngine({ nativeWatchBudget })` owns a nullable process-runtime budget over unique native watches; `watchLimit` remains per-subscription logical-directory accounting. Engine creation is resource-free, equal configurations coexist, conflicts are coded, final joined release permits reconfiguration, and the lazy top-level engine is unbounded. | TypeScript cannot encode numeric ranges. Defaults, one-loaded-binary process scope, and provisional first-establishment acquisition remain behavioral compatibility commitments. |
-| Status and errors | Coverage, stats, root state/results, callback errors, bridge delivery errors, and automatic-policy status are visible. Expected root candidate failures have bounded reason variants. Rejected operations expose schema-version-1 `WatchboundError` metadata: a stable code and operation, code-derived retry guidance, and optional bounded system diagnostics. | There is no subscription-level last-error/event channel. The error schema remains compatibility-sensitive while the package is private at `0.0.0`. |
-| TypeScript | The wrapper declares discriminated coverage, automatic status, initial and observed root/coverage state, root policy/results, bigint counters, exact bytes, exclusions, reconciliation, recovery, and disposal. | Declarations are handwritten and not compiled in CI against usage fixtures. Native generated types are looser strings, while wrapper types are closed unions. Adding a reason/status is potentially breaking for exhaustive consumers. |
-| Node and Linux support | Capability schema v1 records the approved Node `>=24.18.0 <25`, Ubuntu 24.04, Linux 6.8+, x64/glibc 2.39 controlled-source-build target separately from current runtime facts. Node-API 6 remains only the ABI floor; Rust requires 1.88. | Target status is pending clean CI. Manifests still claim Node `>=18`, Linux arm64 and musl are not tested, the generated loader lists unsupported platforms, and package metadata does not yet declare the narrow OS/CPU/libc support. |
-| Native build | A local release build works through pinned napi-rs tooling and records the loaded binary identity in conformance. | Consumers currently need Rust, a C linker, pnpm build tooling, and a compatible host, or an unimplemented trusted prebuild path. There is no ABI/platform artifact matrix, reproducibility check, install fallback contract, or binary size gate. |
-| Security and paths | Exact Linux child-path bytes cross the native boundary; root components are retained for symlink validation; directory symlinks are not followed; identity is checked around watch installation and recovery barriers. | The root API itself accepts only a JavaScript string. `canonicalize`/metadata/inotify checks remain path-based TOCTOU defenses for stable, non-adversarial filesystems, not an `openat2`/directory-fd security boundary. Mount replacement and adversarial inode reuse are outside the claim. |
-| Maintenance burden | Rust unit/integration suites, Node lifecycle tests, wrapper/policy tests, harness tests, ordinary conformance, and separately gated genuine-overflow evidence cover the defining semantics. | Linux kernel behavior, Node environment teardown, GC, shared allocator fairness, symlink races, and native packaging all require specialist ownership. Genuine overflow is intentionally supervised, host-sensitive, serial, and unsuitable for every commit. |
-| Artifact provenance | Ignored raw reports are hashed in a committed manifest and copied to a private content-addressed SHA-256 store. Source/native hashes and caveats are retained. | Raw reports contain private paths/host details, the store is local rather than a release service, restoration is manual, and public sanitization is only planned. Native release artifacts have no SBOM, signing, attestation, or reproducible-build evidence. |
-| Compatibility and semver | Everything remains private at `0.0.0`; no stable external promise has been made. | The callback/batch shape, observed-state timing, bigint counters, reason/status unions, default policy, global runtime configuration, exact-byte behavior, disposal timing, and root-boundary credit are all compatibility-sensitive. The wrapper/native package split and future prebuild layout are undecided. |
+| Capability reporting | Deeply frozen, JSON-serializable schema version 1 separates versions/build identity, observed runtime facts, pending support target, features, option defaults/hard bounds/accounting, and observability. | Runtime facts are diagnostic, not support evidence. The schema remains compatibility-sensitive while private at `0.0.0`. |
+| Coverage and observation | Complete, reasoned partial, and reasoned uncertain states are explicit. Immutable `initialCoverage`/`initialRootState` define sequence zero; frozen `observedState` is the baseline or last batch whose callback entered JavaScript. | `observedState` is deliberately not an atomic native snapshot. Getters and operation acknowledgements may be ahead; ordered batches are authoritative. |
+| Operations and errors | Reconciliation, exclusions, and explicit root recovery have bounded acknowledgements. Rust, Node, JavaScript, and TypeScript share schema-version-1 `WatchboundError` codes, operations, retry policy, and bounded diagnostics. | Expected non-attached recovery outcomes remain successful structured results. The private error schema can still change before a candidate freeze. |
+| Runtime ownership | `createEngine({ nativeWatchBudget })` owns an optional process-wide unique-native-watch budget. Engine construction is resource-free; equal configurations share, conflicts are coded, failed provisional establishment releases ownership, and final disposal joins before reconfiguration. | `watchLimit` remains separate per-subscription logical accounting. TypeScript cannot encode numeric ranges. |
+| TypeScript | Strict TypeScript 6.0.3 consumer fixtures cover closed unions, bigint counters, exact bytes, errors, recovery, automatic status, initial state, and observed state. They run from `pnpm typecheck` and the CI definition. | Additions to closed reason/status/result unions are compatibility changes for exhaustive consumers. Clean target execution is pending. |
+| Node and platform support | All manifests require Node `>=24.18.0 <25`; native/wrapper manifests declare Linux, x64, and glibc. The loader accepts exactly `watchbound.linux-x64-gnu.node`, requires Node-API 6+, and fails closed with stable platform/libc/ABI/build/version/API diagnostics. | Ubuntu 24.04, Linux 6.8+, glibc 2.39 support remains a target until both clean CI lanes run. Other distributions, libc families, architectures, Node majors, and operating systems are unsupported. |
+| Native delivery | Controlled source build is selected. The root build guard preserves hand-owned entry files, produces the one expected local release addon, and loads it through the production metadata handshake. No runtime compilation/download/fallback or install hook exists. | No prebuild is authorized. Checksums, SBOM, signing/attestation, reproducibility, and distribution controls are documented gates for a future separately approved prebuild proposal. |
+| Security and paths | The approved contract is trusted, same-user, stable local roots under ordinary concurrent mutation. Exact Linux child-path bytes, lexical components, symlink rejection, identity checks, watch-before-read ordering, and explicit recovery policy are preserved. | Malicious replacement, hostile multi-user filesystems, mount substitution, and adversarial inode reuse are unsupported. No fd-anchored `openat2` redesign is planned under this threat model. |
+| Maintenance | Rust/Node/JavaScript suites, environment teardown, descriptor-lifetime tests, 25-cycle bounded soak, three-run large root recovery, and strict ordinary conformance cover the defining lifecycle. | Clean target execution and deterministic mutation at every recovery identity barrier remain. Forced overflow stays a separately approved milestone gate. |
+| Evidence | Private originals remain ignored and content-addressed under their committed SHA-256 manifest. Sanitizer 1.0.0, public schema 1, deterministic placeholders, bounds, linkage checks, and synthetic leak/tamper tests are implemented. | No private report was read or transformed, and no public derivative is approved. Every real derivative still requires named approval and manual review. |
+| Compatibility | Everything remains private, unpublished, `0.0.0`, and package-internal policy stays outside the engine. | No private `0.x` API candidate has been frozen. No target consumer or consumer-boundary approval exists. |
 
 ## Choice comparison
 
-| Choice | Benefit | Cost/risk | Decision |
-| --- | --- | --- | --- |
-| Retain as a feasibility prototype | Lowest ongoing commitment; preserves the completed evidence and conservative design. | API/build drift, dependency aging, no supported consumption path, and repeated rediscovery if a consumer appears. | Fallback if ownership or a target environment is absent. |
-| Develop into a maintained unpublished package | Allows deliberate API changes, CI/support definition, internal artifact work, and security review without public compatibility or product coupling. | Requires a named owner and recurring Linux/Rust/Node maintenance before it delivers product value. | **Recommended next state.** |
-| Prepare for eventual consumer integration now | Would test the contract against a real consumer and surface mapping/policy needs. | Prematurely couples unvalidated support, source delivery, packaging, and broader lifecycle compatibility; risks turning consumer behavior into engine policy and bypassing release/security gates. | No-go until the exit criteria below pass and integration is separately approved. |
+| Choice | Current decision |
+| --- | --- |
+| Preserve as a feasibility prototype | **Selected for now.** Retain the hardened candidate without claiming completed target support. |
+| Recognize as a maintained unpublished package | Reconsider after clean exact-target CI, the remaining deterministic identity-barrier proof, and a separately approved private API freeze. |
+| Begin consumer-integration preparation | No-go. It needs separate boundary approval and proof that Git, ignore, workspace, UI, retry, and logical-path policy remain outside Watchbound. |
 
-## Entry criteria for maintained-unpublished status
+## Entry-criterion audit
 
-The technical feasibility evidence is present and criteria 1 through 4 have
-been accepted. Recognition still waits for implementation and validation of
-the remaining gates:
+| # | Result | Evidence or blocker |
+| --- | --- | --- |
+| 1 | Pass | Gadi Cohen owns Linux/inotify semantics, dependency upkeep, security assumptions, triage, and release-gate evidence in `maintenance-policy.md`. |
+| 2 | Pass as a target definition | `support-matrix.md`, manifests, capabilities, loader, and CI agree on the narrow source-build target. This is not yet successful-target evidence. |
+| 3 | Pass for maintainer stabilization; consumer input deferred | The maintainer approved conservative invalidation, explicit partial/uncertain coverage, and joined disposal. No prospective consumer has been named or approved. |
+| 4 | Pass | JavaScript packages are private `0.0.0`; Rust crates have `publish = false`; package-contract tests lock the boundary. |
+| 5 | Partial | Current local build/test/check/soak/root stress and all 13 allowed ordinary scenarios pass. A clean Ubuntu 24.04/glibc 2.39 hosted run is still absent. |
+| 6 | Pass | Private archive identity/retention and the implemented sanitizer workflow preserve originals. Real sanitization remains approval-gated. |
 
-1. Gadi Cohen owns Linux inotify semantics, Rust/Node dependencies, security
-   assumptions, test triage, and release-gate evidence.
-2. The first supported target is the exact, narrow source-build target in
-   `support-matrix.md`, not the generated loader's broad platform list.
-3. Consumers of the private package accept conservative root invalidation,
-   explicit partial/uncertain coverage, required joined disposal, and no
-   reconstructed detailed-event promise.
-4. The repository keeps `private: true`, Rust `publish = false`, and version
-   `0.0.0` while the stabilization backlog below can still change the API.
-5. Ordinary changes continue to pass `pnpm build:node`, `pnpm test`,
-   `pnpm check`, and applicable strict non-heavy conformance. Forced-overflow
-   evidence remains a separately approved release/milestone gate.
-6. The private artifact store and committed manifest remain recoverable until a
-   successor archive is proven; exact raw reports are not made public without
-   the planned sanitizer and review.
+## Exit-criterion audit before integration preparation
 
-If criteria 1 or 2 cannot be met, record the repository as a preserved
-prototype and do not imply package support.
+| # | Result | Evidence or blocker |
+| --- | --- | --- |
+| 1 | Organizational input | API/order/union policy is documented, but the first private `0.x` candidate freeze is not approved. |
+| 2 | Pass | Stable structured errors replace message matching across all layers; retry policy derives from codes. |
+| 3 | Pass | Immutable establishment state and callback-observed projection are implemented and race-tested without claiming live atomicity. |
+| 4 | Pass | Runtime budget ownership, conflicts, sharing, provisional failure rollback, final joined release, and reconfiguration are implemented and tested. |
+| 5 | Blocked | The floor/moving CI matrix exists, but no clean supported-host run has completed. |
+| 6 | Pass for the selected delivery model | Controlled source build, exact naming, load failure behavior, and lockstep metadata/version validation are implemented. Future prebuild controls are documented but deliberately not implemented. |
+| 7 | Pass by explicit scope rejection | Stable non-adversarial roots are supported; hostile roots require a separately approved fd-anchored redesign. |
+| 8 | Partial | Most follow-up gates pass. Candidate replacement is not deterministically injected at every capture/share/add-watch/final-validation barrier. |
+| 9 | Pass for format/tooling; per-derivative approval remains | The sanitizer and public schema are complete and synthetic-tested. No real derivative has been authorized. |
+| 10 | Blocked on separate approval | Architectural policy separation is documented and no integration occurred; no consumer-boundary approval or named-consumer proof exists. |
 
-## Exit criteria before consumer-integration preparation
+## Follow-up verification audit
 
-All criteria are required; meeting them does not itself authorize integration.
+| Required verification | Result |
+| --- | --- |
+| Clean install/build/load and environment teardown on every claimed target | Blocked on a clean hosted CI run; the two-lane workflow and tests are defined. |
+| Compiled TypeScript consumer fixtures | Pass locally on exact Node 24.18.0 with TypeScript 6.0.3; wired into both CI lanes. |
+| Structured error contracts | Pass across invalid arguments, conflicts, backpressure, interruption, disposal, unavailable roots, and internal failures. |
+| Snapshot/batch ordering | Pass for baseline initialization, pre-resolution seam, update-before-callback, callback exception, and acknowledgement-leading-observation cases. |
+| Repeated replacement, peers, exclusions, limits, and disposal overlap | Partial: large direct/ancestor recovery passes three serial runs; shared old/new identities and peer survival pass. Every internal candidate-validation barrier is not yet deterministically injectable. |
+| Churn, descriptor lifetime, deferred promotion, callbacks, and cleanup soak | Pass as combined evidence: deterministic reuse/exhaustion/gap unit tests plus 25 live bounded cycles returning exact runtime and near-baseline `/proc` resources. |
+| Chosen delivery packaging failures | Partial pending clean target install. Local source build plus unsupported/missing/load/version/API mismatch tests pass; no prebuild checksum behavior exists because prebuild delivery is not selected. |
+| Genuine overflow | Historical supervised evidence remains archived. No current run was made because fresh quiet-host approval is required; it is never an automatic per-commit gate. |
+| Adversarial path tests | Deliberately not applicable under the approved threat model. They require an fd-anchored design first. |
 
-1. Freeze a documented private `0.x` API candidate, including callback order,
-   batch/root/exclusion generations, coverage transitions, disposal, and which
-   additions to discriminated unions are allowed in minor versions.
-2. **Complete:** replace message matching with stable structured error codes and
-   document which failures are retryable, terminal, or expected structured
-   results. The implemented schema-version-1 contract is in
-   [`error-contract.md`](error-contract.md).
-3. **Complete:** expose immutable establishment state and one race-aware
-   callback-observed projection while retaining ordered batches as the
-   authority. Live native getters and operation acknowledgements are explicitly
-   allowed to be ahead of `observedState`.
-4. **Complete:** JavaScript exposes process-wide unique-native-watch budgeting
-   through resource-free engine handles, with lazy unbounded compatibility,
-   same-configuration sharing, structured global conflicts, actual runtime
-   stats, provisional establishment ownership, and final-release
-   reconfiguration documented.
-5. Validate the exact Node/Linux/architecture/libc matrix in clean CI and test
-   TypeScript consumer fixtures with the oldest supported compiler/runtime.
-6. Choose a native delivery model: controlled source builds or reviewed
-   prebuilds. Define artifact naming, checksums, provenance, SBOM, signing or
-   attestation policy, loader failure behavior, and version matching.
-7. Complete a security review against the intended threat model. If watched
-   roots can be adversarially mutated, replace the current path-based contract
-   with an fd-anchored design (likely `openat2`/directory fds) or explicitly
-   reject that use case.
-8. Pass the follow-up test gates below without weakening coverage, bounds,
-   exclusions, peer truthfulness, root-only recovery, or joined disposal.
-9. Produce and review a sanitized public-evidence format linked to private
-   originals, or explicitly decide that release evidence stays private.
-10. Obtain separate approval for the consumer boundary and prove that Git,
-    ignore, workspace, UI, retry, and logical-path policy stay outside the
-    engine/Node binding.
+## Final local verification snapshot
 
-## Required follow-up tests
+The final local gate used Node 24.18.0 through Corepack with pnpm 10.33.2 and
+Rust 1.88.0:
 
-Before an integration-readiness decision, add or run:
+- controlled `pnpm build:node`: pass;
+- `pnpm test`: pass, including 107 engine tests, Node environment teardown,
+  loader/lifecycle coverage, and all JavaScript/harness test files;
+- `pnpm check`: Rust formatting, warnings-denied workspace Clippy, 47
+  JavaScript syntax checks, and strict TypeScript compilation pass;
+- `pnpm test:soak`: 25/25 cycles pass in 5.266 seconds, with the steady and
+  final process at 19 file descriptors and 11 tasks, zero overflow/drops, and
+  exact inactive runtime stats after each cycle;
+- `pnpm test:root-recovery-stress`: 3/3 strict runs pass, using 512-directory
+  direct and ancestor replacement trees per run;
+- strict quick ordinary conformance: 13/13 scenarios pass serially with
+  rotating order and `allowForcedOverflow: false`.
 
-- clean CI across every claimed Node/Linux/architecture/libc target, including
-  install/load failure cases and environment teardown;
-- compiled TypeScript usage fixtures covering exhaustive unions, bigint fields,
-  exact-byte exclusions, recovery results, and status narrowing;
-- stable structured-error contract tests for invalid arguments, transaction
-  conflicts, backpressure, interruption, disposal races, and unavailable roots;
-- retain current-state/batch ordering tests for baseline initialization,
-  pre-resolution callbacks, update-before-user-callback behavior, callback
-  exceptions, and operation acknowledgement races;
-- repeated large direct and ancestor replacement with peers, shared old/new
-  identities, limits, exclusions, disposal overlap, and candidate changes at
-  each validation barrier;
-- long-running bounded soak tests for watch churn, descriptor reuse, deferred
-  promotion, queue pressure, callback exceptions, and final resource baseline;
-- packaging tests for the chosen source-build or prebuild path, including
-  checksum/version mismatch and unsupported-platform diagnostics;
-- one separately approved supervised genuine-overflow trial for a release or
-  semantic milestone that changes loss/reconciliation behavior; never make it
-  an automatic per-commit workload;
-- adversarial path tests only if the threat model expands, preceded by an
-  fd-anchored design rather than by weakening current symlink claims.
+The first ordinary-conformance invocation inside the process sandbox retained
+12 passes and one runtime skip because the sandbox denied the scenario's nested
+`git init` with `EPERM`. The same exact allowed command then passed 13/13
+outside that sandbox. Neither run selected a forced-overflow scenario, and no
+new performance benchmark was recorded.
 
-## Exit back to preserved-prototype status
+This host is an unsupported development host (CachyOS, Linux 7.1, glibc 2.43),
+so exact Node/Rust/tooling results cannot promote the Ubuntu 24.04 target. The
+checked-in CI workflow also cannot count as evidence until it actually runs.
 
-Stop package stabilization and retain the evidence-only prototype if there is
-no maintainer, no concrete supported Linux target or prospective consumer, the
-security model requires an unaffordable fd-anchored redesign, native artifact
-maintenance outweighs the contract's value, or repeated conformance cannot
-preserve conservative coverage and joined cleanup.
+## Final recommendation and reopen conditions
 
-## Change authority
+**Preserve Watchbound as a feasibility prototype for now**, with the completed
+work retained as a maintained-unpublished stabilization candidate. Do not
+claim supported-package status and do not begin integration.
 
-The 2026-07-21 approval authorizes the operational API, source-build,
-maintenance, bounded verification, and sanitizer implementation work described
-in this decision. It does not authorize changing any `private`/`publish`
-setting, versioning the packages, adding release or publishing automation,
-producing or distributing prebuilds, uploading artifacts, committing a public
-derivative of private evidence, or integrating Watchbound with Codex Desktop
-or another consumer.
+Re-audit the recommendation after:
+
+1. both clean Ubuntu 24.04 CI lanes pass and the evidence is reviewed;
+2. deterministic tests cover candidate replacement at every relevant
+   root-recovery identity-validation barrier, or the gate is deliberately
+   narrowed with maintainer approval;
+3. the first private `0.x` API candidate is separately frozen;
+4. any real public evidence derivative receives its named approval and review;
+5. a target consumer and boundary receive separate approval before any
+   integration work.
+
+Publishing, package-visibility changes, prebuild production/distribution,
+artifact upload, non-Linux backends, and consumer integration remain outside
+this decision.

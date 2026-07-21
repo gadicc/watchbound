@@ -261,8 +261,9 @@ Deterministic tests cover:
 - ancestor/path mismatch recovery without ancestor watches or false cause
   claims;
 - refusal under `original-only`, missing/non-directory candidates, symlink
-  roots, replaced symlink ancestors, and same-path identity changes at every
-  validation barrier;
+  roots, replaced symlink ancestors, and a same-path identity change during
+  traversal; deterministic mutation at every internal capture/share/add-watch
+  validation barrier remains a readiness gate;
 - no promotion, inclusion scan, or exclusion-update reattachment while root
   loss is latched;
 - watch-before-read populated-tree coverage and later deep delivery;

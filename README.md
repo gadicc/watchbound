@@ -1,10 +1,10 @@
 # Watchbound
 
-Watchbound is an experimental, maintained-unpublished Linux recursive directory
-watcher that treats filesystem coverage as an explicit result rather than an
-assumption. It uses one inotify watch per included directory, batches
-invalidations, and reports partial or uncertain coverage when it cannot safely
-claim completeness.
+Watchbound is an experimental Linux recursive directory watcher and
+maintained-unpublished stabilization candidate. It treats filesystem coverage
+as an explicit result rather than an assumption, uses one inotify watch per
+included directory, batches invalidations, and reports partial or uncertain
+coverage when it cannot safely claim completeness.
 
 This repository remains private at `0.0.0`. Nothing here is published or has a
 stable public API, and the maintained target remains pending clean CI evidence.
@@ -133,7 +133,8 @@ replacement identity. A caller may instead invoke the distinct
 `recoverRoot({ identityPolicy })` operation, which revalidates and scans the
 same lexical root under an explicit `original-only` or `accept-replacement`
 decision and emits one conservative root boundary on success. Non-Linux
-backends and published prebuilds remain for later milestones.
+backends and published prebuilds remain unsupported and outside the approved
+stabilization scope.
 
 ## Maintainer and license
 

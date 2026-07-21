@@ -44,6 +44,21 @@ const MAX_DEFERRED_CANDIDATES_PER_TURN: usize = 64;
 
 type SubscriptionId = u64;
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RootRecoveryBarrier {
+    CandidateCaptured,
+    OldInterestsDrained,
+    SharingExistingWatch,
+    BeforeAddWatch,
+    AfterAddWatch,
+    DuringTraversal,
+    BeforeFinalValidation,
+}
+
+#[cfg(test)]
+type RootRecoveryBarrierHook = Arc<dyn Fn(RootRecoveryBarrier, &Path) + Send + Sync>;
+
 #[derive(Debug)]
 enum RootCaptureError {
     Missing(io::Error),
@@ -140,6 +155,22 @@ pub(crate) struct Runtime {
 
 impl Runtime {
     pub(crate) fn start(native_watch_budget: Option<usize>) -> WatchboundResult<Arc<Self>> {
+        Self::start_inner(native_watch_budget, None)
+    }
+
+    #[cfg(test)]
+    fn start_with_root_recovery_barrier_hook(
+        native_watch_budget: Option<usize>,
+        hook: RootRecoveryBarrierHook,
+    ) -> WatchboundResult<Arc<Self>> {
+        Self::start_inner(native_watch_budget, Some(hook))
+    }
+
+    fn start_inner(
+        native_watch_budget: Option<usize>,
+        #[cfg(test)] root_recovery_barrier_hook: Option<RootRecoveryBarrierHook>,
+        #[cfg(not(test))] _root_recovery_barrier_hook: Option<()>,
+    ) -> WatchboundResult<Arc<Self>> {
         let inotify = create_inotify().map_err(|error| {
             WatchboundError::from_io(
                 ErrorCode::ResourceUnavailable,
@@ -163,14 +194,20 @@ impl Runtime {
         let worker = std::thread::Builder::new()
             .name("watchbound-linux-runtime".to_owned())
             .spawn(move || {
-                Worker::new(
+                let worker = Worker::new(
                     inotify,
                     worker_wakeup,
                     command_receiver,
                     worker_counters,
                     native_watch_budget,
-                )
-                .run();
+                );
+                #[cfg(test)]
+                let worker = {
+                    let mut worker = worker;
+                    worker.root_recovery_barrier_hook = root_recovery_barrier_hook;
+                    worker
+                };
+                worker.run();
             })
             .map_err(|error| {
                 WatchboundError::from_io(
@@ -1091,6 +1128,8 @@ struct Worker {
     pending_native: Vec<u8>,
     pending_native_offset: usize,
     shutting_down: bool,
+    #[cfg(test)]
+    root_recovery_barrier_hook: Option<RootRecoveryBarrierHook>,
 }
 
 impl Worker {
@@ -1120,6 +1159,15 @@ impl Worker {
             pending_native: Vec::new(),
             pending_native_offset: 0,
             shutting_down: false,
+            #[cfg(test)]
+            root_recovery_barrier_hook: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn inject_root_recovery_barrier(&self, barrier: RootRecoveryBarrier, path: &Path) {
+        if let Some(hook) = &self.root_recovery_barrier_hook {
+            hook(barrier, path);
         }
     }
 
@@ -1422,6 +1470,11 @@ impl Worker {
                                 });
                             }
                             Ok(candidate_identity) => {
+                                #[cfg(test)]
+                                self.inject_root_recovery_barrier(
+                                    RootRecoveryBarrier::CandidateCaptured,
+                                    &state.root,
+                                );
                                 state.flush();
                                 state.pending_paths.clear();
                                 state.pending_started = None;
@@ -2019,9 +2072,19 @@ impl Worker {
                     }
                 }
             }
+            #[cfg(test)]
+            let root_recovery_traversal = state
+                .root_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.phase == RootRecoveryPhase::Scanning)
+                .then(|| state.root.clone());
             let active = job.active.as_mut().expect("active topology directory");
             let mut finished = false;
             while entries < MAX_TOPOLOGY_ENTRIES_PER_TURN {
+                #[cfg(test)]
+                if let Some(root) = &root_recovery_traversal {
+                    self.inject_root_recovery_barrier(RootRecoveryBarrier::DuringTraversal, root);
+                }
                 match active.entries.next() {
                     Some(Ok(entry)) => {
                         entries += 1;
@@ -2655,6 +2718,12 @@ impl Worker {
                 return;
             }
 
+            #[cfg(test)]
+            self.inject_root_recovery_barrier(
+                RootRecoveryBarrier::OldInterestsDrained,
+                &state.root,
+            );
+
             let candidate = state
                 .root_recovery
                 .as_ref()
@@ -2683,6 +2752,20 @@ impl Worker {
 
             let root = state.root.clone();
             let opened = self.open_topology_directory(state, root.clone(), true, false, false);
+            if state
+                .root_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.candidate_unstable)
+            {
+                state
+                    .root_recovery
+                    .as_mut()
+                    .expect("root recovery must exist")
+                    .phase =
+                    RootRecoveryPhase::CleaningFailure(RootRecoveryFailureReason::IdentityUnstable);
+                self.progress_root_recovery(state);
+                return;
+            }
             let Some(opened) = opened.filter(|_| state.watched_paths.contains_key(&root)) else {
                 state.remove_deferred_subtree(&root);
                 self.finish_root_recovery_failure(
@@ -2710,6 +2793,11 @@ impl Worker {
                 && state.topology_barriers == 1
         });
         if scan_complete {
+            #[cfg(test)]
+            self.inject_root_recovery_barrier(
+                RootRecoveryBarrier::BeforeFinalValidation,
+                &state.root,
+            );
             let candidate = state
                 .root_recovery
                 .as_ref()
@@ -2940,7 +3028,16 @@ impl Worker {
         if let Some(descriptor) = self.watch_identities.get(&identity).copied()
             && self.watches.contains_key(&descriptor)
         {
+            #[cfg(test)]
+            if state.root_recovery.is_some() {
+                self.inject_root_recovery_barrier(RootRecoveryBarrier::SharingExistingWatch, path);
+            }
             if directory_identity(path).ok() != Some(identity) {
+                if path == state.root
+                    && let Some(recovery) = state.root_recovery.as_mut()
+                {
+                    recovery.candidate_unstable = true;
+                }
                 state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
                 return Err(io::Error::from_raw_os_error(libc::ESTALE));
             }
@@ -2966,12 +3063,20 @@ impl Worker {
                 format!("watch path contains NUL: {}", path.display()),
             )
         })?;
+        #[cfg(test)]
+        if state.root_recovery.is_some() {
+            self.inject_root_recovery_barrier(RootRecoveryBarrier::BeforeAddWatch, path);
+        }
         // SAFETY: c_path is NUL-terminated and inotify is a live descriptor.
         let descriptor = unsafe {
             libc::inotify_add_watch(self.inotify.as_raw_fd(), c_path.as_ptr(), WATCH_MASK)
         };
         if descriptor < 0 {
             return Err(io::Error::last_os_error());
+        }
+        #[cfg(test)]
+        if state.root_recovery.is_some() {
+            self.inject_root_recovery_barrier(RootRecoveryBarrier::AfterAddWatch, path);
         }
         let created_native_watch = !self.watches.contains_key(&descriptor);
         let created_lifetime = if created_native_watch {
@@ -2993,6 +3098,11 @@ impl Worker {
                 .and_then(|watch| watch.identity)
                 .is_some_and(|watched| watched != identity)
         {
+            if path == state.root
+                && let Some(recovery) = state.root_recovery.as_mut()
+            {
+                recovery.candidate_unstable = true;
+            }
             if created_native_watch {
                 self.remove_native_watch_lifetime(
                     descriptor,
@@ -3470,7 +3580,7 @@ fn partial_reason_for_error(error: &io::Error) -> PartialReason {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -3645,6 +3755,197 @@ mod tests {
             Arc::new(RuntimeCounters::default()),
             None,
         )
+    }
+
+    fn wait_for_root_attachment(state: &Arc<Mutex<RootState>>, attachment: RootAttachment) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .attachment
+            != attachment
+        {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for root attachment {attachment:?}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_for_batch_path(receiver: &Receiver<ChangeBatch>, path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "timed out waiting for {}",
+                path.display()
+            );
+            let batch = receiver.recv_timeout(remaining).unwrap();
+            if batch.invalidated_paths.contains(&path.to_path_buf()) {
+                return;
+            }
+        }
+    }
+
+    fn assert_only_root_invalidations(receiver: &Receiver<ChangeBatch>, root: &Path) {
+        while let Ok(batch) = receiver.try_recv() {
+            assert_eq!(batch.invalidated_paths, vec![root.to_path_buf()]);
+            assert_eq!(batch.root_state.attachment, RootAttachment::Lost);
+        }
+    }
+
+    fn root_recovery_barrier_rejects_replacement(
+        barrier: RootRecoveryBarrier,
+        share_candidate_watch: bool,
+    ) {
+        let parent = TestRoot::new("root-recovery-barrier");
+        let root = parent.0.join("root");
+        let original = parent.0.join("original");
+        let replaced_candidate = parent.0.join("replaced-candidate");
+        let peer_root = parent.0.join("peer");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&peer_root).unwrap();
+
+        let fired = Arc::new(AtomicBool::new(false));
+        let hook_fired = Arc::clone(&fired);
+        let hook_root = root.clone();
+        let hook_replaced_candidate = replaced_candidate.clone();
+        let hook: RootRecoveryBarrierHook = Arc::new(move |observed, path| {
+            if observed == barrier && path == hook_root && !hook_fired.swap(true, Ordering::AcqRel)
+            {
+                fs::rename(&hook_root, &hook_replaced_candidate).unwrap();
+                fs::create_dir(&hook_root).unwrap();
+            }
+        });
+        let runtime = Runtime::start_with_root_recovery_barrier_hook(None, hook).unwrap();
+
+        let primary_stats = Arc::new(SharedStats::new());
+        let primary = runtime
+            .subscribe(
+                root.clone(),
+                SubscriptionOptions::default(),
+                Arc::clone(&primary_stats),
+            )
+            .unwrap();
+        let peer_stats = Arc::new(SharedStats::new());
+        let peer = runtime
+            .subscribe(
+                peer_root.clone(),
+                SubscriptionOptions::default(),
+                peer_stats,
+            )
+            .unwrap();
+
+        fs::rename(&root, &original).unwrap();
+        fs::create_dir(&root).unwrap();
+        if barrier == RootRecoveryBarrier::DuringTraversal {
+            fs::create_dir(root.join("scan-child")).unwrap();
+        }
+        wait_for_root_attachment(&primary.root_state, RootAttachment::Lost);
+
+        let candidate_peer = share_candidate_watch.then(|| {
+            runtime
+                .subscribe(
+                    root.clone(),
+                    SubscriptionOptions::default(),
+                    Arc::new(SharedStats::new()),
+                )
+                .unwrap()
+        });
+
+        let result = runtime
+            .queue_root_recovery(primary.id, RootIdentityPolicy::AcceptReplacement)
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        assert!(
+            fired.load(Ordering::Acquire),
+            "barrier hook was not reached"
+        );
+        assert_eq!(result.attachment, RootRecoveryAttachment::NotAttached);
+        assert_eq!(
+            result.reason,
+            Some(RootRecoveryFailureReason::IdentityUnstable)
+        );
+        assert_eq!(result.boundary_sequence, None);
+        assert_eq!(result.current_root_state.attachment, RootAttachment::Lost);
+        assert_eq!(
+            primary
+                .root_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .attachment,
+            RootAttachment::Lost
+        );
+        assert_eq!(primary_stats.snapshot().watched_directories, 0);
+        assert_eq!(primary_stats.snapshot().deferred_directories, 0);
+        assert_only_root_invalidations(&primary.receiver, &root);
+
+        if let Some(candidate_peer) = &candidate_peer {
+            wait_for_root_attachment(&candidate_peer.root_state, RootAttachment::Lost);
+            assert_eq!(runtime.stats().native_watches, 2);
+        } else {
+            assert_eq!(runtime.stats().native_watches, 1);
+        }
+
+        let later_occupant = root.join("must-not-be-followed");
+        fs::write(&later_occupant, b"later").unwrap();
+        let peer_sentinel = peer_root.join("peer-still-live");
+        fs::write(&peer_sentinel, b"peer").unwrap();
+        wait_for_batch_path(&peer.receiver, &peer_sentinel);
+        assert_only_root_invalidations(&primary.receiver, &root);
+
+        runtime.dispose(primary.id).unwrap();
+        runtime.dispose(primary.id).unwrap();
+        if let Some(candidate_peer) = candidate_peer {
+            runtime.dispose(candidate_peer.id).unwrap();
+            runtime.dispose(candidate_peer.id).unwrap();
+        }
+        runtime.dispose(peer.id).unwrap();
+        runtime.dispose(peer.id).unwrap();
+        runtime.shutdown_and_join().unwrap();
+        assert_eq!(runtime.stats(), RuntimeStats::default());
+    }
+
+    #[test]
+    fn replacement_after_candidate_capture_is_rejected() {
+        root_recovery_barrier_rejects_replacement(RootRecoveryBarrier::CandidateCaptured, false);
+    }
+
+    #[test]
+    fn replacement_after_old_interests_drain_is_rejected() {
+        root_recovery_barrier_rejects_replacement(RootRecoveryBarrier::OldInterestsDrained, false);
+    }
+
+    #[test]
+    fn replacement_while_sharing_candidate_watch_is_rejected() {
+        root_recovery_barrier_rejects_replacement(RootRecoveryBarrier::SharingExistingWatch, true);
+    }
+
+    #[test]
+    fn replacement_before_add_watch_is_rejected() {
+        root_recovery_barrier_rejects_replacement(RootRecoveryBarrier::BeforeAddWatch, false);
+    }
+
+    #[test]
+    fn replacement_after_add_watch_is_rejected() {
+        root_recovery_barrier_rejects_replacement(RootRecoveryBarrier::AfterAddWatch, false);
+    }
+
+    #[test]
+    fn replacement_during_traversal_is_rejected() {
+        root_recovery_barrier_rejects_replacement(RootRecoveryBarrier::DuringTraversal, false);
+    }
+
+    #[test]
+    fn replacement_before_final_validation_is_rejected() {
+        root_recovery_barrier_rejects_replacement(
+            RootRecoveryBarrier::BeforeFinalValidation,
+            false,
+        );
     }
 
     fn install_synthetic_watch(

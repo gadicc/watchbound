@@ -261,9 +261,15 @@ Deterministic tests cover:
 - ancestor/path mismatch recovery without ancestor watches or false cause
   claims;
 - refusal under `original-only`, missing/non-directory candidates, symlink
-  roots, replaced symlink ancestors, and a same-path identity change during
-  traversal; deterministic mutation at every internal capture/share/add-watch
-  validation barrier remains a readiness gate;
+  roots, and replaced symlink ancestors;
+- per-runtime test-only injection of a same-path identity change immediately
+  after candidate capture, after old interests drain, while validating an
+  existing shared watch, before and after `inotify_add_watch`, during traversal,
+  and immediately before final ancestry/root-identity validation; every case
+  returns `identity-unstable`, leaves root loss latched, removes the recovering
+  subscription's candidate interests, emits no recovery boundary or
+  reconstructed detail, preserves truthful peer delivery, joins repeated
+  disposal, and restores final runtime gauges exactly to zero;
 - no promotion, inclusion scan, or exclusion-update reattachment while root
   loss is latched;
 - watch-before-read populated-tree coverage and later deep delivery;

@@ -89,3 +89,9 @@ replacement identity. A caller may instead invoke the distinct
 same lexical root under an explicit `original-only` or `accept-replacement`
 decision and emits one conservative root boundary on success. Non-Linux
 backends and published prebuilds remain for later milestones.
+
+## Maintainer and license
+
+Maintainer: Gadi Cohen <dragon@wastelands.net>
+
+Copyright (c) 2026 by Gadi Cohen, [MIT Licensed](LICENSE.txt).

@@ -1,14 +1,16 @@
 # Consumer and API stabilization decision
 
-Status: recommendation recorded on 2026-07-20; documentation only.
+Status: stabilization authorized on 2026-07-21; implementation and validation
+in progress.
 This record does not publish a package, change package visibility, produce a
 prebuild, or authorize integration with any consumer.
 
 ## Decision
 
-Develop Watchbound into a **maintained unpublished Linux package**, provided a
-named maintainer and an exact initial deployment target are chosen. Keep it
-private at `0.0.0` until the entry criteria below are accepted. Do not prepare
+Develop Watchbound into a **maintained unpublished Linux package**. Gadi Cohen
+<dragon@wastelands.net> owns the initial maintenance phase, and the narrow
+deployment target is recorded in `support-matrix.md`. Keep it private at
+`0.0.0` until the entry and verification criteria below pass. Do not prepare
 consumer integration yet.
 
 This is the middle of the three evaluated choices. The feasibility prototype
@@ -26,8 +28,8 @@ environments while its API is still revised. Any package-visibility change,
 prebuild production, publishing machinery, or consumer integration still
 requires explicit approval.
 
-If no maintainer or credible Linux consumer horizon is identified, fall back to
-the feasibility-prototype choice rather than creating an ownerless package.
+The compatibility and release policy is in `maintenance-policy.md`; the
+approved non-adversarial path boundary is in `security-threat-model.md`.
 
 ## Resulting contract audit
 
@@ -58,14 +60,14 @@ the feasibility-prototype choice rather than creating an ownerless package.
 
 ## Entry criteria for maintained-unpublished status
 
-The technical feasibility evidence is present, but the project should enter
-this state only when all of the following are explicitly accepted:
+The technical feasibility evidence is present and criteria 1 through 4 have
+been accepted. Recognition still waits for implementation and validation of
+the remaining gates:
 
-1. A named maintainer owns Linux inotify semantics, Rust/Node dependencies,
-   security assumptions, test triage, and release-gate evidence.
-2. The first supported target is written narrowly—for example exact Node
-   versions, Linux distribution/libc, and x64 or arm64—instead of inheriting the
-   generated loader's broad platform list.
+1. Gadi Cohen owns Linux inotify semantics, Rust/Node dependencies, security
+   assumptions, test triage, and release-gate evidence.
+2. The first supported target is the exact, narrow source-build target in
+   `support-matrix.md`, not the generated loader's broad platform list.
 3. Consumers of the private package accept conservative root invalidation,
    explicit partial/uncertain coverage, required joined disposal, and no
    reconstructed detailed-event promise.
@@ -147,8 +149,10 @@ preserve conservative coverage and joined cleanup.
 
 ## Change authority
 
-This decision authorizes documentation and future proposal work only. Ask
-before changing any `private`/`publish` setting, versioning the packages,
-adding release or publishing automation, producing/distributing prebuilds,
-uploading artifacts, or integrating Watchbound with Codex Desktop or another
-consumer.
+The 2026-07-21 approval authorizes the operational API, source-build,
+maintenance, bounded verification, and sanitizer implementation work described
+in this decision. It does not authorize changing any `private`/`publish`
+setting, versioning the packages, adding release or publishing automation,
+producing or distributing prebuilds, uploading artifacts, committing a public
+derivative of private evidence, or integrating Watchbound with Codex Desktop
+or another consumer.

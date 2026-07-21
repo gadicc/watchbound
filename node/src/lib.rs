@@ -9,22 +9,194 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use napi::bindgen_prelude::{AsyncTask, BigInt, Buffer, FnArgs, Function};
+use napi::bindgen_prelude::{AsyncTask, BigInt, Buffer, FnArgs, Function, ToNapiValue};
 use napi::threadsafe_function::{
     ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
 use watchbound_engine::{
-    ChangeBatch, Coverage, Engine, ExclusionHandle, PartialReason, ReconciliationHandle,
-    ReconciliationResult, RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence,
-    RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryHandle, RootRecoveryResult,
-    RootState, RootStateHandle, Stats, StatsHandle, Subscription, SubscriptionOptions,
-    UncertainReason,
+    ChangeBatch, Coverage, Engine, ErrorCode, ExclusionHandle, MAX_ERROR_MESSAGE_BYTES, Operation,
+    PartialReason, ReconciliationHandle, ReconciliationResult, RootAttachment, RootIdentity,
+    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
+    RootRecoveryHandle, RootRecoveryResult, RootState, RootStateHandle, Stats, StatsHandle,
+    Subscription, SubscriptionOptions, SystemCause, UncertainReason, WatchboundError,
 };
 
 type BatchThreadsafeFunction =
     ThreadsafeFunction<ChangeBatch, (), FnArgs<(JsChangeBatch,)>, Status, false, false, 1>;
+
+type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
+type TaskOutcome<T> = NodeResult<T>;
+
+const MAX_SYSTEM_DETAIL_BYTES: usize = 128;
+
+#[derive(Clone, Debug)]
+enum NodeSystemCode {
+    Number(i32),
+    Text(String),
+}
+
+#[derive(Clone, Debug)]
+struct NodeSystemCause {
+    domain: &'static str,
+    code: Option<NodeSystemCode>,
+    kind: Option<String>,
+    message: String,
+}
+
+impl NodeSystemCause {
+    fn from_engine(cause: &SystemCause) -> Self {
+        Self {
+            domain: "os",
+            code: cause.raw_os_error().map(NodeSystemCode::Number),
+            kind: Some(bounded_string(
+                format!("{:?}", cause.kind()),
+                MAX_SYSTEM_DETAIL_BYTES,
+            )),
+            message: bounded_string(cause.to_string(), MAX_ERROR_MESSAGE_BYTES),
+        }
+    }
+
+    fn from_io(cause: &io::Error) -> Self {
+        Self {
+            domain: "os",
+            code: cause.raw_os_error().map(NodeSystemCode::Number),
+            kind: Some(bounded_string(
+                format!("{:?}", cause.kind()),
+                MAX_SYSTEM_DETAIL_BYTES,
+            )),
+            message: bounded_string(cause.to_string(), MAX_ERROR_MESSAGE_BYTES),
+        }
+    }
+
+    fn from_napi(cause: Error) -> Self {
+        Self {
+            domain: "node-api",
+            code: Some(NodeSystemCode::Text(bounded_string(
+                cause.status.as_ref().to_owned(),
+                MAX_SYSTEM_DETAIL_BYTES,
+            ))),
+            kind: None,
+            message: bounded_string(cause.reason, MAX_ERROR_MESSAGE_BYTES),
+        }
+    }
+
+    fn from_napi_status(status: Status, message: impl Into<String>) -> Self {
+        Self {
+            domain: "node-api",
+            code: Some(NodeSystemCode::Text(bounded_string(
+                status.as_ref().to_owned(),
+                MAX_SYSTEM_DETAIL_BYTES,
+            ))),
+            kind: None,
+            message: bounded_string(message.into(), MAX_ERROR_MESSAGE_BYTES),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct NodeErrorDetails {
+    code: ErrorCode,
+    operation: Operation,
+    message: String,
+    system_cause: Option<NodeSystemCause>,
+}
+
+impl NodeErrorDetails {
+    fn new(code: ErrorCode, operation: Operation, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            operation,
+            message: bounded_string(message.into(), MAX_ERROR_MESSAGE_BYTES),
+            system_cause: None,
+        }
+    }
+
+    fn from_io(
+        code: ErrorCode,
+        operation: Operation,
+        message: impl Into<String>,
+        cause: &io::Error,
+    ) -> Self {
+        Self::new(code, operation, message).with_system_cause(NodeSystemCause::from_io(cause))
+    }
+
+    fn from_napi(
+        code: ErrorCode,
+        operation: Operation,
+        message: impl Into<String>,
+        cause: Error,
+    ) -> Self {
+        Self::new(code, operation, message).with_system_cause(NodeSystemCause::from_napi(cause))
+    }
+
+    fn with_system_cause(mut self, system_cause: NodeSystemCause) -> Self {
+        self.system_cause = Some(system_cause);
+        self
+    }
+
+    fn into_napi_error(self, env: &Env) -> Result<Error> {
+        let mut error = env.create_error(Error::from_reason(self.message))?;
+        error.set("name", "WatchboundError")?;
+        error.set("code", self.code.as_str())?;
+        error.set("operation", self.operation.as_str())?;
+        error.set("retryable", self.code.retryable())?;
+        if let Some(retry_after) = self.code.retry_after() {
+            error.set("retryAfter", retry_after.as_str())?;
+        }
+        if let Some(system_cause) = self.system_cause {
+            let mut cause = napi::bindgen_prelude::Object::new(env)?;
+            cause.set("domain", system_cause.domain)?;
+            if let Some(code) = system_cause.code {
+                match code {
+                    NodeSystemCode::Number(code) => cause.set("code", code)?,
+                    NodeSystemCode::Text(code) => cause.set("code", code)?,
+                }
+            }
+            if let Some(kind) = system_cause.kind {
+                cause.set("kind", kind)?;
+            }
+            cause.set("message", system_cause.message)?;
+            error.set("systemCause", cause)?;
+        }
+        Ok(Error::from((&error).into_unknown(env)?))
+    }
+}
+
+impl From<WatchboundError> for NodeErrorDetails {
+    fn from(error: WatchboundError) -> Self {
+        let system_cause = error.system_cause().map(NodeSystemCause::from_engine);
+        Self {
+            code: error.code(),
+            operation: error.operation(),
+            message: error.message().to_owned(),
+            system_cause,
+        }
+    }
+}
+
+fn bounded_string(mut value: String, maximum_bytes: usize) -> String {
+    if value.len() <= maximum_bytes {
+        return value;
+    }
+    let mut end = maximum_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    value
+}
+
+fn task_result<T>(env: &Env, outcome: TaskOutcome<T>) -> Result<T> {
+    outcome.map_err(|error| sync_error(env, error))
+}
+
+fn sync_error(env: &Env, error: NodeErrorDetails) -> Error {
+    error
+        .into_napi_error(env)
+        .unwrap_or_else(|conversion_error| conversion_error)
+}
 
 #[napi(object)]
 pub struct JsSubscriptionOptions {
@@ -35,7 +207,7 @@ pub struct JsSubscriptionOptions {
 }
 
 impl JsSubscriptionOptions {
-    fn into_engine_options(self) -> Result<SubscriptionOptions> {
+    fn into_engine_options(self) -> NodeResult<SubscriptionOptions> {
         let defaults = SubscriptionOptions::default();
         let watch_limit = self
             .watch_limit
@@ -66,10 +238,11 @@ impl JsSubscriptionOptions {
     }
 }
 
-fn positive_u32_option(value: f64, name: &str) -> Result<u32> {
+fn positive_u32_option(value: f64, name: &str) -> NodeResult<u32> {
     if !value.is_finite() || value < 1.0 || value > f64::from(u32::MAX) || value.fract() != 0.0 {
-        return Err(Error::new(
-            Status::InvalidArg,
+        return Err(NodeErrorDetails::new(
+            ErrorCode::InvalidArgument,
+            Operation::Subscribe,
             format!(
                 "{name} must be a finite positive integer no greater than {}",
                 u32::MAX
@@ -281,14 +454,21 @@ pub fn capabilities() -> JsCapabilities {
     }
 }
 
-fn resolve_root(root: String) -> Result<PathBuf> {
+fn resolve_root(root: String) -> NodeResult<PathBuf> {
     let root = PathBuf::from(root);
     if root.is_absolute() {
         Ok(root)
     } else {
         std::env::current_dir()
             .map(|current_dir| current_dir.join(root))
-            .map_err(node_error)
+            .map_err(|error| {
+                NodeErrorDetails::from_io(
+                    ErrorCode::RootUnavailable,
+                    Operation::Subscribe,
+                    "current working directory is unavailable",
+                    &error,
+                )
+            })
     }
 }
 
@@ -299,10 +479,11 @@ pub fn subscribe(
     options: Option<JsSubscriptionOptions>,
     callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
 ) -> Result<AsyncTask<SubscribeTask>> {
-    let root = resolve_root(root)?;
+    let root = resolve_root(root).map_err(|error| sync_error(&env, error))?;
     let options = options
         .map(JsSubscriptionOptions::into_engine_options)
-        .transpose()?
+        .transpose()
+        .map_err(|error| sync_error(&env, error))?
         .unwrap_or_default();
     let threadsafe_function: BatchThreadsafeFunction = callback
         .build_threadsafe_function::<ChangeBatch>()
@@ -311,9 +492,21 @@ pub fn subscribe(
         .max_queue_size::<1>()
         .build_callback(|context: ThreadsafeCallContext<ChangeBatch>| {
             Ok(FnArgs::from((JsChangeBatch::from(context.value),)))
+        })
+        .map_err(|error| {
+            sync_error(
+                &env,
+                NodeErrorDetails::from_napi(
+                    ErrorCode::ResourceUnavailable,
+                    Operation::Subscribe,
+                    "Node callback bridge could not be created",
+                    error,
+                ),
+            )
         })?;
     let shutdown = Arc::new(ShutdownGate::new());
-    let cleanup_registration = register_environment_cleanup(&env, &shutdown)?;
+    let cleanup_registration =
+        register_environment_cleanup(&env, &shutdown).map_err(|error| sync_error(&env, error))?;
 
     Ok(AsyncTask::new(SubscribeTask {
         root,
@@ -333,38 +526,56 @@ pub struct SubscribeTask {
 }
 
 impl Task for SubscribeTask {
-    type Output = Arc<SubscriptionState>;
+    type Output = TaskOutcome<Arc<SubscriptionState>>;
     type JsValue = NativeSubscription;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        if self.shutdown.stop.load(Ordering::Acquire) {
-            return Err(Error::from_reason("Node environment is shutting down"));
-        }
-        let subscription = Engine::new()
-            .subscribe(&self.root, self.options.clone())
-            .map_err(node_error)?;
-        if self.shutdown.stop.load(Ordering::Acquire) {
-            subscription.dispose().map_err(node_error)?;
-            return Err(Error::from_reason("Node environment is shutting down"));
-        }
-        let threadsafe_function = self
-            .threadsafe_function
-            .take()
-            .ok_or_else(|| Error::from_reason("subscribe task was already consumed"))?;
-        let cleanup_registration = self.cleanup_registration.take().ok_or_else(|| {
-            Error::from_reason("subscribe cleanup registration was already consumed")
-        })?;
-        SubscriptionState::start(
-            subscription,
-            threadsafe_function,
-            Arc::clone(&self.shutdown),
-            cleanup_registration,
-        )
-        .map(Arc::new)
-        .map_err(node_error)
+        let outcome = (|| {
+            if self.shutdown.stop.load(Ordering::Acquire) {
+                return Err(NodeErrorDetails::new(
+                    ErrorCode::OperationInterrupted,
+                    Operation::Subscribe,
+                    "Node environment teardown interrupted subscription setup",
+                ));
+            }
+            let subscription = Engine::new()
+                .subscribe(&self.root, self.options.clone())
+                .map_err(NodeErrorDetails::from)?;
+            if self.shutdown.stop.load(Ordering::Acquire) {
+                subscription.dispose().map_err(NodeErrorDetails::from)?;
+                return Err(NodeErrorDetails::new(
+                    ErrorCode::OperationInterrupted,
+                    Operation::Subscribe,
+                    "Node environment teardown interrupted subscription setup",
+                ));
+            }
+            let threadsafe_function = self.threadsafe_function.take().ok_or_else(|| {
+                NodeErrorDetails::new(
+                    ErrorCode::Internal,
+                    Operation::Subscribe,
+                    "subscribe task callback bridge was already consumed",
+                )
+            })?;
+            let cleanup_registration = self.cleanup_registration.take().ok_or_else(|| {
+                NodeErrorDetails::new(
+                    ErrorCode::Internal,
+                    Operation::Subscribe,
+                    "subscribe task cleanup registration was already consumed",
+                )
+            })?;
+            SubscriptionState::start(
+                subscription,
+                threadsafe_function,
+                Arc::clone(&self.shutdown),
+                cleanup_registration,
+            )
+            .map(Arc::new)
+        })();
+        Ok(outcome)
     }
 
-    fn resolve(&mut self, _env: Env, state: Self::Output) -> Result<Self::JsValue> {
+    fn resolve(&mut self, env: Env, state: Self::Output) -> Result<Self::JsValue> {
+        let state = task_result(&env, state)?;
         Ok(NativeSubscription { state })
     }
 }
@@ -410,14 +621,19 @@ impl NativeSubscription {
     #[napi(ts_return_type = "Promise<JsCoverage>")]
     pub fn replace_exclusions(
         &self,
+        env: Env,
         generation: BigInt,
         prefixes: Vec<Buffer>,
     ) -> Result<AsyncTask<ReplaceExclusionsTask>> {
         let (negative, generation, lossless) = generation.get_u64();
         if negative || !lossless {
-            return Err(Error::new(
-                Status::InvalidArg,
-                "generation must be a non-negative bigint no greater than u64::MAX",
+            return Err(sync_error(
+                &env,
+                NodeErrorDetails::new(
+                    ErrorCode::InvalidArgument,
+                    Operation::ReplaceExclusions,
+                    "generation must be a non-negative bigint no greater than u64::MAX",
+                ),
             ));
         }
         Ok(AsyncTask::new(ReplaceExclusionsTask {
@@ -438,14 +654,22 @@ impl NativeSubscription {
     }
 
     #[napi(ts_return_type = "Promise<JsRootRecoveryResult>")]
-    pub fn recover_root(&self, identity_policy: String) -> Result<AsyncTask<RecoverRootTask>> {
+    pub fn recover_root(
+        &self,
+        env: Env,
+        identity_policy: String,
+    ) -> Result<AsyncTask<RecoverRootTask>> {
         let identity_policy = match identity_policy.as_str() {
             "original-only" => RootIdentityPolicy::OriginalOnly,
             "accept-replacement" => RootIdentityPolicy::AcceptReplacement,
             _ => {
-                return Err(Error::new(
-                    Status::InvalidArg,
-                    "identityPolicy must be \"original-only\" or \"accept-replacement\"",
+                return Err(sync_error(
+                    &env,
+                    NodeErrorDetails::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::RecoverRoot,
+                        "identityPolicy must be \"original-only\" or \"accept-replacement\"",
+                    ),
                 ));
             }
         };
@@ -498,58 +722,64 @@ pub struct RecoverRootTask {
 }
 
 impl Task for ReplaceExclusionsTask {
-    type Output = Coverage;
+    type Output = TaskOutcome<Coverage>;
     type JsValue = JsCoverage;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.exclusions
+        Ok(self
+            .exclusions
             .replace_exclusions(self.generation, std::mem::take(&mut self.prefixes))
-            .map_err(node_error)
+            .map_err(NodeErrorDetails::from))
     }
 
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        let output = task_result(&env, output)?;
         Ok(JsCoverage::from(&output))
     }
 }
 
 impl Task for ReconcileTask {
-    type Output = ReconciliationResult;
+    type Output = TaskOutcome<ReconciliationResult>;
     type JsValue = JsReconciliationResult;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.reconciliation.reconcile().map_err(node_error)
+        Ok(self
+            .reconciliation
+            .reconcile()
+            .map_err(NodeErrorDetails::from))
     }
 
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output.into())
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(task_result(&env, output)?.into())
     }
 }
 
 impl Task for RecoverRootTask {
-    type Output = RootRecoveryResult;
+    type Output = TaskOutcome<RootRecoveryResult>;
     type JsValue = JsRootRecoveryResult;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.recovery
+        Ok(self
+            .recovery
             .recover_root(self.identity_policy)
-            .map_err(node_error)
+            .map_err(NodeErrorDetails::from))
     }
 
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output.into())
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(task_result(&env, output)?.into())
     }
 }
 
 impl Task for DisposeTask {
-    type Output = ();
+    type Output = TaskOutcome<()>;
     type JsValue = ();
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.state.dispose_join_and_drain().map_err(node_error)
+        Ok(self.state.dispose_join_and_drain())
     }
 
-    fn resolve(&mut self, _env: Env, _output: Self::Output) -> Result<Self::JsValue> {
-        Ok(())
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        task_result(&env, output)
     }
 }
 
@@ -561,11 +791,11 @@ pub struct SubscriptionState {
     root_state: RootStateHandle,
     root_recovery: RootRecoveryHandle,
     threadsafe_function: Mutex<Option<Arc<BatchThreadsafeFunction>>>,
-    bridge: Mutex<Option<JoinHandle<io::Result<()>>>>,
+    bridge: Mutex<Option<JoinHandle<NodeResult<()>>>>,
     shutdown: Arc<ShutdownGate>,
     callback_tracker: Arc<CallbackTracker>,
     cleanup_started: AtomicBool,
-    cleanup_result: Mutex<Option<io::Result<()>>>,
+    cleanup_result: Mutex<Option<NodeResult<()>>>,
     cleanup_condition: Condvar,
     cleanup_registration: Mutex<Option<EnvironmentCleanupRegistration>>,
 }
@@ -576,7 +806,7 @@ impl SubscriptionState {
         threadsafe_function: BatchThreadsafeFunction,
         shutdown: Arc<ShutdownGate>,
         cleanup_registration: EnvironmentCleanupRegistration,
-    ) -> io::Result<Self> {
+    ) -> NodeResult<Self> {
         let initial_coverage = subscription.initial_coverage().clone();
         let stats = subscription.stats_handle();
         let exclusions = subscription.exclusion_handle();
@@ -596,6 +826,14 @@ impl SubscriptionState {
                     bridge_threadsafe_function,
                     bridge_callback_tracker,
                     bridge_shutdown,
+                )
+            })
+            .map_err(|error| {
+                NodeErrorDetails::from_io(
+                    ErrorCode::ResourceUnavailable,
+                    Operation::Subscribe,
+                    "Node callback bridge thread could not be created",
+                    &error,
                 )
             })?;
 
@@ -617,7 +855,7 @@ impl SubscriptionState {
         })
     }
 
-    fn dispose_join_and_drain(&self) -> io::Result<()> {
+    fn dispose_join_and_drain(&self) -> NodeResult<()> {
         let owns_cleanup = self
             .cleanup_started
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -630,9 +868,13 @@ impl SubscriptionState {
         let result = lock_unpoisoned(&self.bridge)
             .take()
             .map_or(Ok(()), |bridge| {
-                bridge
-                    .join()
-                    .map_err(|_| io::Error::other("Node bridge thread panicked"))?
+                bridge.join().map_err(|_| {
+                    NodeErrorDetails::new(
+                        ErrorCode::Internal,
+                        Operation::Dispose,
+                        "Node callback bridge thread panicked",
+                    )
+                })?
             });
         if !self.shutdown.environment_closing.load(Ordering::Acquire) {
             self.callback_tracker
@@ -641,16 +883,12 @@ impl SubscriptionState {
         lock_unpoisoned(&self.threadsafe_function).take();
         lock_unpoisoned(&self.cleanup_registration).take();
 
-        let stored_result = result
-            .as_ref()
-            .map(|_| ())
-            .map_err(|error| io::Error::new(error.kind(), error.to_string()));
-        *lock_unpoisoned(&self.cleanup_result) = Some(stored_result);
+        *lock_unpoisoned(&self.cleanup_result) = Some(result.clone());
         self.cleanup_condition.notify_all();
         result
     }
 
-    fn wait_for_cleanup(&self) -> io::Result<()> {
+    fn wait_for_cleanup(&self) -> NodeResult<()> {
         let mut result = lock_unpoisoned(&self.cleanup_result);
         while result.is_none() {
             result = self
@@ -661,9 +899,7 @@ impl SubscriptionState {
         result
             .as_ref()
             .expect("cleanup result checked above")
-            .as_ref()
-            .map(|_| ())
-            .map_err(|error| io::Error::new(error.kind(), error.to_string()))
+            .clone()
     }
 
     fn cleanup_finished(&self) -> bool {
@@ -676,7 +912,7 @@ fn bridge_batches(
     threadsafe_function: Arc<BatchThreadsafeFunction>,
     callback_tracker: Arc<CallbackTracker>,
     shutdown: Arc<ShutdownGate>,
-) -> io::Result<()> {
+) -> NodeResult<()> {
     let mut delivery_error = None;
     while !shutdown.stop.load(Ordering::Acquire) {
         let received = subscription.recv_timeout(Duration::from_millis(10));
@@ -701,14 +937,22 @@ fn bridge_batches(
         );
         if status != Status::Ok {
             callback_tracker.finish_delivery_error();
-            delivery_error = Some(io::Error::other(format!(
-                "Node callback bridge delivery failed: {status}"
-            )));
+            delivery_error = Some(
+                NodeErrorDetails::new(
+                    ErrorCode::Internal,
+                    Operation::DeliverBatch,
+                    "Node callback bridge could not deliver a batch",
+                )
+                .with_system_cause(NodeSystemCause::from_napi_status(
+                    status,
+                    format!("Node callback bridge delivery failed: {status}"),
+                )),
+            );
             break;
         }
     }
 
-    let dispose_result = subscription.dispose();
+    let dispose_result = subscription.dispose().map_err(NodeErrorDetails::from);
     delivery_error.map_or(dispose_result, Err)
 }
 
@@ -748,12 +992,15 @@ impl EnvironmentCleanupRegistry {
         }
     }
 
-    fn register(&mut self, shutdown: &Arc<ShutdownGate>) -> Result<u64> {
+    fn register(&mut self, shutdown: &Arc<ShutdownGate>) -> NodeResult<u64> {
         let registration_id = self.next_registration_id;
-        self.next_registration_id = self
-            .next_registration_id
-            .checked_add(1)
-            .ok_or_else(|| Error::from_reason("environment cleanup registration IDs exhausted"))?;
+        self.next_registration_id = self.next_registration_id.checked_add(1).ok_or_else(|| {
+            NodeErrorDetails::new(
+                ErrorCode::Internal,
+                Operation::Subscribe,
+                "environment cleanup registration IDs exhausted",
+            )
+        })?;
         self.registrations
             .insert(registration_id, Arc::downgrade(shutdown));
         Ok(registration_id)
@@ -784,13 +1031,21 @@ fn environment_cleanup_registries() -> &'static Mutex<HashMap<usize, Environment
 fn register_environment_cleanup(
     env: &Env,
     shutdown: &Arc<ShutdownGate>,
-) -> Result<EnvironmentCleanupRegistration> {
+) -> NodeResult<EnvironmentCleanupRegistration> {
     let environment_key = env.raw() as usize;
     let mut environments = lock_unpoisoned(environment_cleanup_registries());
     if let std::collections::hash_map::Entry::Vacant(environment) =
         environments.entry(environment_key)
     {
-        env.add_env_cleanup_hook(environment_key, cleanup_environment)?;
+        env.add_env_cleanup_hook(environment_key, cleanup_environment)
+            .map_err(|error| {
+                NodeErrorDetails::from_napi(
+                    ErrorCode::Internal,
+                    Operation::Subscribe,
+                    "Node environment cleanup hook could not be registered",
+                    error,
+                )
+            })?;
         environment.insert(EnvironmentCleanupRegistry::new());
     }
     let registration_id = environments
@@ -929,10 +1184,6 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn node_error(error: io::Error) -> Error {
-    Error::from_reason(error.to_string())
 }
 
 #[cfg(test)]

@@ -164,7 +164,27 @@ test("native root recovery rejects an unknown identity policy", async () => {
   try {
     assert.throws(
       () => subscription.recoverRoot("automatic"),
-      /identityPolicy/,
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+        assert.equal(error.operation, "recover-root");
+        assert.equal(error.retryable, false);
+        assert.equal(error.retryAfter, undefined);
+        assert.match(error.message, /identityPolicy/);
+        return true;
+      },
+    );
+    assert.throws(
+      () => subscription.replaceExclusions(-1n, []),
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+        assert.equal(error.operation, "replace-exclusions");
+        assert.equal(error.retryable, false);
+        assert.equal(error.retryAfter, undefined);
+        assert.match(error.message, /generation/);
+        return true;
+      },
     );
   } finally {
     await subscription.dispose();
@@ -229,10 +249,58 @@ test("native binding rejects non-positive, fractional, and overflowing options",
           await acceptedSubscription?.dispose();
         }
         assert.ok(rejection, `${option} unexpectedly accepted ${String(value)}`);
+        assert.equal(rejection.name, "WatchboundError");
+        assert.equal(rejection.code, "WATCHBOUND_INVALID_ARGUMENT");
+        assert.equal(rejection.operation, "subscribe");
+        assert.equal(rejection.retryable, false);
         assert.match(rejection.message, new RegExp(option));
       }
     }
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("native binding reports unavailable roots without collapsing the system cause", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-missing-root-"));
+  const missing = path.join(parent, "missing");
+  try {
+    await assert.rejects(
+      binding.subscribe(missing, {}, () => {}),
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_ROOT_UNAVAILABLE");
+        assert.equal(error.operation, "subscribe");
+        assert.equal(error.retryable, true);
+        assert.equal(error.retryAfter, "filesystem-state-changes");
+        assert.equal(error.systemCause?.domain, "os");
+        assert.equal(typeof error.systemCause?.message, "string");
+        return true;
+      },
+    );
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("native binding rejects work begun after joined disposal with a stable lifecycle code", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-closed-"));
+  const subscription = await binding.subscribe(root, {}, () => {});
+  try {
+    await subscription.dispose();
+    await assert.rejects(
+      subscription.reconcile(),
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_SUBSCRIPTION_CLOSED");
+        assert.equal(error.operation, "reconcile");
+        assert.equal(error.retryable, false);
+        assert.equal(error.retryAfter, undefined);
+        return true;
+      },
+    );
+  } finally {
+    await subscription.dispose();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

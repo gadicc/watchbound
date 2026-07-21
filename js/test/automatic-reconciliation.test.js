@@ -5,6 +5,7 @@ import {
   createAutomaticReconciliationPolicy,
   normalizeAutomaticReconciliation,
 } from "../automatic-reconciliation.js";
+import { WatchboundError, WatchboundErrorCode } from "../errors.js";
 
 const complete = Object.freeze({ state: "complete" });
 
@@ -61,7 +62,12 @@ test("automatic reconciliation is disabled by default and validates finite bound
   });
   assert.throws(
     () => normalizeAutomaticReconciliation({ maxAttempts: 17 }),
-    /maxAttempts.*16/,
+    (error) => {
+      assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+      assert.equal(error.operation, "subscribe");
+      assert.match(error.message, /maxAttempts.*16/);
+      return true;
+    },
   );
   assert.throws(
     () => normalizeAutomaticReconciliation({ initialDelayMs: 9 }),
@@ -132,6 +138,83 @@ test("root replacement cancels pending recovery and is never credited", async ()
   policy.observe({ state: "uncertain", reason: "consumer-backpressure" });
   await flush();
   assert.equal(calls, 0);
+});
+
+test("automatic reconciliation recognizes root conflicts only by stable error code", async () => {
+  const clock = createClock();
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => {
+      throw new WatchboundError("root identity changed", {
+        code: WatchboundErrorCode.ROOT_STATE_CONFLICT,
+        operation: "reconcile",
+      });
+    },
+    clock,
+  );
+
+  policy.observe({ state: "uncertain", reason: "event-overflow" });
+  clock.runNext();
+  await flush();
+  assert.deepEqual(policy.status(), { state: "blocked", reason: "root-replaced" });
+
+  const misleadingClock = createClock();
+  const misleading = createAutomaticReconciliationPolicy(
+    { maxAttempts: 1, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => {
+      throw new Error("root identity changed");
+    },
+    misleadingClock,
+  );
+  misleading.observe({ state: "uncertain", reason: "event-overflow" });
+  misleadingClock.runNext();
+  await flush();
+  assert.deepEqual(misleading.status(), {
+    state: "exhausted",
+    reason: "event-overflow",
+    attempts: 1,
+    error: "root identity changed",
+  });
+});
+
+test("automatic reconciliation retries only explicitly retryable structured failures", async () => {
+  const clock = createClock();
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 2, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => {
+      throw new WatchboundError("topology transaction is busy", {
+        code: WatchboundErrorCode.TOPOLOGY_TRANSACTION_CONFLICT,
+        operation: "reconcile",
+      });
+    },
+    clock,
+  );
+
+  policy.observe({ state: "uncertain", reason: "event-overflow" });
+  clock.runNext();
+  await flush();
+  assert.equal(clock.pending, 1);
+  clock.runNext();
+  await flush();
+  assert.equal(policy.status().state, "exhausted");
+
+  const terminalClock = createClock();
+  const terminal = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => {
+      throw new WatchboundError("root is temporarily unavailable", {
+        code: WatchboundErrorCode.ROOT_UNAVAILABLE,
+        operation: "reconcile",
+      });
+    },
+    terminalClock,
+  );
+  terminal.observe({ state: "uncertain", reason: "event-overflow" });
+  terminalClock.runNext();
+  await flush();
+  assert.equal(terminalClock.pending, 0);
+  assert.equal(terminal.status().state, "exhausted");
+  assert.equal(terminal.status().attempts, 1);
 });
 
 test("explicit attached root recovery clears the block and preserves a later recoverable loss", async () => {
@@ -330,7 +413,10 @@ test("retry backoff is exponential, capped, and exhaustion remains terminal", as
     { maxAttempts: 4, initialDelayMs: 10, maxDelayMs: 25 },
     async () => {
       calls += 1;
-      throw new Error("topology transaction is busy");
+      throw new WatchboundError("topology transaction is busy", {
+        code: WatchboundErrorCode.TOPOLOGY_TRANSACTION_CONFLICT,
+        operation: "reconcile",
+      });
     },
     clock,
   );

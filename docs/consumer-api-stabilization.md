@@ -19,8 +19,10 @@ bounded shared resources, in-place reconciliation, explicit root identity
 recovery, and joined disposal—through the engine, Node binding, wrapper, and
 ordinary conformance. Retaining it only as an experiment would preserve the
 evidence but leave the API and build assumptions to decay. Integration is
-premature because error taxonomy, current-state observability, supported target
-matrix, native artifact production, and compatibility policy are not stable.
+premature because current-state observability, the supported target matrix,
+native artifact production, and the broader compatibility policy are not yet
+stable. Operation failures now have the schema-version-1 contract in
+[`error-contract.md`](error-contract.md).
 
 “Maintained unpublished” means a deliberately supported private package, not a
 hidden product dependency. It may be built and tested in controlled Linux
@@ -37,11 +39,11 @@ approved non-adversarial path boundary is in `security-threat-model.md`.
 | --- | --- | --- |
 | Capability reporting | Frozen wrapper capabilities report recursion, moved-in discovery, watch limits, overflow, exclusions, reconciliation, automatic reconciliation, root recovery, and exact child-path bytes. The conformance adapter gates complete operations. | There is no capability schema/version, platform/libc/architecture field, option-limit/default description, or distinction between per-subscription logical limits and the engine's process-wide native budget. |
 | Coverage and uncertainty | `complete`, reasoned `partial`, and reasoned `uncertain` are explicit. Stronger loss stays sticky, batches are bounded, and no detailed reconstruction is claimed after uncertainty. | Current coverage is observable only on initial state, batches, and operation results; there is no direct current-coverage snapshot getter. Consumers must retain the last ordered batch and understand that it may lag native state. |
-| Manual reconciliation | `reconcile()` rebuilds the original identity under the committed exclusions and earns only one root boundary after bounded enqueue. | Rejection errors are strings rather than a stable structured code/kind taxonomy. The contract for retrying conflicts and backpressure is therefore difficult to consume without message matching. |
-| Automatic reconciliation | Disabled by default; finite attempts and timers; one immutable status; never adopts a root; disposal joins active work. | Policy status is observational, not a durable event stream. Defaults and bounds exist in code/docs but are not exposed as machine-readable capability data. Retry suitability still depends on unstructured native errors. |
-| Root replacement | Root identity, generation, attachment, and bounded loss evidence travel on every batch. `recoverRoot` requires `original-only` or `accept-replacement`, preserves one subscription and exclusion generation, and returns structured expected filesystem outcomes. | `(device, inode)` is non-cryptographic and susceptible to inode reuse. Path checks are deliberately non-adversarial and not fd-anchored. Error results are structured, but lifecycle/transaction/internal rejections are not. |
+| Manual reconciliation | `reconcile()` rebuilds the original identity under the committed exclusions and earns only one root boundary after bounded enqueue. Rejections use stable codes for topology conflicts, root-state conflicts, backpressure, interruption, and closure. | A successful operation acknowledgement can precede its callback; until current-state observability is implemented, consumers must use ordered batches to know what JavaScript has observed. |
+| Automatic reconciliation | Disabled by default; finite attempts and timers; one immutable status; never adopts a root; disposal joins active work. Retry and blocking policy uses exact `WATCHBOUND_*` codes and derived retry conditions, never message matching. | Policy status is observational, not a durable event stream. Defaults and bounds exist in code/docs but are not exposed as machine-readable capability data. |
+| Root replacement | Root identity, generation, attachment, and bounded loss evidence travel on every batch. `recoverRoot` requires `original-only` or `accept-replacement`, preserves one subscription and exclusion generation, and returns structured expected filesystem outcomes. Lifecycle, transaction, and internal rejections use the same stable operation-error schema. | `(device, inode)` is non-cryptographic and susceptible to inode reuse. Path checks are deliberately non-adversarial and not fd-anchored. |
 | Options | Positive integer native options use finite `u32` bounds. Automatic retries are limited to 16 and delays to 10–60,000 ms; defaults are finite. | The public types do not encode numeric ranges. A JavaScript consumer cannot configure the engine's process-wide native-watch budget, and the first live Rust engine fixes that budget for the runtime lifetime. Default changes would be behavioral API changes. |
-| Status and errors | Coverage, stats, root state/results, callback errors, bridge delivery errors, and automatic-policy status are visible. Expected root candidate failures have bounded reason variants. | `io::Error` becomes a message-only JavaScript `Error`; there are no stable codes for conflict, disposed, interrupted, invalid root, limit, or backpressure. There is no subscription-level last-error/event channel. |
+| Status and errors | Coverage, stats, root state/results, callback errors, bridge delivery errors, and automatic-policy status are visible. Expected root candidate failures have bounded reason variants. Rejected operations expose schema-version-1 `WatchboundError` metadata: a stable code and operation, code-derived retry guidance, and optional bounded system diagnostics. | There is no subscription-level last-error/event channel. The error schema remains compatibility-sensitive while the package is private at `0.0.0`. |
 | TypeScript | The wrapper declares discriminated coverage, automatic status, root state/policy/result, bigint counters, exact bytes, exclusions, reconciliation, recovery, and disposal. | Declarations are handwritten and not compiled in CI against usage fixtures. Native generated types are looser strings, while wrapper types are closed unions. Adding a reason/status is potentially breaking for exhaustive consumers. |
 | Node and Linux support | Manifests claim Node `>=18`; Node-API 6 avoids direct V8 coupling. Rust requires 1.88. The engine intentionally fails to compile off Linux. Current local evidence is Linux x64/glibc on Node 25.2.1. | The claimed Node floor has no matrix evidence here. Linux arm64 and musl are not tested. The generated napi loader lists unsupported platforms even though the Rust engine is Linux-only, and package metadata does not declare `os`, `cpu`, or libc support. |
 | Native build | A local release build works through pinned napi-rs tooling and records the loaded binary identity in conformance. | Consumers currently need Rust, a C linker, pnpm build tooling, and a compatible host, or an unimplemented trusted prebuild path. There is no ABI/platform artifact matrix, reproducibility check, install fallback contract, or binary size gate. |
@@ -56,7 +58,7 @@ approved non-adversarial path boundary is in `security-threat-model.md`.
 | --- | --- | --- | --- |
 | Retain as a feasibility prototype | Lowest ongoing commitment; preserves the completed evidence and conservative design. | API/build drift, dependency aging, no supported consumption path, and repeated rediscovery if a consumer appears. | Fallback if ownership or a target environment is absent. |
 | Develop into a maintained unpublished package | Allows deliberate API changes, CI/support definition, internal artifact work, and security review without public compatibility or product coupling. | Requires a named owner and recurring Linux/Rust/Node maintenance before it delivers product value. | **Recommended next state.** |
-| Prepare for eventual consumer integration now | Would test the contract against a real consumer and surface mapping/policy needs. | Prematurely couples unstable errors, options, packaging, and lifecycle semantics; risks turning consumer behavior into engine policy and bypassing release/security gates. | No-go until the exit criteria below pass and integration is separately approved. |
+| Prepare for eventual consumer integration now | Would test the contract against a real consumer and surface mapping/policy needs. | Prematurely couples evolving state observability, options, packaging, and lifecycle semantics; risks turning consumer behavior into engine policy and bypassing release/security gates. | No-go until the exit criteria below pass and integration is separately approved. |
 
 ## Entry criteria for maintained-unpublished status
 
@@ -90,8 +92,10 @@ All criteria are required; meeting them does not itself authorize integration.
 1. Freeze a documented private `0.x` API candidate, including callback order,
    batch/root/exclusion generations, coverage transitions, disposal, and which
    additions to discriminated unions are allowed in minor versions.
-2. Replace message matching with stable structured error codes and document
-   which failures are retryable, terminal, or expected structured results.
+2. **Complete:** replace message matching with stable structured error codes and
+   document which failures are retryable, terminal, or expected structured
+   results. The implemented schema-version-1 contract is in
+   [`error-contract.md`](error-contract.md).
 3. Decide and implement current-state observability: at minimum a race-aware
    current coverage/root snapshot or an explicit statement that only ordered
    batches are authoritative.

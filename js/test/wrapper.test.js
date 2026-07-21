@@ -348,10 +348,17 @@ test("wrapper rejects concurrent reconciliation and exclusion transactions expli
       "every concurrent reconciliation request failed",
     );
     const reconciliationConflict = concurrentReconciliations.find((result) =>
-      result.status === "rejected" && /topology transaction/i.test(result.reason.message)
+      result.status === "rejected" &&
+      result.reason.code === "WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT"
     );
     assert.ok(reconciliationConflict, "both concurrent reconciliation requests succeeded");
-    assert.match(reconciliationConflict.reason.message, /topology transaction/i);
+    assert.equal(reconciliationConflict.reason.name, "WatchboundError");
+    assert.equal(reconciliationConflict.reason.operation, "reconcile");
+    assert.equal(reconciliationConflict.reason.retryable, true);
+    assert.equal(
+      reconciliationConflict.reason.retryAfter,
+      "topology-transaction-settles",
+    );
 
     const conflictingTransactions = await Promise.allSettled([
       subscription.reconcile(),
@@ -363,7 +370,12 @@ test("wrapper rejects concurrent reconciliation and exclusion transactions expli
     );
     const exclusionConflict = conflictingTransactions.find((result) => result.status === "rejected");
     assert.ok(exclusionConflict, "reconciliation and exclusion update both committed concurrently");
-    assert.match(exclusionConflict.reason.message, /topology transaction/i);
+    assert.equal(exclusionConflict.reason.code, "WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT");
+    assert.ok(
+      ["reconcile", "replace-exclusions"].includes(exclusionConflict.reason.operation),
+    );
+    assert.equal(exclusionConflict.reason.retryable, true);
+    assert.equal(exclusionConflict.reason.retryAfter, "topology-transaction-settles");
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });
@@ -396,10 +408,14 @@ test("wrapper does not report root-replaced uncertainty as recovered", async () 
       state: "blocked",
       reason: "root-replaced",
     });
-    await assert.rejects(
-      subscription.reconcile(),
-      /root-replaced|root identity changed/i,
-    );
+    await assert.rejects(subscription.reconcile(), (error) => {
+      assert.equal(error.name, "WatchboundError");
+      assert.equal(error.code, "WATCHBOUND_ROOT_STATE_CONFLICT");
+      assert.equal(error.operation, "reconcile");
+      assert.equal(error.retryable, true);
+      assert.equal(error.retryAfter, "root-state-changes");
+      return true;
+    });
     assert.ok(batches.some((batch) =>
       batch.coverage.state === "uncertain" && batch.coverage.reason === "root-replaced"));
   } finally {
@@ -534,10 +550,14 @@ test("wrapper joins disposal around reconciliation and rejects later work", asyn
     await Promise.all([disposal, subscription.dispose()]);
     const reconciliationResult = await reconciliation;
     if (reconciliationResult[0].status === "rejected") {
-      assert.match(
-        reconciliationResult[0].reason.message,
-        /disposed|disposing|interrupted|no longer active/i,
+      assert.ok(
+        [
+          "WATCHBOUND_OPERATION_INTERRUPTED",
+          "WATCHBOUND_SUBSCRIPTION_CLOSED",
+        ].includes(reconciliationResult[0].reason.code),
       );
+      assert.equal(reconciliationResult[0].reason.operation, "reconcile");
+      assert.equal(reconciliationResult[0].reason.retryable, false);
     }
     assert.equal(subscription.stats().disposed, true);
     await subscription.dispose();
@@ -546,10 +566,12 @@ test("wrapper joins disposal around reconciliation and rejects later work", asyn
     fs.writeFileSync(path.join(root, "after-disposal.txt"), "after");
     await delay(50);
     assert.equal(callbackCount, callbacksAtDisposal, "callback began after disposal resolved");
-    await assert.rejects(
-      subscription.reconcile(),
-      /disposed|disposing|no longer active/i,
-    );
+    await assert.rejects(subscription.reconcile(), (error) => {
+      assert.equal(error.code, "WATCHBOUND_SUBSCRIPTION_CLOSED");
+      assert.equal(error.operation, "reconcile");
+      assert.equal(error.retryable, false);
+      return true;
+    });
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });
@@ -557,8 +579,16 @@ test("wrapper joins disposal around reconciliation and rejects later work", asyn
 });
 
 test("wrapper validates arguments before entering native code", async () => {
-  await assert.rejects(subscribe("", () => {}), /non-empty string/);
-  await assert.rejects(subscribe("/tmp", null), /onBatch must be a function/);
+  await assert.rejects(subscribe("", () => {}), (error) => {
+    assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+    assert.equal(error.operation, "subscribe");
+    return true;
+  });
+  await assert.rejects(subscribe("/tmp", null), (error) => {
+    assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+    assert.equal(error.operation, "subscribe");
+    return true;
+  });
 });
 
 test("wrapper preserves symlink parent-navigation components for native validation", async () => {

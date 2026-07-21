@@ -19,7 +19,10 @@ The workspace is divided by ownership:
 
 See `docs/architecture.md` and `docs/benchmark-methodology.md` for the design
 and evaluation contract. The post-feasibility package recommendation and its
-gates are in `docs/consumer-api-stabilization.md`.
+gates are in `docs/consumer-api-stabilization.md`. Rejected operations expose
+stable `WATCHBOUND_*` codes under the versioned
+[structured error contract](docs/error-contract.md); human messages are
+diagnostic rather than a policy surface.
 
 ## Build and test
 
@@ -83,7 +86,8 @@ correctness evidence, not new performance readings.
 The JavaScript wrapper also offers opt-in `automaticReconciliation`. It is
 disabled by default, coalesces the three recoverable uncertainty reasons, uses
 finite capped exponential backoff, and exposes only its current bounded status.
-lost detail. `root-replaced` blocks this automatic policy: it never chooses a
+It never claims recovered lost detail. `root-replaced` blocks this automatic
+policy: it never chooses a
 replacement identity. A caller may instead invoke the distinct
 `recoverRoot({ identityPolicy })` operation, which revalidates and scans the
 same lexical root under an explicit `original-only` or `accept-replacement`

@@ -1,3 +1,10 @@
+import {
+  WatchboundError,
+  WatchboundErrorCode,
+  invalidArgumentError,
+  isWatchboundError,
+} from "./errors.js";
+
 const DEFAULTS = Object.freeze({
   maxAttempts: 3,
   initialDelayMs: 25,
@@ -13,6 +20,11 @@ const recoverableReasons = new Set([
   "event-overflow",
   "topology-race",
   "consumer-backpressure",
+]);
+
+const reconciliationRetryCodes = new Set([
+  WatchboundErrorCode.TOPOLOGY_TRANSACTION_CONFLICT,
+  WatchboundErrorCode.CONSUMER_BACKPRESSURE,
 ]);
 
 const reasonPriority = Object.freeze({
@@ -35,7 +47,10 @@ export function normalizeAutomaticReconciliation(value) {
   if (value === undefined || value === false) return null;
   if (value === true) return { ...DEFAULTS };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("automaticReconciliation must be true, false, or an options object");
+    throw invalidArgumentError(
+      "subscribe",
+      "automaticReconciliation must be true, false, or an options object",
+    );
   }
 
   const maxAttempts = value.maxAttempts ?? DEFAULTS.maxAttempts;
@@ -45,7 +60,10 @@ export function normalizeAutomaticReconciliation(value) {
   requireBoundedInteger("initialDelayMs", initialDelayMs, 10, LIMITS.maxDelayMs);
   requireBoundedInteger("maxDelayMs", maxDelayMs, 10, LIMITS.maxDelayMs);
   if (maxDelayMs < initialDelayMs) {
-    throw new RangeError("automaticReconciliation maxDelayMs must be at least initialDelayMs");
+    throw invalidArgumentError(
+      "subscribe",
+      "automaticReconciliation maxDelayMs must be at least initialDelayMs",
+    );
   }
   return { maxAttempts, initialDelayMs, maxDelayMs };
 }
@@ -178,11 +196,21 @@ export function createAutomaticReconciliationPolicy(
       });
     } catch (error) {
       if (lifecycle !== "active") return;
-      if (cycleReason === "root-replaced" || isRootReplacementError(error)) {
+      if (
+        cycleReason === "root-replaced" ||
+        error?.code === WatchboundErrorCode.ROOT_STATE_CONFLICT
+      ) {
         terminalLatch = true;
         pendingLoss = false;
         cycleReason = "root-replaced";
         setStatus({ state: "blocked", reason: "root-replaced" });
+        return;
+      }
+      if (
+        !isWatchboundError(error) ||
+        !reconciliationRetryCodes.has(error.code)
+      ) {
+        exhaust(errorMessage(error));
         return;
       }
       pendingLoss = true;
@@ -212,10 +240,20 @@ export function createAutomaticReconciliationPolicy(
 
   function recoverRoot(identityPolicy, nativeRecover) {
     if (lifecycle !== "active") {
-      return Promise.reject(new Error("subscription is disposing or disposed"));
+      return Promise.reject(
+        new WatchboundError("subscription is disposing or disposed", {
+          code: WatchboundErrorCode.SUBSCRIPTION_CLOSED,
+          operation: "recover-root",
+        }),
+      );
     }
     if (rootRecoveryPromise !== null) {
-      return Promise.reject(new Error("a root recovery is already in progress"));
+      return Promise.reject(
+        new WatchboundError("a root recovery is already in progress", {
+          code: WatchboundErrorCode.TOPOLOGY_TRANSACTION_CONFLICT,
+          operation: "recover-root",
+        }),
+      );
     }
     const previous = {
       status: currentStatus,
@@ -341,7 +379,8 @@ export function createAutomaticReconciliationPolicy(
 
 function requireBoundedInteger(name, value, minimum, maximum) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
-    throw new RangeError(
+    throw invalidArgumentError(
+      "subscribe",
       `automaticReconciliation ${name} must be an integer from ${minimum} through ${maximum}`,
     );
   }
@@ -362,10 +401,6 @@ function strongerRootRecoveryObservation(current, candidate) {
   return reasonPriority[candidate.coverage.reason] > reasonPriority[current.coverage.reason]
     ? candidate
     : current;
-}
-
-function isRootReplacementError(error) {
-  return /root[- ]replaced|root identity changed/i.test(errorMessage(error));
 }
 
 function errorMessage(error) {

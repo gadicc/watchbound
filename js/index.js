@@ -4,12 +4,29 @@ import {
   createAutomaticReconciliationPolicy,
   normalizeAutomaticReconciliation,
 } from "./automatic-reconciliation.js";
+import {
+  WatchboundError,
+  WatchboundErrorCode,
+  WatchboundRetryAfter,
+  invalidArgumentError,
+  invokeWatchbound,
+  isWatchboundError,
+  normalizeWatchboundError,
+} from "./errors.js";
+
+export {
+  WatchboundError,
+  WatchboundErrorCode,
+  WatchboundRetryAfter,
+  isWatchboundError,
+  normalizeWatchboundError,
+};
 
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const callbackHolders = new WeakMap();
 
 export const capabilities = Object.freeze({
-  ...nativeBinding.capabilities(),
+  ...invokeWatchbound("create-engine", () => nativeBinding.capabilities()),
   automaticReconciliation: true,
 });
 
@@ -24,13 +41,13 @@ const automaticReconciliationDisabled = Object.freeze({ state: "disabled" });
  */
 export async function subscribe(root, onBatch, options = {}) {
   if (typeof root !== "string" || root.length === 0) {
-    throw new TypeError("root must be a non-empty string");
+    throw invalidArgumentError("subscribe", "root must be a non-empty string");
   }
   if (typeof onBatch !== "function") {
-    throw new TypeError("onBatch must be a function");
+    throw invalidArgumentError("subscribe", "onBatch must be a function");
   }
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
-    throw new TypeError("options must be an object");
+    throw invalidArgumentError("subscribe", "options must be an object");
   }
 
   const automaticConfig = normalizeAutomaticReconciliation(
@@ -48,16 +65,19 @@ export async function subscribe(root, onBatch, options = {}) {
   const resolvedRoot = path.resolve(absoluteRoot);
   const callbackHolder = { onBatch, observeCoverage: null };
   const weakCallbackHolder = new WeakRef(callbackHolder);
-  const nativeSubscription = await nativeBinding.subscribe(
-    absoluteRoot,
-    nativeOptions,
-    createNativeCallback(weakCallbackHolder, resolvedRoot),
+  const nativeSubscription = await invokeWatchbound(
+    "subscribe",
+    () => nativeBinding.subscribe(
+      absoluteRoot,
+      nativeOptions,
+      createNativeCallback(weakCallbackHolder, resolvedRoot),
+    ),
   );
   const automaticPolicy = automaticConfig === null
     ? null
     : createAutomaticReconciliationPolicy(
         automaticConfig,
-        () => nativeSubscription.reconcile(),
+        () => invokeWatchbound("reconcile", () => nativeSubscription.reconcile()),
       );
   callbackHolder.observeCoverage = automaticPolicy?.observe ?? null;
   let disposePromise;
@@ -76,23 +96,44 @@ export async function subscribe(root, onBatch, options = {}) {
     stats: () => nativeSubscription.stats(),
     replaceExclusions: (generation, prefixes) => {
       if (typeof generation !== "bigint" || generation < 0n) {
-        throw new TypeError("generation must be a non-negative bigint");
+        throw invalidArgumentError(
+          "replace-exclusions",
+          "generation must be a non-negative bigint",
+        );
       }
       if (!Array.isArray(prefixes)) {
-        throw new TypeError("prefixes must be an array of strings or Uint8Array values");
+        throw invalidArgumentError(
+          "replace-exclusions",
+          "prefixes must be an array of strings or Uint8Array values",
+        );
       }
-      const encoded = prefixes.map((prefix) => {
-        if (typeof prefix === "string") return Buffer.from(prefix);
-        if (prefix instanceof Uint8Array) return Buffer.from(prefix);
-        throw new TypeError("each exclusion prefix must be a string or Uint8Array");
-      });
-      return nativeSubscription.replaceExclusions(generation, encoded);
+      const encoded = invokeWatchbound(
+        "replace-exclusions",
+        () => prefixes.map((prefix) => {
+          if (typeof prefix === "string") return Buffer.from(prefix);
+          if (prefix instanceof Uint8Array) return Buffer.from(prefix);
+          throw invalidArgumentError(
+            "replace-exclusions",
+            "each exclusion prefix must be a string or Uint8Array",
+          );
+        }),
+      );
+      return invokeWatchbound(
+        "replace-exclusions",
+        () => nativeSubscription.replaceExclusions(generation, encoded),
+      );
     },
-    reconcile: () => nativeSubscription.reconcile(),
+    reconcile: () => invokeWatchbound(
+      "reconcile",
+      () => nativeSubscription.reconcile(),
+    ),
     recoverRoot: (recoveryOptions) => {
       const identityPolicy = validateRootRecoveryOptions(recoveryOptions);
-      const recover = async () => normalizeRootRecoveryResult(
-        await nativeSubscription.recoverRoot(identityPolicy),
+      const recover = () => invokeWatchbound(
+        "recover-root",
+        async () => normalizeRootRecoveryResult(
+          await nativeSubscription.recoverRoot(identityPolicy),
+        ),
       );
       return automaticPolicy
         ? automaticPolicy.recoverRoot(identityPolicy, recover)
@@ -100,8 +141,11 @@ export async function subscribe(root, onBatch, options = {}) {
     },
     dispose: () =>
       (disposePromise ??= (automaticPolicy
-        ? automaticPolicy.dispose(() => nativeSubscription.dispose())
-        : nativeSubscription.dispose()
+        ? automaticPolicy.dispose(() => invokeWatchbound(
+            "dispose",
+            () => nativeSubscription.dispose(),
+          ))
+        : invokeWatchbound("dispose", () => nativeSubscription.dispose())
       ).finally(() => callbackHolders.delete(subscription))),
   });
   callbackHolders.set(subscription, callbackHolder);
@@ -112,7 +156,10 @@ function createNativeCallback(weakCallbackHolder, resolvedRoot) {
   return (nativeBatch) => {
     const holder = weakCallbackHolder.deref();
     if (holder) {
-      const batch = normalizeBatch(resolvedRoot, nativeBatch);
+      const batch = invokeWatchbound(
+        "deliver-batch",
+        () => normalizeBatch(resolvedRoot, nativeBatch),
+      );
       holder.observeCoverage?.(batch);
       holder.onBatch(batch);
     }
@@ -149,13 +196,17 @@ function normalizeBatch(root, batch) {
 
 function validateRootRecoveryOptions(options) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
-    throw new TypeError("recoverRoot options must be an object");
+    throw invalidArgumentError(
+      "recover-root",
+      "recoverRoot options must be an object",
+    );
   }
   if (
     options.identityPolicy !== "original-only" &&
     options.identityPolicy !== "accept-replacement"
   ) {
-    throw new TypeError(
+    throw invalidArgumentError(
+      "recover-root",
       'identityPolicy must be "original-only" or "accept-replacement"',
     );
   }

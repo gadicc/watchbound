@@ -28,9 +28,10 @@ when overlapping subscriptions share one native watch.
 unique native watches. The first live subscription fixes that configuration for
 the shared runtime's lifetime. A later subscription requesting a different
 bounded value, or bounded versus unbounded operation, fails with
-`InvalidInput`; the runtime does not silently choose one engine's value. After
-the final subscription performs joined shutdown, the next runtime may use a new
-configuration.
+`WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` and
+`retryAfter: "runtime-disposed"`; the runtime does not silently choose one
+engine's value. After the final subscription performs joined shutdown, the next
+runtime may use a new configuration.
 
 `Engine::runtime_stats()` reports the active `native_watch_budget`, unique
 `native_watches`, queued `deferred_interests`, subscriptions, inotify instance,
@@ -155,8 +156,13 @@ and a new update cannot begin after disposal. Exclusion configuration lives only
 for that subscription and is released with its topology, deferred records,
 watches, descriptors, and final worker shutdown.
 
-Remaining gaps include automatic retry for non-budget native failures.
-Exclusions deliberately do not add
+Rejected exclusion operations carry the schema-version-1 structured metadata
+defined in [`error-contract.md`](error-contract.md). In particular, invalid
+prefixes and generations use `WATCHBOUND_INVALID_ARGUMENT`, a concurrent
+topology operation uses `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`, and work
+admitted before disposal may use `WATCHBOUND_OPERATION_INTERRUPTED`. Human
+messages are diagnostic and are not a policy surface. Exclusions deliberately
+do not add
 Git/glob policy, detailed event kinds, rename reconstruction, or cross-platform
 support.
 
@@ -178,19 +184,21 @@ promotion state. The operation can yield between scheduler turns, while its
 subscription continues to expose the previous committed resource gauges.
 
 The exclusion set and generation cannot change during this barrier. A
-concurrent reconciliation or exclusion update fails with `WouldBlock`. Events
-observed while scanning are conservatively represented by the final root
-invalidation, and a directory topology event extends the scan barrier. Batches
-remain single-generation and sequences advance only when the bounded engine
-queue accepts a batch.
+concurrent reconciliation or exclusion update fails with
+`WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT` and
+`retryAfter: "topology-transaction-settles"`. Events observed while scanning
+are conservatively represented by the final root invalidation, and a directory
+topology event extends the scan barrier. Batches remain single-generation and
+sequences advance only when the bounded engine queue accepts a batch.
 
 Successful acknowledgement occurs after the scan and stale-interest sweep,
 root revalidation, final allocator/coverage publication, and enqueue of the
 root invalidation. Only that successful enqueue permits the uncertainty present
 at the start to clear. A new loss during the barrier remains uncertain. If the
-queue is full, the promise/reconciliation call rejects with a backpressure
-error and the subscription stays uncertain with a pending root invalidation.
-The acknowledgement does not imply that a JavaScript callback has already run.
+queue is full, the promise/reconciliation call rejects with
+`WATCHBOUND_CONSUMER_BACKPRESSURE` and `retryAfter: "delivery-drains"`; the
+subscription stays uncertain with a pending root invalidation. The
+acknowledgement does not imply that a JavaScript callback has already run.
 
 Known `root-replaced` uncertainty is rejected, and a root identity change found
 at either validation point fails reconciliation while retaining
@@ -301,16 +309,20 @@ bounded cycle. No attempt overlaps another.
 
 Automatic calls use the original subscription and the same native transaction
 gate. A simultaneous manual reconciliation or exclusion replacement therefore
-retains the existing explicit `WouldBlock`/topology-transaction conflict;
-nothing is silently queued or reordered. A conflict can consume one bounded
-automatic attempt. Exclusion generations, sequences, coverage, and the
-root-only boundary remain native results. Detailed lost events are never
-reconstructed or credited.
+rejects with `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`; nothing is silently
+queued or reordered. The policy makes bounded retry decisions from exact
+structured codes: topology-transaction conflicts and consumer backpressure may
+consume an attempt and retry after their named conditions, while
+`WATCHBOUND_ROOT_STATE_CONFLICT` blocks pending an explicit root decision.
+Other failures exhaust the active bounded cycle rather than being classified by
+message text. Exclusion generations, sequences, coverage, and the root-only
+boundary remain native results. Detailed lost events are never reconstructed
+or credited.
 
 `subscription.automaticReconciliation` is one immutable current snapshot, not
 an unbounded history. It reports scheduled/reconciling progress, successful
 coverage and generation, terminal incomplete coverage, bounded retry
-exhaustion with a capped error message, `root-replaced` as blocked,
+exhaustion with a capped diagnostic error message, `root-replaced` as blocked,
 `recovering-root` while a user-started explicit recovery owns the coordination
 slot, and disposal state. Exhaustion latches the automatic policy rather than
 restarting on every batch carrying sticky uncertainty; explicit manual

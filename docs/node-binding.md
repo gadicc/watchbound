@@ -37,6 +37,22 @@ validates the two policy spellings, and runs the blocking `RootRecoveryHandle`
 as an asynchronous task. Candidate selection, ancestry checks, topology,
 coverage, exclusions, and boundary ordering remain entirely in the engine.
 
+The rule also applies to operation failures. The binding transports the
+engine's stable `WATCHBOUND_*` code and operation, centrally derived
+`retryable`/`retryAfter` fields, and an optional bounded `systemCause` onto a
+JavaScript `Error`; it does not reclassify failures from their message text.
+Errors are constructed on the JavaScript thread, and the public wrapper
+normalizes native-shaped errors into `WatchboundError`. Unknown or malformed
+native failures become `WATCHBOUND_INTERNAL` rather than inheriting untrusted
+retry metadata. Partial and uncertain coverage, and expected `not-attached`
+root-recovery outcomes, remain successful structured results.
+
+These fields are governed by schema version 1 of the
+[structured operation-error contract](error-contract.md). The schema version is
+a compatibility-contract version, not a property repeated on each error;
+consumers branch on `code`, and treat `message` and `systemCause` as bounded
+diagnostics only.
+
 ## Lifecycle requirements
 
 The bridge must preserve two independent bounds: the engine output channel and

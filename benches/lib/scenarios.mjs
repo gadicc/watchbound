@@ -1788,9 +1788,7 @@ async function runReconciliation(
       postDisposalReconciliationError = serializeError(error);
     }
     const postDisposalReconciliationRejectedByLifecycle =
-      /disposing|disposed|not connected|no longer active/iu.test(
-        postDisposalReconciliationError?.message ?? "",
-      );
+      postDisposalReconciliationError?.code === "WATCHBOUND_SUBSCRIPTION_CLOSED";
     fs.appendFileSync(prepared.pressureTargets[0], "after disposal\n");
     fs.appendFileSync(prepared.peerTarget, "after disposal\n");
     await sleep(config.disposalObservationMs);

@@ -12,6 +12,28 @@ import {
   scenarioNames,
   scenarioRequirement,
 } from "../lib/scenarios.mjs";
+import { serializeError } from "../lib/metrics.mjs";
+
+test("serialized correctness evidence retains structured Watchbound errors", () => {
+  const error = Object.assign(new Error("subscription is disposed"), {
+    name: "WatchboundError",
+    code: "WATCHBOUND_SUBSCRIPTION_CLOSED",
+    operation: "reconcile",
+    retryable: false,
+    systemCause: { domain: "node-api", code: "Closing", message: "closing" },
+  });
+
+  assert.deepEqual(serializeError(error), {
+    name: "WatchboundError",
+    message: "subscription is disposed",
+    code: "WATCHBOUND_SUBSCRIPTION_CLOSED",
+    operation: "reconcile",
+    retryable: false,
+    retryAfter: null,
+    systemCause: { domain: "node-api", code: "Closing", message: "closing" },
+    stack: error.stack,
+  });
+});
 
 test("reconciliation is a quick conformance scenario with an explicit requirement", () => {
   assert.ok(scenarioNames.includes("reconciliation"));

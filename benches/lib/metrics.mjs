@@ -128,6 +128,10 @@ export function serializeError(error) {
     name: error?.name ?? "Error",
     message: error?.message ?? String(error),
     code: error?.code ?? null,
+    operation: error?.operation ?? null,
+    retryable: error?.retryable ?? null,
+    retryAfter: error?.retryAfter ?? null,
+    systemCause: error?.systemCause ?? null,
     stack: error?.stack ?? null,
   };
 }

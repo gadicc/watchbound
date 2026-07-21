@@ -39,6 +39,7 @@ pnpm install
 pnpm build:node
 pnpm test
 pnpm check
+pnpm test:soak
 ```
 
 The controlled build produces exactly the local
@@ -81,6 +82,7 @@ node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
 node benches/conformance.mjs --adapter watchbound --scenario root-replacement-recovery --quick --strict --pretty
+pnpm test:root-recovery-stress
 node benches/conformance.mjs --help
 node --expose-gc benches/benchmark.mjs --help
 ```
@@ -96,6 +98,13 @@ overflow. The I/O-heavy forced-overflow
 scenarios are removed by `--quick` and require both explicit quiet-host
 confirmation and the `--allow-forced-overflow` acknowledgement. The flag is a
 safety interlock, not evidence that the host is ready.
+
+`pnpm test:soak` runs five bounded lifecycle cycles without inducing overflow
+or recording benchmark evidence. It covers deferred promotion, exclusion
+replacement, callback failure containment, topology churn, reconciliation,
+joined disposal, and final process-resource baselines. The root-recovery stress
+command repeats the ordinary direct and ancestor recovery scenario three times;
+each phase scans the same bounded 128-to-512-directory replacement tree.
 
 The first final feasibility series is complete. See
 `docs/conformance-findings.md` for correctness evidence and

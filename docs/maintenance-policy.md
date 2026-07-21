@@ -53,7 +53,13 @@ Every code change must pass, on the exact claimed target where relevant:
 2. `pnpm build:node`;
 3. `pnpm test`;
 4. `pnpm check`;
-5. applicable strict, non-heavy conformance scenarios, run serially.
+5. `pnpm test:soak` for lifecycle/resource-affecting changes;
+6. applicable strict, non-heavy conformance scenarios, run serially.
+
+`pnpm test:root-recovery-stress` is the ordinary three-run direct-and-ancestor
+replacement gate for changes that can affect identity recovery. It bounds each
+replacement scan tree to 128 through 512 directories and neither induces
+overflow nor records benchmark evidence.
 
 Type declarations are checked by compiled consumer fixtures. Source-build and
 loader changes additionally exercise clean build/load, unsupported-platform,

@@ -75,6 +75,18 @@ function numbered(index) {
   return String(index).padStart(6, "0");
 }
 
+export function rootRecoveryScanCount(burstCount) {
+  return Math.max(128, Math.min(burstCount * 2, 512));
+}
+
+export function createRootRecoveryScanTree(root, phase, count) {
+  const scanRoot = path.join(root, "visible", `${phase}-scan`);
+  for (let index = 0; index < count; index += 1) {
+    fs.mkdirSync(path.join(scanRoot, numbered(index)), { recursive: true });
+  }
+  return scanRoot;
+}
+
 function ensureRoot(runDirectory) {
   const root = path.join(runDirectory, "root");
   fs.mkdirSync(root, { recursive: true });
@@ -908,12 +920,8 @@ async function runRootReplacementRecovery(adapter, prepared, config) {
     fs.writeFileSync(prepared.directDeepTarget, "direct replacement\n");
     fs.mkdirSync(path.dirname(prepared.directExcludedTarget), { recursive: true });
     fs.writeFileSync(prepared.directExcludedTarget, "excluded\n");
-    const scanCount = Math.max(128, Math.min(config.burstCount * 2, 512));
-    for (let index = 0; index < scanCount; index += 1) {
-      fs.mkdirSync(path.join(prepared.root, "visible", "scan", numbered(index)), {
-        recursive: true,
-      });
-    }
+    const scanCount = rootRecoveryScanCount(config.burstCount);
+    createRootRecoveryScanTree(prepared.root, "direct", scanCount);
     const directLossObserved = await waitFor(
       () => primary.session.rootState?.attachment === "lost",
       config.timeoutMs,
@@ -950,6 +958,7 @@ async function runRootReplacementRecovery(adapter, prepared, config) {
     fs.writeFileSync(prepared.ancestorDeepTarget, "ancestor replacement\n");
     fs.mkdirSync(path.dirname(prepared.ancestorExcludedTarget), { recursive: true });
     fs.writeFileSync(prepared.ancestorExcludedTarget, "excluded\n");
+    createRootRecoveryScanTree(prepared.root, "ancestor", scanCount);
     const ancestorLossObserved = await waitFor(
       () => primary.session.rootState?.attachment === "lost",
       config.timeoutMs,

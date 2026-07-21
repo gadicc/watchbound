@@ -233,6 +233,18 @@ node benches/conformance.mjs \
   --strict
 ```
 
+Root-identity changes also run `pnpm test:root-recovery-stress`. It repeats the
+ordinary direct-and-ancestor replacement scenario three times. Both phases
+construct the same bounded scan tree (at least 128 and at most 512
+directories), no output report is written, and no forced-overflow scenario is
+selected.
+
+`pnpm test:soak` is a bounded correctness and cleanup test, not a benchmark. It
+runs five ordinary lifecycle cycles under a 60-second watchdog and checks
+native-watch budgeting, deferred promotion, exclusions, callback exceptions,
+topology churn, reconciliation, joined disposal, and final `/proc` descriptor
+and task baselines. It does not attempt to fill the inotify queue.
+
 These deterministic callback-block/backpressure checks are not evidence that a
 real inotify queue overflow was induced or recovered. The forced-overflow run
 below remains separately gated on explicit quiet-host preparation.

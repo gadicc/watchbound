@@ -1,9 +1,34 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { parseOptions } from "../lib/cli.mjs";
 import { scenarioExclusionReason } from "../lib/controller.mjs";
-import { scenarioNames, scenarioRequirement } from "../lib/scenarios.mjs";
+import {
+  createRootRecoveryScanTree,
+  rootRecoveryScanCount,
+  scenarioNames,
+  scenarioRequirement,
+} from "../lib/scenarios.mjs";
+
+test("direct and ancestor recovery stress trees use the same bounded size", () => {
+  assert.equal(rootRecoveryScanCount(1), 128);
+  assert.equal(rootRecoveryScanCount(100), 200);
+  assert.equal(rootRecoveryScanCount(10_000), 512);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-recovery-scan-test-"));
+  try {
+    const direct = createRootRecoveryScanTree(root, "direct", 7);
+    const ancestor = createRootRecoveryScanTree(root, "ancestor", 7);
+    assert.equal(fs.readdirSync(direct).length, 7);
+    assert.equal(fs.readdirSync(ancestor).length, 7);
+    assert.notEqual(direct, ancestor);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("explicit root recovery is an ordinary capability-gated conformance scenario", () => {
   assert.ok(scenarioNames.includes("root-replacement-recovery"));

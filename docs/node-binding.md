@@ -53,6 +53,28 @@ a compatibility-contract version, not a property repeated on each error;
 consumers branch on `code`, and treat `message` and `systemCause` as bounded
 diagnostics only.
 
+## Establishment and observed state
+
+The engine captures `initial_coverage` and `initial_root_state` in one
+establishment acknowledgement. Node exposes them as `initialCoverage` and
+`initialRootState`, and the JavaScript wrapper normalizes them into its immutable
+sequence-zero, exclusion-generation-zero, root-generation-zero baseline.
+
+The wrapper's `observedState` is one frozen projection of that baseline or the
+last batch whose bridge callback entered JavaScript. Callback entry can race
+the subscribe promise's continuation, so the wrapper retains an early batch and
+does not overwrite it when constructing the public subscription. On every
+delivery it updates `observedState` before automatic policy and the user's
+callback; a callback exception therefore does not erase the observation.
+
+This projection is intentionally separate from Node's live `rootState` and
+`exclusionGeneration` getters. Those getters and completed native operations
+may be ahead. An operation acknowledgement establishes native commit and any
+required bounded enqueue, not callback execution, and cannot advance
+`observedState`. A successful operation that needs no batch can leave the
+projection behind indefinitely. Ordered batches remain authoritative for what
+has entered wrapper JavaScript.
+
 ## Lifecycle requirements
 
 The bridge must preserve two independent bounds: the engine output channel and

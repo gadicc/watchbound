@@ -2,6 +2,7 @@
 /* eslint-disable */
 export declare class NativeSubscription {
   get initialCoverage(): JsCoverage
+  get initialRootState(): JsRootState
   stats(): JsStats
   get exclusionGeneration(): bigint
   get rootState(): JsRootState

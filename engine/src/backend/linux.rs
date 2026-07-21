@@ -123,6 +123,7 @@ impl RuntimeCounters {
 pub(crate) struct EstablishedSubscription {
     pub(crate) id: SubscriptionId,
     pub(crate) initial_coverage: Coverage,
+    pub(crate) initial_root_state: RootState,
     pub(crate) receiver: Receiver<ChangeBatch>,
     pub(crate) root_state: Arc<Mutex<RootState>>,
 }
@@ -256,6 +257,7 @@ impl Runtime {
         Ok(EstablishedSubscription {
             id: established.id,
             initial_coverage: established.coverage,
+            initial_root_state: established.initial_root_state,
             receiver,
             root_state: established.root_state,
         })
@@ -557,6 +559,7 @@ enum Command {
 struct Established {
     id: SubscriptionId,
     coverage: Coverage,
+    initial_root_state: RootState,
     root_state: Arc<Mutex<RootState>>,
 }
 
@@ -2753,11 +2756,15 @@ impl Worker {
             ))
         } else {
             match RootIdentity::capture(&state.root) {
-                Ok(identity) if identity == state.root_identity => Ok(Established {
-                    id: state.id,
-                    coverage: state.coverage(),
-                    root_state: Arc::clone(&state.published_root_state),
-                }),
+                Ok(identity) if identity == state.root_identity => {
+                    let initial_root_state = state.root_state();
+                    Ok(Established {
+                        id: state.id,
+                        coverage: state.coverage(),
+                        initial_root_state,
+                        root_state: Arc::clone(&state.published_root_state),
+                    })
+                }
                 Ok(_) | Err(_) => Err(WatchboundError::new(
                     ErrorCode::RootUnavailable,
                     Operation::Subscribe,

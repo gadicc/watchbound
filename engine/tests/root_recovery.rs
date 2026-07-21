@@ -90,7 +90,9 @@ fn initial_and_ordinary_batches_publish_attached_root_identity_generation_zero()
     let _serial = serial();
     let root = TestDir::new("initial-state");
     let subscription = Engine::new().subscribe(root.path(), options()).unwrap();
-    let initial = subscription.root_state();
+    let initial = *subscription.initial_root_state();
+    assert_eq!(subscription.initial_coverage(), &Coverage::Complete);
+    assert_eq!(subscription.root_state(), initial);
     assert_eq!(initial.generation, 0);
     assert_eq!(initial.attachment, RootAttachment::Attached);
     assert_eq!(initial.loss_evidence, None);
@@ -112,6 +114,7 @@ fn direct_replacement_requires_explicit_acceptance_and_keeps_one_subscription() 
     fs::create_dir_all(root.join("old/deep")).unwrap();
     let subscription = Engine::new().subscribe(&root, options()).unwrap();
     let original = subscription.root_state();
+    assert_eq!(*subscription.initial_root_state(), original);
 
     fs::rename(&root, &moved).unwrap();
     fs::create_dir_all(root.join("new/deep")).unwrap();
@@ -155,6 +158,7 @@ fn direct_replacement_requires_explicit_acceptance_and_keeps_one_subscription() 
     assert_eq!(boundary.invalidated_paths, vec![root.clone()]);
     assert_eq!(boundary.root_state, recovered.current_root_state);
     assert_eq!(boundary.sequence, recovered.boundary_sequence.unwrap());
+    assert_eq!(*subscription.initial_root_state(), original);
 
     let changed = root.join("new/deep/after");
     fs::write(&changed, b"after").unwrap();

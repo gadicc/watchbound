@@ -358,6 +358,7 @@ impl Engine {
 
         Ok(Subscription {
             initial_coverage: established.initial_coverage,
+            initial_root_state: established.initial_root_state,
             receiver: Mutex::new(established.receiver),
             stats,
             control: Arc::new(SubscriptionControl {
@@ -377,6 +378,7 @@ impl Engine {
 
 pub struct Subscription {
     initial_coverage: Coverage,
+    initial_root_state: RootState,
     receiver: Mutex<Receiver<ChangeBatch>>,
     stats: Arc<SharedStats>,
     control: Arc<SubscriptionControl>,
@@ -403,6 +405,12 @@ enum Lifecycle {
 impl Subscription {
     pub fn initial_coverage(&self) -> &Coverage {
         &self.initial_coverage
+    }
+
+    /// Returns the root identity state committed by the same establishment
+    /// acknowledgement as [`Self::initial_coverage`].
+    pub fn initial_root_state(&self) -> &RootState {
+        &self.initial_root_state
     }
 
     pub fn recv_timeout(

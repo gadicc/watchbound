@@ -9,7 +9,8 @@ It exists to make correctness properties executable before stabilizing names.
 root, acquires the process-wide Linux runtime, sends an ordered establishment
 command, and waits for its acknowledgement. The shared worker traverses the
 initial tree in bounded, round-robin topology turns, installs all available
-logical watch interests, and returns an immutable `initial_coverage` result.
+logical watch interests, and returns immutable `initial_coverage` and
+`initial_root_state` values from that same establishment acknowledgement.
 Native work and other subscriptions continue between those topology turns.
 
 Every component of the root path must be a real, non-symlink directory;
@@ -38,14 +39,17 @@ runtime may use a new configuration.
 and worker thread. An engine with no live runtime reports the default zero/none
 snapshot.
 
-`initial_coverage` never changes. Current coverage travels on later batches.
-Deferred-directory counts describe current known gaps rather than cumulative
-failure history. Each subscription accounts for its logical watched and
-deferred directories independently; the runtime budget accounts only for unique
-native watches. Deleting a deferred subtree can reduce the count, while deleting
-watched topology or disposing another subscription can return a token and
-promote a still-existing deferred interest automatically. A subscription at its
-own limit cannot consume a free runtime token.
+`initial_coverage` and `initial_root_state` never change. Together they are the
+exact establishment baseline: batch sequence zero, exclusion generation zero,
+and root generation zero. The Node and wrapper spellings are `initialCoverage`
+and `initialRootState`. Current coverage and root evidence travel on later
+batches. Deferred-directory counts describe current known gaps rather than
+cumulative failure history. Each subscription accounts for its logical watched
+and deferred directories independently; the runtime budget accounts only for
+unique native watches. Deleting a deferred subtree can reduce the count, while
+deleting watched topology or disposing another subscription can return a token
+and promote a still-existing deferred interest automatically. A subscription
+at its own limit cannot consume a free runtime token.
 
 Promotion installs or shares the native watch before reading the directory,
 invalidates the promoted path conservatively, and scans the populated region in
@@ -71,6 +75,24 @@ loss evidence. Root generation starts at zero and advances once per committed
 root recovery, independently of the exclusion generation.
 If a bounded consumer queue fills, the undelivered detail is replaced by a root
 invalidation and uncertain coverage when delivery can resume.
+
+Ordered batches remain the authoritative record of what has crossed the
+delivery boundary. The JavaScript wrapper retains one frozen `observedState`
+projection with `{ sequence, exclusionGeneration, rootState, coverage }`. It is
+either the sequence-zero establishment baseline or the last batch whose native
+delivery callback entered wrapper JavaScript. The wrapper replaces this
+projection before automatic-reconciliation policy observes the batch and before
+the user's callback starts, so a user callback that throws has still observed
+that batch. A callback may enter before the subscribe promise resolves; such a
+projection is retained and is not overwritten by later baseline initialization.
+
+`observedState` is not an atomic read of live native state. The native-backed
+`rootState` and `exclusionGeneration` getters, and a completed exclusion,
+reconciliation, or recovery operation, may be ahead of it. Operation success
+means the native boundary was committed and, when required, entered the bounded
+output path; it does not mean its JavaScript callback has run and must not
+optimistically advance `observedState`. If a successful operation emits no
+batch, `observedState` may remain behind indefinitely.
 
 `watchedDirectories` and `deferredDirectories` are live gauges and become zero
 after disposal. Event, topology-scan, batch, overflow, callback-error, and bridge

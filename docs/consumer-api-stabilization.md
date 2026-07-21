@@ -19,9 +19,9 @@ bounded shared resources, in-place reconciliation, explicit root identity
 recovery, and joined disposal—through the engine, Node binding, wrapper, and
 ordinary conformance. Retaining it only as an experiment would preserve the
 evidence but leave the API and build assumptions to decay. Integration is
-premature because current-state observability, the supported target matrix,
-native artifact production, and the broader compatibility policy are not yet
-stable. Operation failures now have the schema-version-1 contract in
+premature because the supported target matrix, native artifact production, and
+the broader compatibility policy are not yet stable. Operation failures now
+have the schema-version-1 contract in
 [`error-contract.md`](error-contract.md).
 
 “Maintained unpublished” means a deliberately supported private package, not a
@@ -38,19 +38,19 @@ approved non-adversarial path boundary is in `security-threat-model.md`.
 | Area | Implemented contract | Stabilization gap |
 | --- | --- | --- |
 | Capability reporting | Frozen wrapper capabilities report recursion, moved-in discovery, watch limits, overflow, exclusions, reconciliation, automatic reconciliation, root recovery, and exact child-path bytes. The conformance adapter gates complete operations. | There is no capability schema/version, platform/libc/architecture field, option-limit/default description, or distinction between per-subscription logical limits and the engine's process-wide native budget. |
-| Coverage and uncertainty | `complete`, reasoned `partial`, and reasoned `uncertain` are explicit. Stronger loss stays sticky, batches are bounded, and no detailed reconstruction is claimed after uncertainty. | Current coverage is observable only on initial state, batches, and operation results; there is no direct current-coverage snapshot getter. Consumers must retain the last ordered batch and understand that it may lag native state. |
-| Manual reconciliation | `reconcile()` rebuilds the original identity under the committed exclusions and earns only one root boundary after bounded enqueue. Rejections use stable codes for topology conflicts, root-state conflicts, backpressure, interruption, and closure. | A successful operation acknowledgement can precede its callback; until current-state observability is implemented, consumers must use ordered batches to know what JavaScript has observed. |
+| Coverage and uncertainty | `complete`, reasoned `partial`, and reasoned `uncertain` are explicit. Stronger loss stays sticky, batches are bounded, and no detailed reconstruction is claimed after uncertainty. Immutable `initialCoverage`/`initialRootState` define the exact sequence-zero establishment baseline; frozen `observedState` projects that baseline or the last batch whose callback entered JavaScript. | `observedState` intentionally is not an atomic live-native snapshot. Live getters and operation acknowledgements may be ahead, and an operation that emits no batch can leave it behind indefinitely; ordered batches remain authoritative for JavaScript observation. |
+| Manual reconciliation | `reconcile()` rebuilds the original identity under the committed exclusions and earns only one root boundary after bounded enqueue. Rejections use stable codes for topology conflicts, root-state conflicts, backpressure, interruption, and closure. | A successful acknowledgement can precede its callback and therefore never advances `observedState` optimistically. Consumers that need JavaScript-observed state use the ordered batch projection rather than the operation result. |
 | Automatic reconciliation | Disabled by default; finite attempts and timers; one immutable status; never adopts a root; disposal joins active work. Retry and blocking policy uses exact `WATCHBOUND_*` codes and derived retry conditions, never message matching. | Policy status is observational, not a durable event stream. Defaults and bounds exist in code/docs but are not exposed as machine-readable capability data. |
 | Root replacement | Root identity, generation, attachment, and bounded loss evidence travel on every batch. `recoverRoot` requires `original-only` or `accept-replacement`, preserves one subscription and exclusion generation, and returns structured expected filesystem outcomes. Lifecycle, transaction, and internal rejections use the same stable operation-error schema. | `(device, inode)` is non-cryptographic and susceptible to inode reuse. Path checks are deliberately non-adversarial and not fd-anchored. |
 | Options | Positive integer native options use finite `u32` bounds. Automatic retries are limited to 16 and delays to 10–60,000 ms; defaults are finite. | The public types do not encode numeric ranges. A JavaScript consumer cannot configure the engine's process-wide native-watch budget, and the first live Rust engine fixes that budget for the runtime lifetime. Default changes would be behavioral API changes. |
 | Status and errors | Coverage, stats, root state/results, callback errors, bridge delivery errors, and automatic-policy status are visible. Expected root candidate failures have bounded reason variants. Rejected operations expose schema-version-1 `WatchboundError` metadata: a stable code and operation, code-derived retry guidance, and optional bounded system diagnostics. | There is no subscription-level last-error/event channel. The error schema remains compatibility-sensitive while the package is private at `0.0.0`. |
-| TypeScript | The wrapper declares discriminated coverage, automatic status, root state/policy/result, bigint counters, exact bytes, exclusions, reconciliation, recovery, and disposal. | Declarations are handwritten and not compiled in CI against usage fixtures. Native generated types are looser strings, while wrapper types are closed unions. Adding a reason/status is potentially breaking for exhaustive consumers. |
+| TypeScript | The wrapper declares discriminated coverage, automatic status, initial and observed root/coverage state, root policy/results, bigint counters, exact bytes, exclusions, reconciliation, recovery, and disposal. | Declarations are handwritten and not compiled in CI against usage fixtures. Native generated types are looser strings, while wrapper types are closed unions. Adding a reason/status is potentially breaking for exhaustive consumers. |
 | Node and Linux support | Manifests claim Node `>=18`; Node-API 6 avoids direct V8 coupling. Rust requires 1.88. The engine intentionally fails to compile off Linux. Current local evidence is Linux x64/glibc on Node 25.2.1. | The claimed Node floor has no matrix evidence here. Linux arm64 and musl are not tested. The generated napi loader lists unsupported platforms even though the Rust engine is Linux-only, and package metadata does not declare `os`, `cpu`, or libc support. |
 | Native build | A local release build works through pinned napi-rs tooling and records the loaded binary identity in conformance. | Consumers currently need Rust, a C linker, pnpm build tooling, and a compatible host, or an unimplemented trusted prebuild path. There is no ABI/platform artifact matrix, reproducibility check, install fallback contract, or binary size gate. |
 | Security and paths | Exact Linux child-path bytes cross the native boundary; root components are retained for symlink validation; directory symlinks are not followed; identity is checked around watch installation and recovery barriers. | The root API itself accepts only a JavaScript string. `canonicalize`/metadata/inotify checks remain path-based TOCTOU defenses for stable, non-adversarial filesystems, not an `openat2`/directory-fd security boundary. Mount replacement and adversarial inode reuse are outside the claim. |
 | Maintenance burden | Rust unit/integration suites, Node lifecycle tests, wrapper/policy tests, harness tests, ordinary conformance, and separately gated genuine-overflow evidence cover the defining semantics. | Linux kernel behavior, Node environment teardown, GC, shared allocator fairness, symlink races, and native packaging all require specialist ownership. Genuine overflow is intentionally supervised, host-sensitive, serial, and unsuitable for every commit. |
 | Artifact provenance | Ignored raw reports are hashed in a committed manifest and copied to a private content-addressed SHA-256 store. Source/native hashes and caveats are retained. | Raw reports contain private paths/host details, the store is local rather than a release service, restoration is manual, and public sanitization is only planned. Native release artifacts have no SBOM, signing, attestation, or reproducible-build evidence. |
-| Compatibility and semver | Everything remains private at `0.0.0`; no stable external promise has been made. | The callback/batch shape, bigint counters, reason/status unions, default policy, global runtime configuration, exact-byte behavior, disposal timing, and root-boundary credit are all compatibility-sensitive. The wrapper/native package split and future prebuild layout are undecided. |
+| Compatibility and semver | Everything remains private at `0.0.0`; no stable external promise has been made. | The callback/batch shape, observed-state timing, bigint counters, reason/status unions, default policy, global runtime configuration, exact-byte behavior, disposal timing, and root-boundary credit are all compatibility-sensitive. The wrapper/native package split and future prebuild layout are undecided. |
 
 ## Choice comparison
 
@@ -96,9 +96,10 @@ All criteria are required; meeting them does not itself authorize integration.
    document which failures are retryable, terminal, or expected structured
    results. The implemented schema-version-1 contract is in
    [`error-contract.md`](error-contract.md).
-3. Decide and implement current-state observability: at minimum a race-aware
-   current coverage/root snapshot or an explicit statement that only ordered
-   batches are authoritative.
+3. **Complete:** expose immutable establishment state and one race-aware
+   callback-observed projection while retaining ordered batches as the
+   authority. Live native getters and operation acknowledgements are explicitly
+   allowed to be ahead of `observedState`.
 4. Decide whether JavaScript needs process-wide native-watch budgeting. If it
    does, expose configuration and global conflict behavior before integration;
    if it does not, document the resource owner and operational limit.
@@ -129,7 +130,9 @@ Before an integration-readiness decision, add or run:
   exact-byte exclusions, recovery results, and status narrowing;
 - stable structured-error contract tests for invalid arguments, transaction
   conflicts, backpressure, interruption, disposal races, and unavailable roots;
-- current-state/batch ordering tests if a coverage snapshot API is added;
+- retain current-state/batch ordering tests for baseline initialization,
+  pre-resolution callbacks, update-before-user-callback behavior, callback
+  exceptions, and operation acknowledgement races;
 - repeated large direct and ancestor replacement with peers, shared old/new
   identities, limits, exclusions, disposal overlap, and candidate changes at
   each validation barrier;

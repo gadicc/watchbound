@@ -1,6 +1,10 @@
 import nativeBinding from "../node/index.js";
 import path from "node:path";
 import {
+  initializeObservedState,
+  recordObservedBatch,
+} from "./observed-state.js";
+import {
   createAutomaticReconciliationPolicy,
   normalizeAutomaticReconciliation,
 } from "./automatic-reconciliation.js";
@@ -63,7 +67,12 @@ export async function subscribe(root, onBatch, options = {}) {
     ? root
     : `${process.cwd()}${path.sep}${root}`;
   const resolvedRoot = path.resolve(absoluteRoot);
-  const callbackHolder = { onBatch, observeCoverage: null };
+  const callbackHolder = {
+    onBatch,
+    observeCoverage: undefined,
+    pendingCoverageObservation: null,
+    observedState: null,
+  };
   const weakCallbackHolder = new WeakRef(callbackHolder);
   const nativeSubscription = await invokeWatchbound(
     "subscribe",
@@ -80,10 +89,24 @@ export async function subscribe(root, onBatch, options = {}) {
         () => invokeWatchbound("reconcile", () => nativeSubscription.reconcile()),
       );
   callbackHolder.observeCoverage = automaticPolicy?.observe ?? null;
+  if (
+    callbackHolder.observeCoverage !== null &&
+    callbackHolder.pendingCoverageObservation !== null
+  ) {
+    callbackHolder.observeCoverage(callbackHolder.pendingCoverageObservation);
+  }
+  callbackHolder.pendingCoverageObservation = null;
+  const initialCoverage = normalizeCoverage(nativeSubscription.initialCoverage);
+  const initialRootState = normalizeRootState(nativeSubscription.initialRootState);
+  initializeObservedState(callbackHolder, initialCoverage, initialRootState);
   let disposePromise;
   let subscription;
   subscription = Object.freeze({
-    initialCoverage: nativeSubscription.initialCoverage,
+    initialCoverage,
+    initialRootState,
+    get observedState() {
+      return callbackHolder.observedState;
+    },
     get exclusionGeneration() {
       return nativeSubscription.exclusionGeneration;
     },
@@ -160,7 +183,16 @@ function createNativeCallback(weakCallbackHolder, resolvedRoot) {
         "deliver-batch",
         () => normalizeBatch(resolvedRoot, nativeBatch),
       );
-      holder.observeCoverage?.(batch);
+      recordObservedBatch(holder, batch);
+      if (holder.observeCoverage === undefined) {
+        // Native delivery may enter JavaScript before the subscribe promise's
+        // continuation constructs the public subscription. One latest batch is
+        // enough because engine uncertainty and root loss are sticky until an
+        // explicit recovery boundary.
+        holder.pendingCoverageObservation = batch;
+      } else {
+        holder.observeCoverage?.(batch);
+      }
       holder.onBatch(batch);
     }
   };

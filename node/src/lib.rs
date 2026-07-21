@@ -592,6 +592,11 @@ impl NativeSubscription {
         JsCoverage::from(&self.state.initial_coverage)
     }
 
+    #[napi(getter)]
+    pub fn initial_root_state(&self) -> JsRootState {
+        self.state.initial_root_state.into()
+    }
+
     #[napi]
     pub fn stats(&self) -> JsStats {
         let stats = self.state.stats.stats();
@@ -785,6 +790,7 @@ impl Task for DisposeTask {
 
 pub struct SubscriptionState {
     initial_coverage: Coverage,
+    initial_root_state: RootState,
     stats: StatsHandle,
     exclusions: ExclusionHandle,
     reconciliation: ReconciliationHandle,
@@ -808,6 +814,7 @@ impl SubscriptionState {
         cleanup_registration: EnvironmentCleanupRegistration,
     ) -> NodeResult<Self> {
         let initial_coverage = subscription.initial_coverage().clone();
+        let initial_root_state = *subscription.initial_root_state();
         let stats = subscription.stats_handle();
         let exclusions = subscription.exclusion_handle();
         let reconciliation = subscription.reconciliation_handle();
@@ -839,6 +846,7 @@ impl SubscriptionState {
 
         Ok(Self {
             initial_coverage,
+            initial_root_state,
             stats,
             exclusions,
             reconciliation,

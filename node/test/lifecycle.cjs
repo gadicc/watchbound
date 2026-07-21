@@ -19,13 +19,21 @@ test("native bridge catches callback exceptions and remains usable", async () =>
   let subscription;
   try {
     let callbacks = 0;
-    subscription = await binding.subscribe(root, { batchWindowMs: 8 }, () => {
+    let firstBatchRootState;
+    subscription = await binding.subscribe(root, { batchWindowMs: 8 }, (batch) => {
       callbacks += 1;
+      firstBatchRootState ??= batch.rootState;
       if (callbacks === 1) throw new Error("intentional callback failure");
     });
+    const initialRootState = subscription.initialRootState;
+    assert.deepEqual(initialRootState, subscription.rootState);
+    assert.equal(initialRootState.generation, 0n);
+    assert.equal(initialRootState.attachment, "attached");
+    assert.equal(initialRootState.lossEvidence, undefined);
 
     fs.writeFileSync(path.join(root, "first.txt"), "first");
     await waitFor(() => callbacks === 1, "first callback did not run");
+    assert.deepEqual(firstBatchRootState, initialRootState);
     await waitFor(
       () => subscription.stats().callbackErrors === 1n,
       "callback failure was not accounted",
@@ -112,6 +120,7 @@ test("native root state and explicit replacement recovery preserve one subscript
       batches.push(batch);
     });
     const original = subscription.rootState;
+    assert.deepEqual(subscription.initialRootState, original);
     assert.equal(original.generation, 0n);
     assert.equal(original.attachment, "attached");
     assert.equal(original.lossEvidence, undefined);
@@ -139,6 +148,7 @@ test("native root state and explicit replacement recovery preserve one subscript
     assert.equal(recovered.exclusionGeneration, 0n);
     assert.deepEqual(recovered.coverage, { state: "complete" });
     assert.equal(typeof recovered.boundarySequence, "bigint");
+    assert.deepEqual(subscription.initialRootState, original);
     await waitFor(
       () => batches.some((batch) => batch.sequence === recovered.boundarySequence),
       "root recovery boundary was not delivered",

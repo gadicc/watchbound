@@ -42,6 +42,12 @@ The native build produces a local platform binding under `node/`; generated
 Linux path bytes and conservatively collapses a non-UTF-8 string invalidation
 to its root.
 
+`initialCoverage` and `initialRootState` expose the immutable establishment
+baseline. `subscription.observedState` is the frozen projection of that baseline
+or the last ordered batch whose callback entered JavaScript. It is not a live
+native snapshot: operation acknowledgements and native-backed getters may be
+ahead, while ordered batches remain authoritative for JavaScript observation.
+
 ## Evaluate
 
 ```sh

@@ -8,6 +8,22 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { capabilities, subscribe } from "../index.js";
 
+function observedProjection(batch, initialCoverage, initialRootState) {
+  return batch === undefined
+    ? {
+        sequence: 0n,
+        exclusionGeneration: 0n,
+        rootState: initialRootState,
+        coverage: initialCoverage,
+      }
+    : {
+        sequence: batch.sequence,
+        exclusionGeneration: batch.exclusionGeneration,
+        rootState: batch.rootState,
+        coverage: batch.coverage,
+      };
+}
+
 async function waitFor(predicate, message, timeoutMs = 3_000, intervalMs = 10) {
   const deadline = Date.now() + timeoutMs;
   let matched = await predicate();
@@ -58,6 +74,68 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     assert.equal(batches[0].pathEncodingCollapsed, false);
     await Promise.all([subscription.dispose(), subscription.dispose()]);
     assert.equal(subscription.stats().disposed, true);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("observedState mirrors only the initial baseline or the last entered callback", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-observed-state-"));
+  let subscription;
+  try {
+    const batches = [];
+    const observedInsideCallbacks = [];
+    let callbackCount = 0;
+    subscription = await subscribe(root, (batch) => {
+      observedInsideCallbacks.push(subscription.observedState);
+      batches.push(batch);
+      callbackCount += 1;
+      if (callbackCount === 1) throw new Error("intentional observed-state callback failure");
+    }, { batchWindowMs: 8 });
+
+    assert.deepEqual(
+      subscription.observedState,
+      observedProjection(
+        undefined,
+        subscription.initialCoverage,
+        subscription.initialRootState,
+      ),
+    );
+    assert.equal(Object.isFrozen(subscription.observedState), true);
+    assert.equal(Object.isFrozen(subscription.observedState.coverage), true);
+    assert.equal(Object.isFrozen(subscription.observedState.rootState), true);
+    assert.equal(Object.isFrozen(subscription.observedState.rootState.identity), true);
+
+    const changed = path.join(root, "changed.txt");
+    fs.writeFileSync(changed, "change");
+    await waitFor(() => batches.length > 0, "observed-state callback did not run");
+    await waitFor(
+      () => subscription.stats().callbackErrors === 1n,
+      "throwing observed-state callback was not accounted",
+    );
+
+    const lastBatch = batches.at(-1);
+    assert.deepEqual(
+      observedInsideCallbacks.at(-1),
+      observedProjection(lastBatch, subscription.initialCoverage, subscription.initialRootState),
+      "observedState was not advanced before the user callback began",
+    );
+    assert.deepEqual(
+      subscription.observedState,
+      observedProjection(lastBatch, subscription.initialCoverage, subscription.initialRootState),
+    );
+
+    fs.writeFileSync(path.join(root, "after-callback-error.txt"), "change");
+    await waitFor(() => batches.length > 1, "delivery stopped after callback failure");
+    assert.deepEqual(
+      subscription.observedState,
+      observedProjection(
+        batches.at(-1),
+        subscription.initialCoverage,
+        subscription.initialRootState,
+      ),
+    );
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });
@@ -471,6 +549,21 @@ test("wrapper explicitly recovers a replacement without automatic identity adopt
     assert.ok(Object.isFrozen(recovered));
     assert.ok(Object.isFrozen(recovered.currentRootState));
     assert.ok(Object.isFrozen(recovered.currentRootState.identity));
+    assert.deepEqual(
+      subscription.observedState,
+      observedProjection(
+        batches.at(-1),
+        subscription.initialCoverage,
+        subscription.initialRootState,
+      ),
+      "operation acknowledgement advanced observedState ahead of callback delivery",
+    );
+    if (subscription.observedState.sequence === recovered.boundarySequence) {
+      assert.ok(
+        batches.some((batch) => batch.sequence === recovered.boundarySequence),
+        "observedState credited the recovery boundary before its callback",
+      );
+    }
     assert.deepEqual(subscription.automaticReconciliation, { state: "idle" });
     await assert.rejects(
       subscription.recoverRoot({ identityPolicy: "accept-replacement" }),
@@ -485,6 +578,14 @@ test("wrapper explicitly recovers a replacement without automatic identity adopt
     assert.deepEqual(boundary.invalidatedPaths, [root]);
     assert.deepEqual(boundary.rootState, recovered.currentRootState);
     assert.deepEqual(boundary.coverage, recovered.coverage);
+    assert.deepEqual(
+      subscription.observedState,
+      observedProjection(
+        batches.at(-1),
+        subscription.initialCoverage,
+        subscription.initialRootState,
+      ),
+    );
 
     const sentinel = path.join(root, "new", "deep", "sentinel.txt");
     fs.writeFileSync(sentinel, "sentinel");

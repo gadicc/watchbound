@@ -99,6 +99,17 @@ export interface ChangeBatch {
   readonly coverage: Coverage;
 }
 
+/**
+ * The establishment baseline or the last batch whose callback entered
+ * JavaScript. Native state and completed operations may be ahead of it.
+ */
+export interface ObservedState {
+  readonly sequence: bigint;
+  readonly exclusionGeneration: bigint;
+  readonly rootState: RootState;
+  readonly coverage: Coverage;
+}
+
 export interface RootIdentity {
   readonly device: bigint;
   readonly inode: bigint;
@@ -174,6 +185,8 @@ export interface Stats {
 
 export interface Subscription {
   readonly initialCoverage: Coverage;
+  readonly initialRootState: RootState;
+  readonly observedState: ObservedState;
   readonly exclusionGeneration: bigint;
   readonly rootState: RootState;
   readonly automaticReconciliation: AutomaticReconciliationStatus;

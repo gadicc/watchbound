@@ -84,6 +84,9 @@ barrier requirement during a running attempt. A recoverable loss delivered
 after a successful root enqueue starts a new bounded cycle when its later batch
 reaches JavaScript. Native batch order, generations, coverage, exclusion
 transactions, and the singleton root boundary remain authoritative.
+Before either automatic policy or user code sees a delivered batch, the wrapper
+records it as the subscription's frozen `observedState`; callback exceptions do
+not roll back that observation.
 
 Automatic calls deliberately use the same native topology transaction gate as
 manual reconciliation and exclusion replacement. Conflicts stay explicit and
@@ -141,8 +144,21 @@ Each delivered batch has a monotonically increasing subscription-local
 sequence, the committed exclusion generation under which all of its paths were
 selected, a fixed-size root identity/attachment snapshot and generation, and
 conservative invalidated paths. Initial subscriptions and their batches use
-generation zero for both independent counters. Detailed create/update/delete or rename claims are
-deliberately absent from the first public engine surface.
+generation zero for both independent counters. The immutable
+`initialCoverage` and `initialRootState` values form the exact sequence-zero,
+exclusion-generation-zero, root-generation-zero establishment baseline.
+Detailed create/update/delete or rename claims are deliberately absent from the
+first public engine surface.
+
+Ordered batches are authoritative. The JavaScript wrapper exposes one frozen
+`observedState` projection of either that baseline or the last batch whose
+delivery callback entered JavaScript. It updates this projection before policy
+and user callbacks, including callbacks that throw, and preserves a batch that
+arrives before subscribe-promise resolution instead of overwriting it with the
+baseline. This is deliberately not an atomic native-state read: live
+`rootState` and `exclusionGeneration` getters and operation acknowledgements may
+be ahead. Acknowledgements never advance `observedState`; when a successful
+operation produces no batch, that projection may lag indefinitely.
 
 An existing subscription can request reconciliation without changing its
 exclusion set or generation. Reconciliation does not reconstruct event detail:
@@ -350,10 +366,11 @@ UTF-8 conversion.
 
 Generation zero denotes the initial empty exclusion set. A requested generation
 may skip values but must be greater than the committed value. Duplicate, stale,
-and lower values fail with `InvalidInput`; a second call while one transaction is
-active fails with `WouldBlock`. Failed validation or a rejected concurrent call
-does not consume a generation. `exclusion_generation()` and the JavaScript
-`exclusionGeneration` getter change only after acknowledgement.
+and lower values fail with `WATCHBOUND_INVALID_ARGUMENT`; a second call while
+one transaction is active fails with
+`WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`. Failed validation or a rejected
+concurrent call does not consume a generation. `exclusion_generation()` and the
+JavaScript `exclusionGeneration` getter change only after acknowledgement.
 
 An update is one subscription-local scheduler transaction:
 
@@ -388,7 +405,8 @@ The acknowledgement means the worker has committed the new filter, topology,
 logical and unique-watch accounting, deferred allocator state, coverage
 snapshot, and generation. It does not mean the consumer callback has already
 run; the conservative inclusion invalidation may still be pending in the
-bounded output path. Disposal serializes with an active update, cancels and
+bounded output path, and the wrapper must not advance `observedState` from the
+acknowledgement. Disposal serializes with an active update, cancels and
 acknowledges worker-held update state if necessary, and retains the existing
 joined/idempotent no-later-enqueue guarantee.
 
@@ -403,8 +421,8 @@ subscription-local topology transaction under the currently committed
 exclusion set. The exclusion generation is captured by ownership of the worker
 state, is not advanced, and tags the required root batch. One shared
 per-subscription transaction gate rejects a concurrent reconciliation or
-exclusion replacement with `WouldBlock`; commands are never silently reordered
-across either topology barrier.
+exclusion replacement with `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`; commands
+are never silently reordered across either topology barrier.
 
 The worker first finishes active event/topology work and flushes the pending
 batch boundary. It validates the original root `(device, inode)`, then performs
@@ -437,12 +455,13 @@ coverage, attempts the single root batch in the bounded output queue, and only
 then clears the recoverable uncertainty captured at transaction start. A new
 loss increments the subscription's uncertainty epoch and therefore survives
 the commit. If the root batch cannot enter the queue, reconciliation returns
-`WouldBlock`, retains explicit `consumer-backpressure` (or a stronger new loss),
-and leaves a pending root invalidation instead of acknowledging success.
+`WATCHBOUND_CONSUMER_BACKPRESSURE`, retains explicit
+`consumer-backpressure` (or a stronger new loss), and leaves a pending root
+invalidation instead of acknowledging success.
 Successful acknowledgement means the topology, logical interests, watch and
 deferred accounting, final coverage snapshot, root invalidation, and unchanged
 exclusion generation have all committed; it still does not wait for a Node or
-JavaScript callback to run.
+JavaScript callback to run or advance the wrapper's `observedState`.
 
 ### Explicit root recovery transaction
 

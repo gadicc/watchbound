@@ -51,8 +51,9 @@ remain explicit.
 Root identity loss must be latched independently of `Coverage`. Today coverage
 stores one reason by priority, so an `event-overflow` can mask simultaneous
 root loss even though the subscription must not grow topology at a replacement
-path. The proposed fixed-size `RootState` is carried on every batch and exposed
-as the subscription's current snapshot:
+path. The fixed-size `RootState` is carried on every batch. `initialRootState`
+is the immutable establishment snapshot, while the native-backed `rootState`
+getter is the current published native snapshot:
 
 ```ts
 interface RootIdentity {
@@ -77,6 +78,15 @@ each committed root recovery, including restoration of the original identity,
 so batches before and after a loss cannot be confused even when `(device,
 inode)` is unchanged. `ChangeBatch` gains its immutable `rootState` snapshot;
 the exclusion generation remains independent.
+
+The JavaScript wrapper's frozen `observedState.rootState` is distinct from the
+live getter. It starts at the exact sequence-zero, exclusion-generation-zero,
+root-generation-zero `initialCoverage`/`initialRootState` baseline, then changes
+only when an ordered batch callback enters JavaScript. The wrapper updates it
+before automatic policy and user callback code, so even a throwing callback has
+observed the new root state. A recovery acknowledgement and the live getter may
+be ahead; neither advances `observedState`, and an attached recovery that emits
+no boundary can leave it behind indefinitely.
 
 Direct root `IN_MOVE_SELF`/`IN_DELETE_SELF`, unexpected loss of the root watch,
 and periodic lexical-path identity mismatch record different evidence. A path
@@ -134,6 +144,8 @@ retains the old lost `RootState` and explicit non-complete coverage.
 `original-restored` and `replacement-adopted` state exactly which identity
 decision committed. Complete or partial coverage plus a non-null boundary
 sequence means the root-only boundary entered the bounded native output queue.
+It does not mean the callback has entered JavaScript and does not advance
+`observedState` ahead of that callback.
 If identity attachment commits but a new loss or output pressure prevents that
 claim, the result retains the adopted/restored state but returns uncertain
 coverage and a null boundary sequence. A pending root invalidation remains, and
@@ -228,6 +240,8 @@ After an attached result, it clears the root block and schedules ordinary
 reconciliation only if the result or a later ordered batch remains recoverably
 uncertain. A failed/not-attached result remains blocked. This prevents a batch
 racing the JavaScript promise from being silently ignored.
+Every racing batch advances `observedState` before this policy observes it and
+before user callback code begins.
 
 Disposal closes admission before queuing worker removal. A root recovery that
 already owns the gate either commits before the ordered disposal command or is

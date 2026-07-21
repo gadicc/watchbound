@@ -257,6 +257,8 @@ export type AutomaticReconciliationStatus =
       readonly identityPolicy: RootIdentityPolicy;
     };
 
+export type SupportStatus = "target-pending-clean-ci" | "supported";
+
 export interface Capabilities {
   readonly schemaVersion: 1;
   readonly versions: {
@@ -287,7 +289,7 @@ export interface Capabilities {
     };
   };
   readonly support: {
-    readonly status: "target-pending-clean-ci";
+    readonly status: SupportStatus;
     readonly operatingSystem: {
       readonly family: "linux";
       readonly distribution: "ubuntu";

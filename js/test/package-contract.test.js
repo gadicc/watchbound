@@ -20,7 +20,7 @@ test("private package manifests match the narrow maintained source-build target"
 
   for (const manifest of [root, wrapper, native]) {
     assert.equal(manifest.private, true);
-    assert.equal(manifest.version, "0.0.0");
+    assert.equal(manifest.version, "0.1.0");
     assert.equal(manifest.license, "MIT");
     assert.deepEqual(manifest.engines, { node: ">=24.18.0 <25" });
     assert.equal(manifest.scripts?.preinstall, undefined);
@@ -45,9 +45,13 @@ test("private package manifests match the narrow maintained source-build target"
   });
   assert.equal(
     wrapper.dependencies["@gadicc/watchbound-node"],
-    "workspace:0.0.0",
+    "workspace:0.1.0",
   );
   assert.equal(root.scripts["build:node"], "node scripts/build-node.mjs");
+  for (const crate of ["engine/Cargo.toml", "node/Cargo.toml"]) {
+    const source = fs.readFileSync(path.join(workspaceRoot, crate), "utf8");
+    assert.match(source, /^publish = false$/mu);
+  }
 });
 
 test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {

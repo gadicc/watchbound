@@ -6,8 +6,9 @@ as an explicit result rather than an assumption, uses one inotify watch per
 included directory, batches invalidations, and reports partial or uncertain
 coverage when it cannot safely claim completeness.
 
-This repository remains private at `0.0.0`. Nothing here is published or has a
-stable public API, and the maintained target remains pending clean CI evidence.
+The packages remain private and unpublished at the first frozen `0.1.0` API
+candidate. The maintained target remains pending clean CI evidence on that
+exact candidate; private `0.x` does not claim public major-version stability.
 It is intentionally independent of Codex Desktop and does not contain
 Git-ignore or application policy.
 
@@ -73,7 +74,9 @@ and separates versions/build facts, observed runtime facts, the support target,
 features, option defaults and bounds, and observability. Runtime facts are not a
 support claim: the approved narrow source-build target remains
 `target-pending-clean-ci`. See [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
-and [`docs/support-matrix.md`](docs/support-matrix.md).
+and [`docs/support-matrix.md`](docs/support-matrix.md). The frozen private API
+surface and compatibility policy are recorded in
+[`docs/private-api-freeze.md`](docs/private-api-freeze.md).
 
 ## Evaluate
 

@@ -200,8 +200,8 @@ test("loader distinguishes metadata API and version mismatches", () => {
   }
 
   for (const metadata of [
-    { ...validMetadata, nativeVersion: "0.0.1" },
-    { ...validMetadata, engineVersion: "0.0.1" },
+    { ...validMetadata, nativeVersion: "0.1.1" },
+    { ...validMetadata, engineVersion: "0.1.1" },
   ]) {
     expectLoaderError(
       () => loadNative(loadOptions({ requireNative: () => validBinding(metadata) })),
@@ -239,7 +239,7 @@ test("loader uses exactly one local basename and ignores napi-rs environment ove
 test("wrapper version assertion uses the native package version", () => {
   assert.doesNotThrow(() => assertWrapperVersion(packageVersion));
   expectLoaderError(
-    () => assertWrapperVersion("0.0.1"),
+    () => assertWrapperVersion("0.1.1"),
     WatchboundLoaderErrorCode.NATIVE_VERSION_MISMATCH,
   );
 });

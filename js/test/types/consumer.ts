@@ -233,6 +233,16 @@ function inspectCapabilities(): void {
   const sourceBuild: "controlled-source-build" = capabilities.build.delivery;
   const noPrebuild: false = capabilities.build.prebuilt;
   const nodeRange: ">=24.18.0 <25" = capabilities.support.nodeRange;
+  const supportStatus: "pending" | "ready" = (() => {
+    switch (capabilities.support.status) {
+      case "target-pending-clean-ci":
+        return "pending";
+      case "supported":
+        return "ready";
+      default:
+        return assertNever(capabilities.support.status);
+    }
+  })();
   const runtimeNode: string = capabilities.runtime.node.version;
   const runtimeNodeApi: number | null = capabilities.runtime.node.api;
   const processBudget = capabilities.options.engine.nativeWatchBudget;
@@ -252,6 +262,7 @@ function inspectCapabilities(): void {
   void sourceBuild;
   void noPrebuild;
   void nodeRange;
+  void supportStatus;
   void runtimeNode;
   void runtimeNodeApi;
   void processScope;

@@ -125,7 +125,7 @@ test("Watchbound evidence identifies the controlled unpublished source build", (
   const metadata = createAdapterMetadata(
     {
       capabilities: {
-        versions: { engine: "0.0.0" },
+        versions: { engine: "0.1.0" },
         build: {
           nodeApi: 6,
           profile: "release",

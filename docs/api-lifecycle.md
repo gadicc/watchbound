@@ -90,7 +90,7 @@ has these top-level sections:
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Controlled-source-build delivery, `prebuilt: false`, build profile and target triple, Node-API 6, and Rust 1.88 minimum. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. Its status remains `target-pending-clean-ci`. |
+| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; the 0.1.0 freeze emits the pending value until separate qualification. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, and observed state. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, and the native callback-queue bound. |

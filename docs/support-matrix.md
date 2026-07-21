@@ -72,7 +72,7 @@ the native module from its checked-in Rust source, verifies native/wrapper
 contract identity, and then runs the ordinary gate. Runtime installation does
 not silently download, select, or fall back to a prebuild.
 
-All three package manifests remain private at `0.0.0`, declare MIT licensing
+All three package manifests remain private at `0.1.0`, declare MIT licensing
 and Node `>=24.18.0 <25`, and the wrapper/native manifests declare Linux, x64,
 and glibc. The wrapper depends on the native workspace package by its package
 name rather than reaching across the repository by relative path.

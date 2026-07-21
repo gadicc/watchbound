@@ -30,9 +30,9 @@ test("capability schema v1 reports facts, target support, defaults, and bounds",
   ]);
   assert.equal(capabilities.schemaVersion, 1);
   assert.deepEqual(capabilities.versions, {
-    wrapper: "0.0.0",
-    native: "0.0.0",
-    engine: "0.0.0",
+    wrapper: "0.1.0",
+    native: "0.1.0",
+    engine: "0.1.0",
     bindingApi: 1,
   });
   assert.deepEqual(capabilities.build, {

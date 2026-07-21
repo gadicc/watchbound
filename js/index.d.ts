@@ -145,16 +145,29 @@ export type RootRecoveryFailureReason =
   | "identity-unstable"
   | "root-watch-unavailable";
 
-export interface RootRecoveryResult {
-  readonly attachment: RootRecoveryAttachment;
-  readonly reason?: RootRecoveryFailureReason;
+interface RootRecoveryResultBase {
   readonly previousRootState: RootState;
-  readonly candidateIdentity?: RootIdentity;
   readonly currentRootState: RootState;
   readonly exclusionGeneration: bigint;
   readonly coverage: Coverage;
   readonly boundarySequence: bigint | null;
 }
+
+export interface AttachedRootRecoveryResult extends RootRecoveryResultBase {
+  readonly attachment: "original-restored" | "replacement-adopted";
+  readonly reason?: never;
+  readonly candidateIdentity: RootIdentity;
+}
+
+export interface NotAttachedRootRecoveryResult extends RootRecoveryResultBase {
+  readonly attachment: "not-attached";
+  readonly reason: RootRecoveryFailureReason;
+  readonly candidateIdentity?: RootIdentity;
+}
+
+export type RootRecoveryResult =
+  | AttachedRootRecoveryResult
+  | NotAttachedRootRecoveryResult;
 
 export interface SubscriptionOptions {
   watchLimit?: number;
@@ -306,10 +319,16 @@ export interface Capabilities {
   };
   readonly options: {
     readonly engine: {
-      readonly nativeWatchBudget: NullableIntegerOptionCapability;
+      readonly nativeWatchBudget: NullableIntegerOptionCapability<
+        "process-runtime",
+        "unique-native-watches"
+      >;
     };
     readonly subscription: {
-      readonly watchLimit: NullableIntegerOptionCapability;
+      readonly watchLimit: NullableIntegerOptionCapability<
+        "subscription",
+        "logical-directories"
+      >;
       readonly batchWindowMs: IntegerOptionCapability;
       readonly maxBatchPaths: IntegerOptionCapability;
       readonly outputQueueCapacity: IntegerOptionCapability;
@@ -357,10 +376,17 @@ export interface IntegerOptionCapability extends IntegerRangeCapability {
   readonly unit: "milliseconds" | "paths" | "batches";
 }
 
-export interface NullableIntegerOptionCapability {
+export interface NullableIntegerOptionCapability<
+  Scope extends "process-runtime" | "subscription" =
+    | "process-runtime"
+    | "subscription",
+  Accounting extends "unique-native-watches" | "logical-directories" =
+    | "unique-native-watches"
+    | "logical-directories",
+> {
   readonly type: "integer-or-null";
-  readonly scope: "process-runtime" | "subscription";
-  readonly accounting: "unique-native-watches" | "logical-directories";
+  readonly scope: Scope;
+  readonly accounting: Accounting;
   readonly default: null;
   readonly minimum: number;
   readonly maximum: number;

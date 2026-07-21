@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use watchbound_engine::{
-    Coverage, Engine, PartialReason, Subscription, SubscriptionOptions, UncertainReason,
+    Coverage, Engine, ErrorCode, Operation, PartialReason, Subscription, SubscriptionOptions,
+    UncertainReason,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -425,7 +426,8 @@ fn rejects_a_symlink_root_instead_of_escaping_the_named_topology() {
         }
         Err(error) => error,
     };
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(error.code(), ErrorCode::InvalidArgument);
+    assert_eq!(error.operation(), Operation::Subscribe);
     assert!(error.to_string().contains("symbolic link"));
 }
 
@@ -446,7 +448,8 @@ fn rejects_a_root_with_a_symlink_in_its_ancestry() {
         }
         Err(error) => error,
     };
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(error.code(), ErrorCode::InvalidArgument);
+    assert_eq!(error.operation(), Operation::Subscribe);
     assert!(error.to_string().contains("symbolic link"));
 }
 
@@ -466,6 +469,7 @@ fn rejects_a_symlink_component_even_when_parent_navigation_cancels_it_lexically(
         }
         Err(error) => error,
     };
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(error.code(), ErrorCode::InvalidArgument);
+    assert_eq!(error.operation(), Operation::Subscribe);
     assert!(error.to_string().contains("symbolic link"));
 }

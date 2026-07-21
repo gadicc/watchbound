@@ -4,7 +4,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use watchbound_engine::{Coverage, Engine, PartialReason, Subscription, SubscriptionOptions};
+use watchbound_engine::{
+    Coverage, Engine, ErrorCode, Operation, PartialReason, Subscription, SubscriptionOptions,
+};
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -193,7 +195,8 @@ fn reconciliation_does_not_clear_root_replaced_uncertainty() {
     assert!(matches!(batch.coverage, Coverage::Uncertain { .. }));
 
     let error = subscription.reconcile().unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(error.code(), ErrorCode::RootStateConflict);
+    assert_eq!(error.operation(), Operation::Reconcile);
     subscription.dispose().unwrap();
 }
 
@@ -400,7 +403,8 @@ fn reconciliation_backpressure_is_isolated_from_another_subscription() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let error = slow.reconcile().unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    assert_eq!(error.code(), ErrorCode::ConsumerBackpressure);
+    assert_eq!(error.operation(), Operation::Reconcile);
 
     let changed = fast_root.path().join("independent");
     fs::write(&changed, "independent").unwrap();
@@ -435,8 +439,8 @@ fn disposal_during_reconciliation_joins_safely_and_is_idempotent() {
     assert!(
         result.is_ok() || {
             matches!(
-                result.unwrap_err().kind(),
-                std::io::ErrorKind::Interrupted | std::io::ErrorKind::NotConnected
+                result.unwrap_err().code(),
+                ErrorCode::OperationInterrupted | ErrorCode::SubscriptionClosed
             )
         }
     );

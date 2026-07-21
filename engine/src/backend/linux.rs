@@ -14,9 +14,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::{
-    ChangeBatch, Coverage, PartialReason, ReconciliationResult, RootAttachment, RootIdentity,
-    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
-    RootRecoveryResult, RootState, RuntimeStats, SharedStats, SubscriptionOptions, UncertainReason,
+    ChangeBatch, Coverage, ErrorCode, Operation, PartialReason, ReconciliationResult,
+    Result as WatchboundResult, RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence,
+    RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryResult, RootState, RuntimeStats,
+    SharedStats, SubscriptionOptions, UncertainReason, WatchboundError,
 };
 
 const WATCH_MASK: u32 = libc::IN_ATTRIB
@@ -43,27 +44,52 @@ const MAX_DEFERRED_CANDIDATES_PER_TURN: usize = 64;
 
 type SubscriptionId = u64;
 
-impl RootIdentity {
-    fn capture(path: &Path) -> io::Result<Self> {
-        let canonical = fs::canonicalize(path)?;
-        if canonical != path {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "watch root path resolved through a symbolic link: {}",
-                    path.display()
-                ),
-            ));
+#[derive(Debug)]
+enum RootCaptureError {
+    Missing(io::Error),
+    NotDirectory,
+    SymlinkAncestry,
+    Unavailable(io::Error),
+}
+
+impl RootCaptureError {
+    fn from_io(error: io::Error) -> Self {
+        if error.kind() == io::ErrorKind::NotFound {
+            Self::Missing(error)
+        } else {
+            match error.raw_os_error() {
+                Some(libc::ENOTDIR) => Self::NotDirectory,
+                Some(libc::ELOOP) => Self::SymlinkAncestry,
+                _ => Self::Unavailable(error),
+            }
         }
-        let metadata = fs::symlink_metadata(path)?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "watch root is no longer a real directory: {}",
-                    path.display()
-                ),
-            ));
+    }
+
+    fn into_watchbound(self, operation: Operation, message: impl Into<String>) -> WatchboundError {
+        let message = message.into();
+        match self {
+            Self::Missing(cause) | Self::Unavailable(cause) => {
+                WatchboundError::from_io(ErrorCode::RootUnavailable, operation, message, &cause)
+            }
+            Self::NotDirectory | Self::SymlinkAncestry => {
+                WatchboundError::new(ErrorCode::RootUnavailable, operation, message)
+            }
+        }
+    }
+}
+
+impl RootIdentity {
+    fn capture(path: &Path) -> std::result::Result<Self, RootCaptureError> {
+        let canonical = fs::canonicalize(path).map_err(RootCaptureError::from_io)?;
+        if canonical != path {
+            return Err(RootCaptureError::SymlinkAncestry);
+        }
+        let metadata = fs::symlink_metadata(path).map_err(RootCaptureError::from_io)?;
+        if metadata.file_type().is_symlink() {
+            return Err(RootCaptureError::SymlinkAncestry);
+        }
+        if !metadata.is_dir() {
+            return Err(RootCaptureError::NotDirectory);
         }
         Ok(Self {
             device: metadata.dev(),
@@ -112,9 +138,23 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
-    pub(crate) fn start(native_watch_budget: Option<usize>) -> io::Result<Arc<Self>> {
-        let inotify = create_inotify()?;
-        let wakeup = Arc::new(create_eventfd()?);
+    pub(crate) fn start(native_watch_budget: Option<usize>) -> WatchboundResult<Arc<Self>> {
+        let inotify = create_inotify().map_err(|error| {
+            WatchboundError::from_io(
+                ErrorCode::ResourceUnavailable,
+                Operation::Subscribe,
+                "failed to create the shared inotify runtime",
+                &error,
+            )
+        })?;
+        let wakeup = Arc::new(create_eventfd().map_err(|error| {
+            WatchboundError::from_io(
+                ErrorCode::ResourceUnavailable,
+                Operation::Subscribe,
+                "failed to create the shared runtime wakeup descriptor",
+                &error,
+            )
+        })?);
         let (commands, command_receiver) = mpsc::channel();
         let counters = Arc::new(RuntimeCounters::default());
         let worker_wakeup = Arc::clone(&wakeup);
@@ -130,6 +170,14 @@ impl Runtime {
                     native_watch_budget,
                 )
                 .run();
+            })
+            .map_err(|error| {
+                WatchboundError::from_io(
+                    ErrorCode::ResourceUnavailable,
+                    Operation::Subscribe,
+                    "failed to start the shared runtime worker",
+                    &error,
+                )
             })?;
         counters.inotify_instances.store(1, Ordering::Release);
         counters.worker_threads.store(1, Ordering::Release);
@@ -176,24 +224,31 @@ impl Runtime {
         root: PathBuf,
         options: SubscriptionOptions,
         stats: Arc<SharedStats>,
-    ) -> io::Result<EstablishedSubscription> {
+    ) -> WatchboundResult<EstablishedSubscription> {
         let (output, receiver) = mpsc::sync_channel(options.output_queue_capacity);
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(CommandEnvelope {
-            generation: 0,
-            command: Command::Subscribe {
-                root,
-                options,
-                stats,
-                output,
-                acknowledgement,
+        self.send(
+            CommandEnvelope {
+                generation: 0,
+                command: Command::Subscribe {
+                    root,
+                    options,
+                    stats,
+                    output,
+                    acknowledgement,
+                },
             },
+            Operation::Subscribe,
+        )?;
+        let established = acknowledged.recv().map_err(|_| {
+            internal_error(
+                Operation::Subscribe,
+                "shared runtime stopped during subscription",
+            )
         })?;
-        let established = acknowledged
-            .recv()
-            .map_err(|_| io::Error::other("shared runtime stopped during subscription"))?;
         if established.generation != 0 {
-            return Err(io::Error::other(
+            return Err(internal_error(
+                Operation::Subscribe,
                 "shared runtime acknowledged the wrong generation",
             ));
         }
@@ -206,20 +261,24 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn dispose(&self, id: SubscriptionId) -> io::Result<()> {
+    pub(crate) fn dispose(&self, id: SubscriptionId) -> WatchboundResult<()> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(CommandEnvelope {
-            generation: 0,
-            command: Command::Dispose {
-                subscription_id: id,
-                acknowledgement,
+        self.send(
+            CommandEnvelope {
+                generation: 0,
+                command: Command::Dispose {
+                    subscription_id: id,
+                    acknowledgement,
+                },
             },
+            Operation::Dispose,
+        )?;
+        let acknowledged = acknowledged.recv().map_err(|_| {
+            internal_error(Operation::Dispose, "shared runtime stopped during disposal")
         })?;
-        let acknowledged = acknowledged
-            .recv()
-            .map_err(|_| io::Error::other("shared runtime stopped during disposal"))?;
         if acknowledged.generation != 0 {
-            return Err(io::Error::other(
+            return Err(internal_error(
+                Operation::Dispose,
                 "shared runtime acknowledged the wrong generation",
             ));
         }
@@ -231,16 +290,19 @@ impl Runtime {
         id: SubscriptionId,
         generation: u64,
         prefixes: Vec<PathBuf>,
-    ) -> io::Result<PendingExclusionAcknowledgement> {
+    ) -> WatchboundResult<PendingExclusionAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(CommandEnvelope {
-            generation,
-            command: Command::ReplaceExclusions {
-                subscription_id: id,
-                prefixes,
-                acknowledgement,
+        self.send(
+            CommandEnvelope {
+                generation,
+                command: Command::ReplaceExclusions {
+                    subscription_id: id,
+                    prefixes,
+                    acknowledgement,
+                },
             },
-        })?;
+            Operation::ReplaceExclusions,
+        )?;
         Ok(PendingExclusionAcknowledgement {
             generation,
             acknowledged,
@@ -250,15 +312,18 @@ impl Runtime {
     pub(crate) fn queue_reconciliation(
         &self,
         id: SubscriptionId,
-    ) -> io::Result<PendingReconciliationAcknowledgement> {
+    ) -> WatchboundResult<PendingReconciliationAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(CommandEnvelope {
-            generation: 0,
-            command: Command::Reconcile {
-                subscription_id: id,
-                acknowledgement,
+        self.send(
+            CommandEnvelope {
+                generation: 0,
+                command: Command::Reconcile {
+                    subscription_id: id,
+                    acknowledgement,
+                },
             },
-        })?;
+            Operation::Reconcile,
+        )?;
         Ok(PendingReconciliationAcknowledgement { acknowledged })
     }
 
@@ -266,16 +331,19 @@ impl Runtime {
         &self,
         id: SubscriptionId,
         identity_policy: RootIdentityPolicy,
-    ) -> io::Result<PendingRootRecoveryAcknowledgement> {
+    ) -> WatchboundResult<PendingRootRecoveryAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(CommandEnvelope {
-            generation: 0,
-            command: Command::RecoverRoot {
-                subscription_id: id,
-                identity_policy,
-                acknowledgement,
+        self.send(
+            CommandEnvelope {
+                generation: 0,
+                command: Command::RecoverRoot {
+                    subscription_id: id,
+                    identity_policy,
+                    acknowledgement,
+                },
             },
-        })?;
+            Operation::RecoverRoot,
+        )?;
         Ok(PendingRootRecoveryAcknowledgement { acknowledged })
     }
 
@@ -286,10 +354,10 @@ impl Runtime {
         }
     }
 
-    fn send(&self, command: CommandEnvelope) -> io::Result<()> {
+    fn send(&self, command: CommandEnvelope, operation: Operation) -> WatchboundResult<()> {
         self.commands
             .send(command)
-            .map_err(|_| io::Error::other("shared runtime command channel is closed"))?;
+            .map_err(|_| internal_error(operation, "shared runtime command channel is closed"))?;
         let value = 1_u64.to_ne_bytes();
         // SAFETY: wakeup is a live eventfd and value points to exactly eight
         // initialized bytes, as required by eventfd writes.
@@ -304,17 +372,20 @@ impl Runtime {
 
 pub(crate) struct PendingExclusionAcknowledgement {
     generation: u64,
-    acknowledged: Receiver<CommandAcknowledgement<io::Result<Coverage>>>,
+    acknowledged: Receiver<CommandAcknowledgement<WatchboundResult<Coverage>>>,
 }
 
 impl PendingExclusionAcknowledgement {
-    pub(crate) fn wait(self) -> io::Result<Coverage> {
-        let acknowledged = self
-            .acknowledged
-            .recv()
-            .map_err(|_| io::Error::other("shared runtime stopped during exclusion update"))?;
+    pub(crate) fn wait(self) -> WatchboundResult<Coverage> {
+        let acknowledged = self.acknowledged.recv().map_err(|_| {
+            internal_error(
+                Operation::ReplaceExclusions,
+                "shared runtime stopped during exclusion update",
+            )
+        })?;
         if acknowledged.generation != self.generation {
-            return Err(io::Error::other(
+            return Err(internal_error(
+                Operation::ReplaceExclusions,
                 "shared runtime acknowledged the wrong exclusion generation",
             ));
         }
@@ -323,21 +394,24 @@ impl PendingExclusionAcknowledgement {
 }
 
 pub(crate) struct PendingReconciliationAcknowledgement {
-    acknowledged: Receiver<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+    acknowledged: Receiver<CommandAcknowledgement<WatchboundResult<ReconciliationResult>>>,
 }
 
 pub(crate) struct PendingRootRecoveryAcknowledgement {
-    acknowledged: Receiver<CommandAcknowledgement<io::Result<RootRecoveryResult>>>,
+    acknowledged: Receiver<CommandAcknowledgement<WatchboundResult<RootRecoveryResult>>>,
 }
 
 impl PendingRootRecoveryAcknowledgement {
-    pub(crate) fn wait(self) -> io::Result<RootRecoveryResult> {
-        let acknowledged = self
-            .acknowledged
-            .recv()
-            .map_err(|_| io::Error::other("shared runtime stopped during root recovery"))?;
+    pub(crate) fn wait(self) -> WatchboundResult<RootRecoveryResult> {
+        let acknowledged = self.acknowledged.recv().map_err(|_| {
+            internal_error(
+                Operation::RecoverRoot,
+                "shared runtime stopped during root recovery",
+            )
+        })?;
         if acknowledged.generation != 0 {
-            return Err(io::Error::other(
+            return Err(internal_error(
+                Operation::RecoverRoot,
                 "shared runtime acknowledged the wrong root recovery generation",
             ));
         }
@@ -346,13 +420,16 @@ impl PendingRootRecoveryAcknowledgement {
 }
 
 impl PendingReconciliationAcknowledgement {
-    pub(crate) fn wait(self) -> io::Result<ReconciliationResult> {
-        let acknowledged = self
-            .acknowledged
-            .recv()
-            .map_err(|_| io::Error::other("shared runtime stopped during reconciliation"))?;
+    pub(crate) fn wait(self) -> WatchboundResult<ReconciliationResult> {
+        let acknowledged = self.acknowledged.recv().map_err(|_| {
+            internal_error(
+                Operation::Reconcile,
+                "shared runtime stopped during reconciliation",
+            )
+        })?;
         if acknowledged.generation != 0 {
-            return Err(io::Error::other(
+            return Err(internal_error(
+                Operation::Reconcile,
                 "shared runtime acknowledged the wrong reconciliation generation",
             ));
         }
@@ -361,23 +438,30 @@ impl PendingReconciliationAcknowledgement {
 }
 
 impl Runtime {
-    pub(crate) fn shutdown_and_join(&self) -> io::Result<()> {
+    pub(crate) fn shutdown_and_join(&self) -> WatchboundResult<()> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        let mut result = self.send(CommandEnvelope {
-            generation: 0,
-            command: Command::Shutdown { acknowledgement },
-        });
+        let mut result = self.send(
+            CommandEnvelope {
+                generation: 0,
+                command: Command::Shutdown { acknowledgement },
+            },
+            Operation::Dispose,
+        );
         if result.is_ok() {
             result = acknowledged
                 .recv()
                 .map_err(|_| {
-                    io::Error::other("shared runtime stopped before shutdown acknowledgement")
+                    internal_error(
+                        Operation::Dispose,
+                        "shared runtime stopped before shutdown acknowledgement",
+                    )
                 })
                 .and_then(|acknowledged| {
                     if acknowledged.generation == 0 {
                         Ok(())
                     } else {
-                        Err(io::Error::other(
+                        Err(internal_error(
+                            Operation::Dispose,
                             "shared runtime acknowledged the wrong generation",
                         ))
                     }
@@ -392,10 +476,17 @@ impl Runtime {
             && worker.join().is_err()
             && result.is_ok()
         {
-            result = Err(io::Error::other("shared runtime worker panicked"));
+            result = Err(internal_error(
+                Operation::Dispose,
+                "shared runtime worker panicked",
+            ));
         }
         result
     }
+}
+
+fn internal_error(operation: Operation, message: impl Into<String>) -> WatchboundError {
+    WatchboundError::new(ErrorCode::Internal, operation, message)
 }
 
 fn create_inotify() -> io::Result<OwnedFd> {
@@ -438,7 +529,7 @@ enum Command {
         options: SubscriptionOptions,
         stats: Arc<SharedStats>,
         output: SyncSender<ChangeBatch>,
-        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Established>>>,
+        acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Established>>>,
     },
     Dispose {
         subscription_id: SubscriptionId,
@@ -447,16 +538,16 @@ enum Command {
     ReplaceExclusions {
         subscription_id: SubscriptionId,
         prefixes: Vec<PathBuf>,
-        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Coverage>>>,
+        acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Coverage>>>,
     },
     Reconcile {
         subscription_id: SubscriptionId,
-        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+        acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<ReconciliationResult>>>,
     },
     RecoverRoot {
         subscription_id: SubscriptionId,
         identity_policy: RootIdentityPolicy,
-        acknowledgement: SyncSender<CommandAcknowledgement<io::Result<RootRecoveryResult>>>,
+        acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<RootRecoveryResult>>>,
     },
     Shutdown {
         acknowledgement: SyncSender<CommandAcknowledgement<()>>,
@@ -531,7 +622,7 @@ struct SubscriptionState {
 
 struct PendingEstablishment {
     generation: u64,
-    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Established>>>,
+    acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Established>>>,
 }
 
 struct PendingExclusionUpdate {
@@ -540,7 +631,7 @@ struct PendingExclusionUpdate {
     previous_exclusions: BTreeSet<PathBuf>,
     newly_excluded: VecDeque<PathBuf>,
     newly_included: Vec<PathBuf>,
-    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<Coverage>>>,
+    acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Coverage>>>,
     phase: ExclusionUpdatePhase,
 }
 
@@ -552,7 +643,7 @@ enum ExclusionUpdatePhase {
 }
 
 struct PendingReconciliation {
-    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<ReconciliationResult>>>,
+    acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<ReconciliationResult>>>,
     phase: ReconciliationPhase,
     encountered: BTreeSet<PathBuf>,
     sweep_after: Option<PathBuf>,
@@ -562,7 +653,7 @@ struct PendingReconciliation {
 }
 
 struct PendingRootRecovery {
-    acknowledgement: SyncSender<CommandAcknowledgement<io::Result<RootRecoveryResult>>>,
+    acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<RootRecoveryResult>>>,
     phase: RootRecoveryPhase,
     previous_root_state: RootState,
     candidate_identity: RootIdentity,
@@ -701,8 +792,9 @@ impl SubscriptionState {
                 self.selection_generation = self.exclusion_generation;
                 let _ = update.acknowledgement.send(CommandAcknowledgement {
                     generation: update.generation,
-                    value: Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
+                    value: Err(WatchboundError::new(
+                        ErrorCode::RootStateConflict,
+                        Operation::ReplaceExclusions,
                         "root identity was lost during exclusion update",
                     )),
                 });
@@ -710,8 +802,9 @@ impl SubscriptionState {
             if let Some(reconciliation) = self.reconciliation.take() {
                 let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                     generation: 0,
-                    value: Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
+                    value: Err(WatchboundError::new(
+                        ErrorCode::RootStateConflict,
+                        Operation::Reconcile,
                         "root identity was lost during reconciliation",
                     )),
                 });
@@ -1066,7 +1159,10 @@ impl Worker {
                         Err(error) => {
                             let _ = acknowledgement.send(CommandAcknowledgement {
                                 generation,
-                                value: Err(error),
+                                value: Err(error.into_watchbound(
+                                    Operation::Subscribe,
+                                    "watch root changed while establishing the subscription",
+                                )),
                             });
                             continue;
                         }
@@ -1110,32 +1206,36 @@ impl Worker {
                     let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::NotConnected,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::SubscriptionClosed,
+                                Operation::ReplaceExclusions,
                                 "subscription is no longer active",
                             )),
                         });
                         continue;
                     };
                     let validation = if generation <= state.exclusion_generation {
-                        Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
+                        Err(WatchboundError::new(
+                            ErrorCode::InvalidArgument,
+                            Operation::ReplaceExclusions,
                             format!(
                                 "exclusion generation {generation} is not newer than committed generation {}",
                                 state.exclusion_generation
                             ),
                         ))
                     } else if state.root_lost {
-                        Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
+                        Err(WatchboundError::new(
+                            ErrorCode::RootStateConflict,
+                            Operation::ReplaceExclusions,
                             "root identity is lost; recover the root before replacing exclusions",
                         ))
                     } else if state.exclusion_update.is_some()
                         || state.reconciliation.is_some()
                         || state.root_recovery.is_some()
                     {
-                        Err(io::Error::new(
-                            io::ErrorKind::WouldBlock,
+                        Err(WatchboundError::new(
+                            ErrorCode::TopologyTransactionConflict,
+                            Operation::ReplaceExclusions,
                             "a topology transaction is already in progress for this subscription",
                         ))
                     } else {
@@ -1191,8 +1291,9 @@ impl Worker {
                     let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::NotConnected,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::SubscriptionClosed,
+                                Operation::Reconcile,
                                 "subscription is no longer active",
                             )),
                         });
@@ -1204,16 +1305,18 @@ impl Worker {
                     {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::WouldBlock,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::TopologyTransactionConflict,
+                                Operation::Reconcile,
                                 "a topology transaction is already in progress for this subscription",
                             )),
                         });
                     } else if state.root_lost {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::RootStateConflict,
+                                Operation::Reconcile,
                                 "root-replaced uncertainty is not recoverable by reconciliation",
                             )),
                         });
@@ -1244,8 +1347,9 @@ impl Worker {
                     let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::NotConnected,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::SubscriptionClosed,
+                                Operation::RecoverRoot,
                                 "subscription is no longer active",
                             )),
                         });
@@ -1257,16 +1361,18 @@ impl Worker {
                     {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::WouldBlock,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::TopologyTransactionConflict,
+                                Operation::RecoverRoot,
                                 "a topology transaction is already in progress for this subscription",
                             )),
                         });
                     } else if !state.root_lost {
                         let _ = acknowledgement.send(CommandAcknowledgement {
                             generation,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::RootStateConflict,
+                                Operation::RecoverRoot,
                                 "root identity is still attached",
                             )),
                         });
@@ -2129,8 +2235,9 @@ impl Worker {
                     if let Some(reconciliation) = state.reconciliation.take() {
                         let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                             generation: 0,
-                            value: Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::RootStateConflict,
+                                Operation::Reconcile,
                                 "watch root identity changed before reconciliation",
                             )),
                         });
@@ -2307,8 +2414,9 @@ impl Worker {
             if let Some(reconciliation) = state.reconciliation.take() {
                 let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                     generation: 0,
-                    value: Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
+                    value: Err(WatchboundError::new(
+                        ErrorCode::RootStateConflict,
+                        Operation::Reconcile,
                         "watch root identity changed during reconciliation",
                     )),
                 });
@@ -2360,7 +2468,7 @@ impl Worker {
                     value: Ok(result),
                 });
             }
-            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+            Err(error) => {
                 state.stats.batches_dropped.fetch_add(1, Ordering::Relaxed);
                 if state.uncertainty_epoch == reconciliation.starting_uncertainty_epoch {
                     state.uncertain_reason = Some(UncertainReason::ConsumerBackpressure);
@@ -2370,12 +2478,19 @@ impl Worker {
                 state.queue_path(state.root.clone());
                 state.publish_resource_counts();
                 self.publish_deferred_interest_count_with(state);
+                let (code, message) = match error {
+                    TrySendError::Full(_) => (
+                        ErrorCode::ConsumerBackpressure,
+                        "reconciliation root invalidation could not enter the output queue",
+                    ),
+                    TrySendError::Disconnected(_) => (
+                        ErrorCode::SubscriptionClosed,
+                        "subscription output closed during reconciliation",
+                    ),
+                };
                 let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                     generation: 0,
-                    value: Err(io::Error::new(
-                        io::ErrorKind::WouldBlock,
-                        "reconciliation root invalidation could not enter the output queue",
-                    )),
+                    value: Err(WatchboundError::new(code, Operation::Reconcile, message)),
                 });
             }
         }
@@ -2628,8 +2743,9 @@ impl Worker {
         let result = if !state.watched_paths.contains_key(&state.root)
             && !state.deferred_directories.contains_key(&state.root)
         {
-            Err(io::Error::new(
-                io::ErrorKind::NotFound,
+            Err(WatchboundError::new(
+                ErrorCode::RootUnavailable,
+                Operation::Subscribe,
                 format!(
                     "watch root disappeared during establishment: {}",
                     state.root.display()
@@ -2642,8 +2758,9 @@ impl Worker {
                     coverage: state.coverage(),
                     root_state: Arc::clone(&state.published_root_state),
                 }),
-                Ok(_) | Err(_) => Err(io::Error::new(
-                    io::ErrorKind::NotFound,
+                Ok(_) | Err(_) => Err(WatchboundError::new(
+                    ErrorCode::RootUnavailable,
+                    Operation::Subscribe,
                     format!(
                         "watch root changed during establishment: {}",
                         state.root.display()
@@ -2823,8 +2940,9 @@ impl Worker {
         if let Some(establishment) = state.establishment.take() {
             let _ = establishment.acknowledgement.send(CommandAcknowledgement {
                 generation: establishment.generation,
-                value: Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
+                value: Err(WatchboundError::new(
+                    ErrorCode::OperationInterrupted,
+                    Operation::Subscribe,
                     "subscription disposed during establishment",
                 )),
             });
@@ -2832,8 +2950,9 @@ impl Worker {
         if let Some(update) = state.exclusion_update.take() {
             let _ = update.acknowledgement.send(CommandAcknowledgement {
                 generation: update.generation,
-                value: Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
+                value: Err(WatchboundError::new(
+                    ErrorCode::OperationInterrupted,
+                    Operation::ReplaceExclusions,
                     "subscription disposed during exclusion update",
                 )),
             });
@@ -2841,8 +2960,9 @@ impl Worker {
         if let Some(reconciliation) = state.reconciliation.take() {
             let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
                 generation: 0,
-                value: Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
+                value: Err(WatchboundError::new(
+                    ErrorCode::OperationInterrupted,
+                    Operation::Reconcile,
                     "subscription disposed during reconciliation",
                 )),
             });
@@ -2850,8 +2970,9 @@ impl Worker {
         if let Some(recovery) = state.root_recovery.take() {
             let _ = recovery.acknowledgement.send(CommandAcknowledgement {
                 generation: 0,
-                value: Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
+                value: Err(WatchboundError::new(
+                    ErrorCode::OperationInterrupted,
+                    Operation::RecoverRoot,
                     "subscription disposed during root recovery",
                 )),
             });
@@ -3077,12 +3198,13 @@ fn recoverable_uncertainty(reason: UncertainReason) -> bool {
 fn validate_exclusion_prefixes(
     root: &Path,
     prefixes: Vec<PathBuf>,
-) -> io::Result<BTreeSet<PathBuf>> {
+) -> WatchboundResult<BTreeSet<PathBuf>> {
     let mut absolute = BTreeSet::new();
     for prefix in prefixes {
         if prefix.is_absolute() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::ReplaceExclusions,
                 format!(
                     "exclusion prefix must be root-relative: {}",
                     prefix.display()
@@ -3090,8 +3212,9 @@ fn validate_exclusion_prefixes(
             ));
         }
         if prefix.as_os_str().as_bytes().contains(&0) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::ReplaceExclusions,
                 "exclusion prefix contains NUL",
             ));
         }
@@ -3103,8 +3226,9 @@ fn validate_exclusion_prefixes(
                 | Component::ParentDir
                 | Component::RootDir
                 | Component::Prefix(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
+                    return Err(WatchboundError::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::ReplaceExclusions,
                         format!(
                             "exclusion prefix is not a normalized root-relative path: {}",
                             prefix.display()
@@ -3114,8 +3238,9 @@ fn validate_exclusion_prefixes(
             }
         }
         if normalized.as_os_str().as_bytes() != prefix.as_os_str().as_bytes() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::ReplaceExclusions,
                 format!("exclusion prefix is not normalized: {}", prefix.display()),
             ));
         }
@@ -3145,18 +3270,11 @@ fn directory_identity(path: &Path) -> io::Result<RootIdentity> {
 }
 
 fn capture_root_candidate(path: &Path) -> Result<RootIdentity, RootRecoveryFailureReason> {
-    RootIdentity::capture(path).map_err(|error| {
-        if error.to_string().contains("symbolic link") {
-            RootRecoveryFailureReason::SymlinkAncestry
-        } else if error.kind() == io::ErrorKind::NotFound {
-            RootRecoveryFailureReason::CandidateMissing
-        } else if error.kind() == io::ErrorKind::InvalidInput
-            || matches!(error.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP))
-        {
-            RootRecoveryFailureReason::CandidateNotDirectory
-        } else {
-            RootRecoveryFailureReason::RootWatchUnavailable
-        }
+    RootIdentity::capture(path).map_err(|error| match error {
+        RootCaptureError::Missing(_) => RootRecoveryFailureReason::CandidateMissing,
+        RootCaptureError::NotDirectory => RootRecoveryFailureReason::CandidateNotDirectory,
+        RootCaptureError::SymlinkAncestry => RootRecoveryFailureReason::SymlinkAncestry,
+        RootCaptureError::Unavailable(_) => RootRecoveryFailureReason::RootWatchUnavailable,
     })
 }
 
@@ -3339,7 +3457,7 @@ mod tests {
     fn prepare_reconciliation(
         state: &mut SubscriptionState,
         reason: UncertainReason,
-    ) -> Receiver<CommandAcknowledgement<io::Result<ReconciliationResult>>> {
+    ) -> Receiver<CommandAcknowledgement<WatchboundResult<ReconciliationResult>>> {
         state.mark_uncertain(reason, state.root.clone());
         state.pending_paths.clear();
         state.pending_started = None;
@@ -3458,7 +3576,10 @@ mod tests {
         worker.commit_reconciliation(&mut state);
 
         let error = acknowledged.recv().unwrap().value.unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.code(), crate::ErrorCode::ConsumerBackpressure);
+        assert_eq!(error.operation(), crate::Operation::Reconcile);
+        assert!(error.retryable());
+        assert_eq!(error.retry_after(), Some(crate::RetryAfter::DeliveryDrains));
         assert_eq!(
             state.coverage(),
             Coverage::Uncertain {

@@ -1,7 +1,6 @@
 #![cfg(target_os = "linux")]
 
 use std::fs;
-use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,9 +8,9 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use watchbound_engine::{
-    ChangeBatch, Coverage, Engine, PartialReason, RootAttachment, RootIdentityPolicy,
-    RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason, Subscription,
-    SubscriptionOptions, UncertainReason,
+    ChangeBatch, Coverage, Engine, ErrorCode, Operation, PartialReason, RootAttachment,
+    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
+    Subscription, SubscriptionOptions, UncertainReason,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -449,8 +448,8 @@ fn large_recovery_yields_to_peer_delivery_and_disposal_joins() {
     assert!(
         result.is_ok()
             || matches!(
-                result.unwrap_err().kind(),
-                io::ErrorKind::Interrupted | io::ErrorKind::NotConnected
+                result.unwrap_err().code(),
+                ErrorCode::OperationInterrupted | ErrorCode::SubscriptionClosed
             )
     );
     subscription.dispose().unwrap();
@@ -483,7 +482,8 @@ fn root_loss_blocks_exclusion_updates_and_hidden_deferred_promotion() {
     let error = subscription
         .replace_exclusions(1, vec![PathBuf::from("future")])
         .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(error.code(), ErrorCode::RootStateConflict);
+    assert_eq!(error.operation(), Operation::ReplaceExclusions);
     assert_eq!(subscription.root_state().attachment, RootAttachment::Lost);
     assert_eq!(subscription.stats().watched_directories, 0);
     fs::write(root.join("deferred/hidden"), b"hidden").unwrap();
@@ -570,7 +570,8 @@ fn recovery_is_rejected_while_the_root_is_still_attached() {
     let error = subscription
         .recover_root(RootIdentityPolicy::AcceptReplacement)
         .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(error.code(), ErrorCode::RootStateConflict);
+    assert_eq!(error.operation(), Operation::RecoverRoot);
     assert_eq!(
         subscription.root_state().attachment,
         RootAttachment::Attached

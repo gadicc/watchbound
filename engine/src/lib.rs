@@ -7,8 +7,12 @@
 compile_error!("watchbound-engine currently supports Linux only");
 
 mod backend;
+mod error;
 
-use std::io;
+pub use error::{
+    ErrorCode, MAX_ERROR_MESSAGE_BYTES, Operation, Result, RetryAfter, SystemCause, WatchboundError,
+};
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
@@ -148,28 +152,32 @@ impl Default for SubscriptionOptions {
 }
 
 impl SubscriptionOptions {
-    fn validate(&self) -> io::Result<()> {
+    fn validate(&self) -> Result<()> {
         if self.watch_limit == Some(0) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
                 "watch_limit must be positive when set",
             ));
         }
         if self.batch_window.is_zero() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
                 "batch_window must be non-zero",
             ));
         }
         if self.max_batch_paths == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
                 "max_batch_paths must be positive",
             ));
         }
         if self.output_queue_capacity == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
                 "output_queue_capacity must be positive",
             ));
         }
@@ -276,10 +284,11 @@ impl Engine {
     /// Creates an engine that requires the shared runtime to enforce the given
     /// unique native-watch budget. The budget is fixed until that runtime's
     /// final subscription is disposed.
-    pub fn with_runtime_watch_budget(native_watches: usize) -> io::Result<Self> {
+    pub fn with_runtime_watch_budget(native_watches: usize) -> Result<Self> {
         if native_watches == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::CreateEngine,
                 "runtime native-watch budget must be positive",
             ));
         }
@@ -318,13 +327,21 @@ impl Engine {
         &self,
         root: impl AsRef<Path>,
         options: SubscriptionOptions,
-    ) -> io::Result<Subscription> {
+    ) -> Result<Subscription> {
         options.validate()?;
         let root = reject_symlink_ancestry(&absolute_path(root.as_ref())?)?;
-        let metadata = std::fs::symlink_metadata(&root)?;
+        let metadata = std::fs::symlink_metadata(&root).map_err(|error| {
+            WatchboundError::from_io(
+                ErrorCode::RootUnavailable,
+                Operation::Subscribe,
+                format!("watch root is unavailable: {}", root.display()),
+                &error,
+            )
+        })?;
         if !metadata.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
                 format!("watch root is not a directory: {}", root.display()),
             ));
         }
@@ -380,7 +397,7 @@ enum Lifecycle {
         subscription_id: u64,
     },
     Disposing,
-    Disposed(Option<(io::ErrorKind, String)>),
+    Disposed(Option<WatchboundError>),
 }
 
 impl Subscription {
@@ -388,14 +405,17 @@ impl Subscription {
         &self.initial_coverage
     }
 
-    pub fn recv_timeout(&self, timeout: Duration) -> Result<ChangeBatch, RecvTimeoutError> {
+    pub fn recv_timeout(
+        &self,
+        timeout: Duration,
+    ) -> std::result::Result<ChangeBatch, RecvTimeoutError> {
         self.receiver
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .recv_timeout(timeout)
     }
 
-    pub fn try_recv(&self) -> Result<ChangeBatch, TryRecvError> {
+    pub fn try_recv(&self) -> std::result::Result<ChangeBatch, TryRecvError> {
         self.receiver
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -454,11 +474,7 @@ impl Subscription {
 
     /// Atomically replaces the complete set of root-relative directory-prefix
     /// exclusions and returns the committed coverage snapshot.
-    pub fn replace_exclusions(
-        &self,
-        generation: u64,
-        prefixes: Vec<PathBuf>,
-    ) -> io::Result<Coverage> {
+    pub fn replace_exclusions(&self, generation: u64, prefixes: Vec<PathBuf>) -> Result<Coverage> {
         self.exclusion_handle()
             .replace_exclusions(generation, prefixes)
     }
@@ -466,23 +482,20 @@ impl Subscription {
     /// Rebuilds this subscription's included topology under its currently
     /// committed exclusion generation and returns only after the conservative
     /// root invalidation and final coverage snapshot are committed.
-    pub fn reconcile(&self) -> io::Result<ReconciliationResult> {
+    pub fn reconcile(&self) -> Result<ReconciliationResult> {
         self.reconciliation_handle().reconcile()
     }
 
     /// Explicitly recovers a lost lexical root under the required identity
     /// acceptance policy. This never changes the root pathname.
-    pub fn recover_root(
-        &self,
-        identity_policy: RootIdentityPolicy,
-    ) -> io::Result<RootRecoveryResult> {
+    pub fn recover_root(&self, identity_policy: RootIdentityPolicy) -> Result<RootRecoveryResult> {
         self.root_recovery_handle().recover_root(identity_policy)
     }
 
     /// Joins removal of this subscription from the shared worker. Once this
     /// returns, the engine can no longer enqueue a batch for this subscription.
     /// Disposing the final subscription also joins the worker thread.
-    pub fn dispose(&self) -> io::Result<()> {
+    pub fn dispose(&self) -> Result<()> {
         let (runtime, subscription_id) = {
             let mut lifecycle = self
                 .control
@@ -528,10 +541,7 @@ impl Subscription {
         {}
         self.stats.disposed.store(true, Ordering::Release);
 
-        let stored_error = result
-            .as_ref()
-            .err()
-            .map(|error| (error.kind(), error.to_string()));
+        let stored_error = result.as_ref().err().cloned();
         let mut lifecycle = self
             .control
             .lifecycle
@@ -566,19 +576,16 @@ impl ExclusionHandle {
         self.control.exclusion_generation.load(Ordering::Acquire)
     }
 
-    pub fn replace_exclusions(
-        &self,
-        generation: u64,
-        prefixes: Vec<PathBuf>,
-    ) -> io::Result<Coverage> {
+    pub fn replace_exclusions(&self, generation: u64, prefixes: Vec<PathBuf>) -> Result<Coverage> {
         if self
             .control
             .topology_transaction_in_flight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
+            return Err(WatchboundError::new(
+                ErrorCode::TopologyTransactionConflict,
+                Operation::ReplaceExclusions,
                 "a topology transaction is already in progress for this subscription",
             ));
         }
@@ -594,8 +601,9 @@ impl ExclusionHandle {
                 subscription_id,
             } = &*lifecycle
             else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
+                return Err(WatchboundError::new(
+                    ErrorCode::SubscriptionClosed,
+                    Operation::ReplaceExclusions,
                     "subscription is disposing or disposed",
                 ));
             };
@@ -638,18 +646,16 @@ impl RootStateHandle {
 }
 
 impl RootRecoveryHandle {
-    pub fn recover_root(
-        &self,
-        identity_policy: RootIdentityPolicy,
-    ) -> io::Result<RootRecoveryResult> {
+    pub fn recover_root(&self, identity_policy: RootIdentityPolicy) -> Result<RootRecoveryResult> {
         if self
             .control
             .topology_transaction_in_flight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
+            return Err(WatchboundError::new(
+                ErrorCode::TopologyTransactionConflict,
+                Operation::RecoverRoot,
                 "a topology transaction is already in progress for this subscription",
             ));
         }
@@ -665,8 +671,9 @@ impl RootRecoveryHandle {
                 subscription_id,
             } = &*lifecycle
             else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
+                return Err(WatchboundError::new(
+                    ErrorCode::SubscriptionClosed,
+                    Operation::RecoverRoot,
                     "subscription is disposing or disposed",
                 ));
             };
@@ -677,15 +684,16 @@ impl RootRecoveryHandle {
 }
 
 impl ReconciliationHandle {
-    pub fn reconcile(&self) -> io::Result<ReconciliationResult> {
+    pub fn reconcile(&self) -> Result<ReconciliationResult> {
         if self
             .control
             .topology_transaction_in_flight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
+            return Err(WatchboundError::new(
+                ErrorCode::TopologyTransactionConflict,
+                Operation::Reconcile,
                 "a topology transaction is already in progress for this subscription",
             ));
         }
@@ -701,8 +709,9 @@ impl ReconciliationHandle {
                 subscription_id,
             } = &*lifecycle
             else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
+                return Err(WatchboundError::new(
+                    ErrorCode::SubscriptionClosed,
+                    Operation::Reconcile,
                     "subscription is disposing or disposed",
                 ));
             };
@@ -729,9 +738,9 @@ impl Drop for Subscription {
     }
 }
 
-fn stored_result(error: &Option<(io::ErrorKind, String)>) -> io::Result<()> {
+fn stored_result(error: &Option<WatchboundError>) -> Result<()> {
     match error {
-        Some((kind, message)) => Err(io::Error::new(*kind, message.clone())),
+        Some(error) => Err(error.clone()),
         None => Ok(()),
     }
 }
@@ -742,14 +751,15 @@ fn runtime_registry() -> &'static Mutex<Option<Weak<backend::linux::Runtime>>> {
     RUNTIME.get_or_init(|| Mutex::new(None))
 }
 
-fn acquire_runtime(native_watch_budget: Option<usize>) -> io::Result<Arc<backend::linux::Runtime>> {
+fn acquire_runtime(native_watch_budget: Option<usize>) -> Result<Arc<backend::linux::Runtime>> {
     let mut registry = runtime_registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(runtime) = registry.as_ref().and_then(Weak::upgrade) {
         if runtime.native_watch_budget() != native_watch_budget {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::RuntimeConfigurationConflict,
+                Operation::Subscribe,
                 "engine runtime native-watch budget conflicts with the active shared runtime",
             ));
         }
@@ -763,7 +773,7 @@ fn acquire_runtime(native_watch_budget: Option<usize>) -> io::Result<Arc<backend
     Ok(runtime)
 }
 
-fn release_runtime(runtime: &Arc<backend::linux::Runtime>) -> io::Result<()> {
+fn release_runtime(runtime: &Arc<backend::linux::Runtime>) -> Result<()> {
     let mut registry = runtime_registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -780,15 +790,24 @@ fn release_runtime(runtime: &Arc<backend::linux::Runtime>) -> io::Result<()> {
     runtime.shutdown_and_join()
 }
 
-fn absolute_path(path: &Path) -> io::Result<PathBuf> {
+fn absolute_path(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
     } else {
-        Ok(std::env::current_dir()?.join(path))
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .map_err(|error| {
+                WatchboundError::from_io(
+                    ErrorCode::RootUnavailable,
+                    Operation::Subscribe,
+                    "current directory is unavailable while resolving the watch root",
+                    &error,
+                )
+            })
     }
 }
 
-fn reject_symlink_ancestry(path: &Path) -> io::Result<PathBuf> {
+fn reject_symlink_ancestry(path: &Path) -> Result<PathBuf> {
     let mut current = PathBuf::new();
     let mut current_is_directory = true;
     for component in path.components() {
@@ -801,7 +820,14 @@ fn reject_symlink_ancestry(path: &Path) -> io::Result<PathBuf> {
             Component::CurDir => continue,
             Component::ParentDir => {
                 if !current_is_directory {
-                    return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
+                    return Err(WatchboundError::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::Subscribe,
+                        format!(
+                            "watch root has a non-directory path component: {}",
+                            current.display()
+                        ),
+                    ));
                 }
                 current.pop();
                 current_is_directory = true;
@@ -809,7 +835,14 @@ fn reject_symlink_ancestry(path: &Path) -> io::Result<PathBuf> {
             }
             Component::Normal(component) => {
                 if !current_is_directory {
-                    return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
+                    return Err(WatchboundError::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::Subscribe,
+                        format!(
+                            "watch root has a non-directory path component: {}",
+                            current.display()
+                        ),
+                    ));
                 }
                 current.push(component);
             }
@@ -817,10 +850,23 @@ fn reject_symlink_ancestry(path: &Path) -> io::Result<PathBuf> {
         if current == Path::new("/") {
             continue;
         }
-        let metadata = std::fs::symlink_metadata(&current)?;
+        let metadata = std::fs::symlink_metadata(&current).map_err(|error| {
+            let code = if matches!(error.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP)) {
+                ErrorCode::InvalidArgument
+            } else {
+                ErrorCode::RootUnavailable
+            };
+            WatchboundError::from_io(
+                code,
+                Operation::Subscribe,
+                format!("watch root path is unavailable: {}", current.display()),
+                &error,
+            )
+        })?;
         if metadata.file_type().is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
                 format!(
                     "watch root path must not contain a symbolic link: {}",
                     current.display()
@@ -839,6 +885,19 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn assert_error_contract(
+        error: &WatchboundError,
+        code: ErrorCode,
+        operation: Operation,
+        retryable: bool,
+        retry_after: Option<RetryAfter>,
+    ) {
+        assert_eq!(error.code(), code);
+        assert_eq!(error.operation(), operation);
+        assert_eq!(error.retryable(), retryable);
+        assert_eq!(error.retry_after(), retry_after);
+    }
 
     struct TestRoot(PathBuf);
 
@@ -865,6 +924,75 @@ mod tests {
     }
 
     #[test]
+    fn error_codes_define_retry_policy_centrally() {
+        let cases = [
+            (ErrorCode::InvalidArgument, false, None),
+            (ErrorCode::SubscriptionClosed, false, None),
+            (
+                ErrorCode::TopologyTransactionConflict,
+                true,
+                Some(RetryAfter::TopologyTransactionSettles),
+            ),
+            (ErrorCode::OperationInterrupted, false, None),
+            (
+                ErrorCode::ConsumerBackpressure,
+                true,
+                Some(RetryAfter::DeliveryDrains),
+            ),
+            (
+                ErrorCode::RootStateConflict,
+                true,
+                Some(RetryAfter::RootStateChanges),
+            ),
+            (
+                ErrorCode::RootUnavailable,
+                true,
+                Some(RetryAfter::FilesystemStateChanges),
+            ),
+            (
+                ErrorCode::ResourceUnavailable,
+                true,
+                Some(RetryAfter::ResourcesAvailable),
+            ),
+            (
+                ErrorCode::RuntimeConfigurationConflict,
+                true,
+                Some(RetryAfter::RuntimeDisposed),
+            ),
+            (ErrorCode::Internal, false, None),
+        ];
+
+        for (code, retryable, retry_after) in cases {
+            let error = WatchboundError::new(code, Operation::Reconcile, "test error");
+            assert_error_contract(&error, code, Operation::Reconcile, retryable, retry_after);
+        }
+    }
+
+    #[test]
+    fn zero_runtime_budget_is_an_invalid_engine_argument() {
+        let error = Engine::with_runtime_watch_budget(0).unwrap_err();
+        assert_error_contract(
+            &error,
+            ErrorCode::InvalidArgument,
+            Operation::CreateEngine,
+            false,
+            None,
+        );
+    }
+
+    #[test]
+    fn public_error_messages_are_bounded_on_utf8_boundaries() {
+        let error = WatchboundError::new(
+            ErrorCode::Internal,
+            Operation::Subscribe,
+            "é".repeat(MAX_ERROR_MESSAGE_BYTES),
+        );
+
+        assert_eq!(error.message().len(), MAX_ERROR_MESSAGE_BYTES);
+        assert!(error.message().is_char_boundary(error.message().len()));
+    }
+
+    #[test]
     fn concurrent_reconciliation_request_is_rejected_explicitly() {
         let root = TestRoot::new("reconciliation-conflict");
         let subscription = Engine::new()
@@ -878,8 +1006,13 @@ mod tests {
             let _gate = InFlightTopologyTransaction(&subscription.control);
 
             let error = subscription.reconcile().unwrap_err();
-            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
-            assert!(error.to_string().contains("topology transaction"));
+            assert_error_contract(
+                &error,
+                ErrorCode::TopologyTransactionConflict,
+                Operation::Reconcile,
+                true,
+                Some(RetryAfter::TopologyTransactionSettles),
+            );
         }
         subscription.dispose().unwrap();
     }
@@ -898,9 +1031,66 @@ mod tests {
             let _gate = InFlightTopologyTransaction(&subscription.control);
 
             let error = subscription.replace_exclusions(1, vec![]).unwrap_err();
-            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
-            assert!(error.to_string().contains("topology transaction"));
+            assert_error_contract(
+                &error,
+                ErrorCode::TopologyTransactionConflict,
+                Operation::ReplaceExclusions,
+                true,
+                Some(RetryAfter::TopologyTransactionSettles),
+            );
         }
+        subscription.dispose().unwrap();
+    }
+
+    #[test]
+    fn post_disposal_operations_are_closed_not_interrupted() {
+        let root = TestRoot::new("closed-operations");
+        let subscription = Engine::new()
+            .subscribe(&root.0, SubscriptionOptions::default())
+            .unwrap();
+        subscription.dispose().unwrap();
+
+        let cases = [
+            (
+                subscription.replace_exclusions(1, vec![]).unwrap_err(),
+                Operation::ReplaceExclusions,
+            ),
+            (subscription.reconcile().unwrap_err(), Operation::Reconcile),
+            (
+                subscription
+                    .recover_root(RootIdentityPolicy::AcceptReplacement)
+                    .unwrap_err(),
+                Operation::RecoverRoot,
+            ),
+        ];
+        for (error, operation) in cases {
+            assert_error_contract(
+                &error,
+                ErrorCode::SubscriptionClosed,
+                operation,
+                false,
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_while_attached_is_a_root_state_conflict() {
+        let root = TestRoot::new("attached-recovery-conflict");
+        let subscription = Engine::new()
+            .subscribe(&root.0, SubscriptionOptions::default())
+            .unwrap();
+
+        let error = subscription
+            .recover_root(RootIdentityPolicy::AcceptReplacement)
+            .unwrap_err();
+        assert_error_contract(
+            &error,
+            ErrorCode::RootStateConflict,
+            Operation::RecoverRoot,
+            true,
+            Some(RetryAfter::RootStateChanges),
+        );
         subscription.dispose().unwrap();
     }
 }

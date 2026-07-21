@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use watchbound_engine::{Coverage, Engine, PartialReason, Subscription, SubscriptionOptions};
+use watchbound_engine::{
+    Coverage, Engine, ErrorCode, Operation, PartialReason, Subscription, SubscriptionOptions,
+};
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -106,7 +108,8 @@ fn update_advances_once_and_rejects_duplicate_stale_and_non_monotonic_generation
         let error = subscription
             .replace_exclusions(generation, Vec::new())
             .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.code(), ErrorCode::InvalidArgument);
+        assert_eq!(error.operation(), Operation::ReplaceExclusions);
         assert_eq!(subscription.exclusion_generation(), 1);
     }
 
@@ -136,7 +139,8 @@ fn invalid_prefixes_are_rejected_without_changing_generation() {
         let error = subscription
             .replace_exclusions(1, vec![invalid])
             .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.code(), ErrorCode::InvalidArgument);
+        assert_eq!(error.operation(), Operation::ReplaceExclusions);
         assert_eq!(subscription.exclusion_generation(), 0);
     }
     subscription.dispose().unwrap();
@@ -352,11 +356,11 @@ fn concurrent_conflicting_updates_are_rejected_and_disposal_remains_joined() {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         match subscription.replace_exclusions(3, Vec::new()) {
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            Err(error) if error.code() == ErrorCode::TopologyTransactionConflict => {
                 conflict = Some(error);
                 break;
             }
-            Err(error) if error.kind() == io::ErrorKind::InvalidInput => std::thread::yield_now(),
+            Err(error) if error.code() == ErrorCode::InvalidArgument => std::thread::yield_now(),
             result => panic!("unexpected concurrent result: {result:?}"),
         }
     }
@@ -499,8 +503,8 @@ fn disposal_waits_for_an_active_update_and_final_shutdown_releases_all_state() {
     assert!(
         result.is_ok()
             || matches!(
-                result.unwrap_err().kind(),
-                io::ErrorKind::Interrupted | io::ErrorKind::NotConnected
+                result.unwrap_err().code(),
+                ErrorCode::OperationInterrupted | ErrorCode::SubscriptionClosed
             )
     );
     subscription.dispose().unwrap();

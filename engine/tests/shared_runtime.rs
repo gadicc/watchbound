@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use watchbound_engine::{
-    Coverage, Engine, PartialReason, Subscription, SubscriptionOptions, UncertainReason,
+    Coverage, Engine, ErrorCode, Operation, PartialReason, Subscription, SubscriptionOptions,
+    UncertainReason,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -715,7 +716,8 @@ fn conflicting_runtime_budgets_are_rejected_for_one_runtime_lifetime() {
         }
         Err(error) => error,
     };
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(error.code(), ErrorCode::RuntimeConfigurationConflict);
+    assert_eq!(error.operation(), Operation::Subscribe);
 
     first.dispose().unwrap();
     let second = bounded_engine(3)

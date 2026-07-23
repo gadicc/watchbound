@@ -1,8 +1,9 @@
 # Release and registry runbook
 
-Status: release automation is prepared but no package is published. Production
-readiness, support qualification, native-distribution review, and explicit
-maintainer approval remain separate gates.
+Status: the `0.0.1` bootstrap is published to npm and JSR. OIDC automation is
+prepared for subsequent semantic releases. Production readiness, support
+qualification, native-distribution review, and explicit maintainer approval
+remain separate gates.
 
 ## What CI does
 
@@ -82,8 +83,7 @@ merge access, and use Conventional Commit types deliberately.
 
 npm trusted publishers can be configured only after each package exists. The
 initial `0.0.1` versions are therefore published locally with the maintainer's
-interactive npm authentication and MFA. They use npm's non-default `bootstrap`
-dist-tag:
+interactive npm authentication and MFA. They use npm's `bootstrap` dist-tag:
 
 ```sh
 pnpm build:node
@@ -106,6 +106,12 @@ The explicit `--provenance=false` overrides the generated package's
 OIDC-oriented `publishConfig` for this local exception. The bootstrap remains
 attributable through the npm account and immutable package contents, but it
 does not claim GitHub Actions build provenance.
+
+On the first and only version of each new npm package, the registry also
+retained `latest` and rejected its removal even though publication explicitly
+used `--tag bootstrap`. The `bootstrap` tags still identify the release's
+intent. The first ordinary semantic release moves `latest` to the OIDC-backed
+public version.
 
 Create `@gadicc/watchbound` at <https://jsr.io/new>, link it to
 `gadicc/watchbound`, and publish the generated `0.0.1` tree:

@@ -83,8 +83,9 @@ widen the supported target.
 
 ## Bundled native release controls
 
-Public bundled-native delivery still requires explicit release approval. For
-the sole proposed target, the implementation now provides:
+The `0.0.1` bundled-native bootstrap received explicit release approval.
+Later releases still require the documented approval boundary. For the sole
+target, the implementation now provides:
 
 - exact target basename and package `os`, `cpu`, `libc`, and Node constraints;
 - lockstep wrapper/native/engine/binding metadata and delivery validation;

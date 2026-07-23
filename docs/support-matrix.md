@@ -2,7 +2,7 @@
 
 Status: narrow target based on the exact-commit clean-CI evidence recorded
 below for the historical private `0.1.0` revision. The private `0.2.0`
-candidate is packaged as the non-default public `0.0.1` bootstrap, retains
+candidate is packaged as the public `0.0.1` bootstrap, retains
 this intended target, and reports `target-pending-clean-ci` until its own exact
 commit is qualified. The registry package bundles only the exact native target
 below; it does not broaden this matrix.

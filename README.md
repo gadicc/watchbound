@@ -17,7 +17,7 @@ safely claim completeness.
 
 The checked-in workspace packages remain private as an accidental-publish
 guard; registry packages are created only in controlled generated trees. The
-non-default `0.0.1` package is reserved for registry bootstrap. After that, CI
+`0.0.1` package is identified by the `bootstrap` tag. After that, CI
 validates controlled public npm and JSR artifacts and semantic-release uses
 Conventional Commits to decide whether a release is needed and stamps one
 lockstep version across both npm packages, JSR, Rust, checksums, and the SBOM.
@@ -27,7 +27,7 @@ x64/glibc 2.39; source workspaces continue to identify as controlled builds.
 Before the public version line was established, the first frozen private
 `0.1.0` API recorded clean-CI evidence and the cancellable-establishment and
 shared-delivery work was tracked as the private `0.2.0` revision. That
-development revision is packaged as the non-default public `0.0.1` bootstrap
+development revision is packaged as the public `0.0.1` bootstrap
 and still reports `target-pending-clean-ci` until its exact commit is
 separately qualified. It is intentionally independent of Codex Desktop and
 does not contain Git-ignore or application policy.

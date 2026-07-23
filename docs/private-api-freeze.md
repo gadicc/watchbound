@@ -1,6 +1,6 @@
 # Private 0.2.0 API revision
 
-Status: private-minor candidate carried by the non-default public `0.0.1`
+Status: private-minor candidate carried by the public `0.0.1`
 bootstrap package and pending exact-commit clean CI. The exact private `0.1.0`
 freeze and its support declaration remain the historical qualified baseline;
 the bootstrap capability emits `target-pending-clean-ci` until separately

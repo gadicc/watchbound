@@ -1,13 +1,14 @@
 # Maintenance and private 0.x policy
 
-Status: approved on 2026-07-21 for the maintained-unpublished phase.
+Status: `0.0.1` registry bootstrap published on 2026-07-23; production
+readiness remains gated.
 
-This policy does not authorize publication, a package-visibility change,
-artifact upload, or consumer integration. Release-package validation and
-OIDC/provenance workflow scaffolding are present. Semantic-release is wired to
-`main`, but publication still requires an explicit maintainer merge or push,
-a release-worthy Conventional Commit, and completion of the distribution
-gates below.
+The earlier maintained-unpublished policy did not authorize publication,
+artifact upload, or consumer integration. The maintainer separately approved
+the `0.0.1` npm/JSR bootstrap. Semantic-release is wired to `main`, but later
+publication still requires an explicit maintainer merge or push, a
+release-worthy Conventional Commit, and completion of the distribution gates
+below. Bootstrap publication does not authorize consumer integration.
 
 ## Ownership
 
@@ -20,8 +21,8 @@ triage, and release-gate evidence.
 
 Version `0.1.0` was the first frozen private API. The subsequent `0.2.0`
 development revision added cancellable establishment and shared
-per-environment delivery. The public registry line resets with a non-default
-`0.0.1` bootstrap package containing that revision; later public versions are
+per-environment delivery. The public registry line resets with a `0.0.1`
+bootstrap package containing that revision; later public versions are
 owned by semantic-release. The bootstrap reports `target-pending-clean-ci`
 until its exact commit is qualified. The repository targets the narrow host in
 `support-matrix.md`; bootstrap publication must not imply a consumer-ready
@@ -85,7 +86,8 @@ automatic per-commit test and requires fresh quiet-host confirmation.
 
 ## Release and distribution gates
 
-Maintained-unpublished status does not authorize a release. The prepared
+The historical maintained-unpublished status did not authorize a release. The
+separately approved bootstrap is now published. The prepared
 one-target bundled-native proposal now includes target-specific naming,
 checksums, provenance, CycloneDX SBOM, binary inspection, version/delivery
 lockstep, same-runner reproducibility, fail-closed loading, and an incident

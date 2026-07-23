@@ -4,7 +4,8 @@ Status: the Linux feasibility engine now includes the directory-burst
 correctness gate, shared process-wide runtime, bounded fair native-watch
 allocator, generation-based atomic dynamic exclusions, bounded post-loss
 reconciliation, and an opt-in JavaScript automatic policy in targeted stress,
-plus explicit identity-policy-gated root replacement recovery,
+plus explicit identity-policy-gated root replacement recovery, cancellable
+establishment, and bounded per-environment native-to-Node delivery,
 without product integration or publication.
 
 The subsequent consumer/API audit recommends a maintained unpublished package,
@@ -19,12 +20,14 @@ proof, before deciding whether Watchbound should become a maintained package.
 Do not add macOS or Windows backends, Codex policy, publishing machinery, or a
 generic backend interface in this milestone.
 
-The completed measurement gate supports continuing the Linux engine: at 10,000
-directories Watchbound was faster and used less incremental RSS than Parcel in
-this tmpfs series, while exposing overflow and coverage loss that Parcel hid.
-This is not yet approval to integrate it. The directory-topology race and
-shared-runtime, allocator, dynamic-exclusion, and explicit-reconciliation gaps
-are addressed in targeted tests here. See
+The completed first-milestone measurement gate supported continuing the Linux
+engine. In that seven-trial tmpfs series, the 10,001-directory Watchbound
+startup medians and incremental resident set size (RSS) medians were below the
+corresponding Parcel 2.5.6 results. The 1,001-directory cold startup ranges
+overlapped. These historical measurements do not describe the current source
+or authorize integration. The directory-topology race and shared-runtime,
+allocator, dynamic-exclusion, and explicit-reconciliation gaps identified by
+that series are addressed in later targeted tests. See
 `docs/benchmark-results.md`.
 
 Watchbound is justified only by a stronger contract than “recursively report
@@ -44,6 +47,28 @@ exclusions, and cannot recover information the backend did not surface. This
 repository therefore tests the reported Linux gaps independently: populated
 moved-in trees, watched-root replacement, overflow visibility, resource
 accounting, and bounded delivery.
+
+## Evidence and status boundaries
+
+This record separates six kinds of statement:
+
+- A public API guarantee is part of the current Watchbound declarations and
+  lifecycle contract.
+- A current implementation fact is traced to the checked-in source and tests
+  but is not automatically a compatibility promise.
+- A Parcel tagged-source fact comes from exactly `@parcel/watcher` 2.5.6 and
+  describes that implementation rather than every backend or later version.
+- A reproduced conformance result comes from the isolated harness and names
+  the adapter, backend, scenario, and trial scope.
+- A historical benchmark measurement stays tied to the recorded first-
+  milestone source, native artifact, exact Codex helper, Parcel 2.5.6 inotify
+  adapter, tmpfs host, and reported ranges.
+- A proposed or deliberate-gap item is not implemented and grants no approval
+  to publish, generate prebuilds, or integrate a consumer.
+
+The current implementation sections below supersede older design shapes such
+as one runtime or delivery thread per subscription. Historical findings remain
+historical and are not silently rewritten as current performance evidence.
 
 ## Scope and ownership
 
@@ -182,6 +207,50 @@ the final subscription also shuts down and joins the native worker. The Node
 proof must additionally prevent a queued JavaScript callback from entering
 after its asynchronous disposal promise resolves.
 
+## In-process execution and thread model
+
+The native addon is loaded into the Node or Electron process as a shared
+library. It is not a helper process and has no process-isolation boundary.
+Native crashes, memory faults, synchronous calls, and resource ownership belong
+to the host process.
+
+The current implementation assigns work to these execution contexts:
+
+| Context | Work and scaling |
+| --- | --- |
+| JavaScript thread in each Node environment | Loads and verifies the addon; validates and copies wrapper inputs; registers and removes abort listeners; encodes exclusion prefixes; updates `observedState`; runs automatic-reconciliation policy and consumer callbacks; resolves napi-rs task results |
+| Shared libuv worker pool | Runs one compute task for each establishment, exclusion replacement, reconciliation, root recovery, or joined disposal and waits synchronously for its engine acknowledgement |
+| `watchbound-linux-runtime` | One lazy Rust thread for the loaded binding; owns inotify, eventfd, topology, watch allocation, batching, bounded engine queues, establishment rollback, disposal, and engine acknowledgements for all subscriptions |
+| `watchbound-node-dispatcher` | At most one Rust thread for each Node environment with a pending, active, or retained fallback-cleanup registration; fairly inspects registrations and attempts single-credit callback admission |
+| `watchbound-node-cleanup` | At most one transient Rust coordinator for each affected Node environment; advances garbage-collection, delivery-failure, and environment-teardown cleanup; a retained dispatcher advances cleanup if coordinator creation fails |
+
+With no pending operation or cleanup, steady-state Watchbound thread count is
+one process runtime plus one dispatcher per Node environment that has live
+subscriptions. Adding subscriptions in the same environment does not add
+runtime or dispatcher threads. A separate Worker environment adds its own
+dispatcher and JavaScript thread while sharing the one Watchbound runtime.
+Node, Electron, libuv, and the operating system own other threads outside these
+counts.
+
+Promise-returning methods still perform synchronous preparation on JavaScript.
+Import and identity checks, wrapper validation and option access, abort-listener
+registration, environment lookup and cleanup-hook registration, dispatcher and
+thread-safe-function creation, prefix encoding, native-backed getters and
+statistics, recovery-policy validation, and disposal-admission closure can all
+pause the event loop. Batch normalization, `observedState` updates, automatic
+policy work, and the consumer callback also run synchronously at callback
+entry. The filesystem traversal and joined engine operations run off the
+JavaScript thread.
+
+A napi-rs task waiting in libuv's queue consumes no worker slot. Once libuv
+starts its compute function, the task retains one shared pool slot while it
+waits for the Watchbound runtime, including bounded cancellation rollback,
+subscription cleanup, or final runtime shutdown. Cancellation wakes the Rust
+runtime but does not dequeue the napi-rs work item or release a started libuv
+slot early. A queued cancellation cannot settle until its task receives a
+libuv worker turn. The size-one-pool lifecycle tests exercise both queued
+cancellation and Worker teardown at this boundary.
+
 ## Linux state machine in this milestone
 
 1. Reject a symlink in any root-path component and validate a real directory
@@ -213,8 +282,10 @@ after its asynchronous disposal promise resolves.
 8. On root move/delete, invalidate the affected root and report uncertain
    coverage. A 250 ms `(device, inode)` path-identity check also catches
    replacement caused by moving an ancestor without allocating watches outside
-   the covered tree. The prototype does not yet reattach to a same-path
-   replacement.
+   the covered tree. Topology growth remains frozen until the consumer calls
+   the distinct `recoverRoot({ identityPolicy })` operation; only that explicit
+   policy-gated transaction can restore the original identity or adopt the
+   same-path replacement.
 9. On unmount or unexpected kernel watch loss, invalidate each interested root
    and report a topology-race uncertainty.
 10. On disposal, remove one subscription's interests and allocator state and
@@ -612,10 +683,47 @@ until synchronous `commitPublicSuccess()` wins on the JavaScript thread. If an
 abort already won, the wrapper joins disposal before returning the exact
 non-retryable cancellation error. The listener is temporary; removal is
 attempted on every terminal path and succeeds for a conforming `AbortSignal`.
-A structurally signal-like object's removal method may instead throw or lie,
-without replacing the authoritative establishment result. The signal controls
-establishment only; explicit subscription disposal controls an already
-committed subscription.
+A structurally signal-like object's removal method may instead throw or lie. A
+throw before public commit fails closed through joined disposal; a final
+cleanup retry does not replace an already authoritative native result. A lying
+substitute may retain a no-op listener. The signal controls establishment only;
+explicit subscription disposal controls an already committed subscription.
+
+The terminal race boundaries are explicit:
+
+1. JavaScript representation and numeric-option validation run before the
+   initial `signal.aborted` check. A valid already-aborted request then rejects
+   before token, environment, callback bridge, or filesystem allocation.
+2. After token creation, listener registration and a second aborted check close
+   the normal and re-entrant pre-native windows. Registration failure requests
+   cancellation and rejects without calling native subscribe.
+3. Engine option validation precedes an already-requested engine cancellation.
+   After that validation, cancellation can win before root-path validation,
+   runtime acquisition, command admission, or traversal.
+4. Filesystem failure, engine success, and caller cancellation compete through
+   one attempt terminal state. A committed filesystem failure is not
+   retroactively renamed cancellation. If cancellation wins, the worker removes
+   attempt-owned state in bounded turns before acknowledging; shared peer
+   interests remain.
+5. Engine success is not yet JavaScript success. The raw Node result remains
+   provisional, and its callback admission can be closed until the wrapper
+   commits.
+6. Node environment teardown can close the environment admission gate before
+   bridge attachment, during libuv compute, or after provisional state exists.
+   Teardown reports interruption rather than caller cancellation and begins
+   native cleanup without waiting for JavaScript settlement.
+7. A raw native error or cancellation does not settle in a live environment
+   until its unpublished registration, thread-safe-function finalizer, and any
+   now-inactive dispatcher are joined.
+8. After native handoff, listener removal, a final aborted check, and
+   synchronous `commitPublicSuccess()` define the wrapper commit boundary. An
+   abort that won before commit closes delivery, forces joined provisional
+   disposal, and produces `WATCHBOUND_OPERATION_CANCELLED`. A cleanup failure
+   supersedes that cancellation result.
+9. A malformed commit result, listener-removal failure, or public-subscription
+   construction failure fails closed and joins provisional disposal. Once
+   public commit succeeds, later signal abort is a no-op and only
+   `subscription.dispose()` controls the live subscription.
 
 If a pending raw subscription ends after its thread-safe function and
 dispatcher placeholder exist, error delivery is also provisional. The binding
@@ -636,6 +744,15 @@ round, so registration churn cannot starve an older peer. Each subscription has
 one callback credit. The dispatcher does not receive another batch until
 completion restores that credit, so a full Node queue is neither a retry
 mechanism nor an unbounded staging queue.
+
+A slow callback holds only its subscription's credit, but all callbacks in one
+Node environment execute on that environment's JavaScript thread. A
+synchronously blocked callback therefore delays peer callback completion too.
+The dispatcher can continue inspecting peers and the process runtime can
+continue filesystem work, but sustained traffic can eventually fill each
+peer's own bounded engine queue and make that peer independently
+`consumer-backpressure` uncertain. A separate Worker environment has a
+separate JavaScript thread and dispatcher and can continue callback progress.
 
 Explicit disposal closes the subscription admission gate before engine
 disposal. A dispatcher turn that already retained the registration may still
@@ -663,6 +780,44 @@ advance. Watchbound does not claim control over that platform boundary. Once
 the hook starts, it closes admission and drives cleanup without requiring a
 JavaScript callback or a second libuv worker.
 
+## Workload and support boundary
+
+Watchbound fits caches, indexes, repository previews, and similar consumers
+that can treat delivered paths as invalidations, rescan a root after a
+conservative boundary, and surface or retry explicit partial and uncertain
+coverage. It deliberately gives up exact typed-event and rename claims.
+Ordinary changes may carry narrower paths, but overflow, topology loss, root
+replacement, or output pressure can collapse detail to a root invalidation.
+That is a recomputation contract, not a filesystem journal.
+
+It is a poor fit for audit logs, exact per-event replication, consumers that
+cannot rescan, applications that need a stable cross-platform prebuilt package,
+or roots on unqualified filesystems. Parcel remains the better default when its
+published typed coalesced events, historical snapshot queries, static ignores,
+platform range, and packaging are sufficient. Parcel's Linux inotify
+conformance gaps do not imply that Watchbound is a general replacement for its
+other backends or product surface.
+
+The intended maintained-unpublished target is the narrow Ubuntu 24.04, Linux
+6.8+, x86_64, glibc 2.39, Node `>=24.18.0 <25` controlled source build on
+trusted stable local roots in `docs/support-matrix.md`; the current `0.2.0`
+revision remains `target-pending-clean-ci`. WSL, network filesystems, Filesystem
+in Userspace (FUSE), overlay filesystems, unusual container mounts, musl, other
+distributions and architectures, and non-Linux platforms are unqualified or
+unsupported. The engine traverses existing mount points, has no one-filesystem
+mode, and cannot observe a later descendant mount insertion through inotify
+alone.
+
+One motivating Codex repository-preview observation counted 251,811 Node
+`fs.watch` calls. The value is a call count only. It is not evidence of the
+repository's directory cardinality, unique inotify watch count, or Watchbound
+resource use, and this repository retains no mapping from those calls to unique
+paths or directories. The first-milestone 1,001- and 10,001-directory tmpfs
+measurements cannot be extrapolated to that repository, persistent storage,
+Electron UI latency, or cancellation time. Cancellable establishment and
+bounded delivery make the transient preview shape worth evaluating, but this
+record does not authorize Codex Desktop integration.
+
 ## Binding decision
 
 Use Node-API rather than direct V8 or libuv calls. The concrete crate choice is
@@ -681,8 +836,9 @@ repeatable benchmark suite is run:
    backpressure each produce explicit non-complete coverage.
 3. Disposal is deterministic and no JavaScript callback starts after disposal
    resolves.
-4. Watch accounting is one per covered directory plus any explicitly documented
-   root-lifecycle overhead.
+4. Subscription accounting reports one logical interest per covered directory,
+   while process accounting reports unique native watches and can be lower for
+   overlapping directory identities.
 5. Startup and steady-state memory remain close enough to Parcel that the added
    contract, not accidental implementation overhead, explains the tradeoff.
    RSS is treated as a noisy range; a repeatable multi-fold regression is a stop

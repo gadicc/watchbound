@@ -190,35 +190,78 @@ worktree was at `f126ebe6b4495e8013804486f982f262b1ab866b` with `patch.js` SHA-2
 
 ## `@parcel/watcher` 2.5.6
 
-The released Linux x64/glibc prebuild was forced to its inotify backend.
-Independent live reproductions and the tagged source agree:
+The released Linux x64/glibc prebuild was forced to its inotify backend. The
+evidence below separates public API, tagged implementation, and reproduced
+behavior.
+
+### Parcel public API
+
+The published 2.5.6 declarations expose recursive `subscribe()` returning an
+`AsyncSubscription` with `unsubscribe()`, a top-level `unsubscribe()`,
+`writeSnapshot()`, and `getEventsSince()`. Options accept static path or glob
+ignores and a backend selection. The returned active subscription has no public
+ignore replacement, and pending `subscribe()` accepts no `AbortSignal` or other
+cancellation handle. See the tagged
+[`index.d.ts`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/index.d.ts)
+and
+[`wrapper.js`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/wrapper.js).
+
+The public result model has coalesced `create`, `update`, and `delete` events.
+It has no explicit coverage state, watch limit or accounting, queue-overflow
+result, consumer-backpressure state, or reconciliation operation. These are
+absent public surfaces, not claims that no private implementation state exists.
+
+Parcel 2.5.6 is published with optional native packages for Linux glibc/musl
+and several architectures, macOS, Windows, FreeBSD x64, and Android arm64, plus
+local-build fallbacks. That packaging and platform range remains a substantial
+advantage over Watchbound's unpublished narrow source-build target.
+
+### Parcel tagged-source facts
+
+The C++ source shipped with 2.5.6 shares one backend instance per backend name
+and starts one backend thread for that instance. Live watchers share one
+debouncer and its thread. These are implementation facts, not public thread
+guarantees. See
+[`Backend.cc`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/Backend.cc)
+and
+[`Debounce.cc`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/Debounce.cc).
+
+Each registered JavaScript callback owns a Node-API thread-safe function whose
+queue size is explicitly zero, meaning unlimited. The debounce thread uses a
+blocking call into that queue. See
+[`Watcher.cc`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/Watcher.cc).
+The async-work wrapper has no public cancellation path, although Node-API can
+report internal async-work cancellation status. See
+[`PromiseRunner.hh`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/PromiseRunner.hh).
+
+The Linux backend adds a watch for a created or moved-in directory but does not
+recursively scan its existing descendants. Root self-events remove the root
+subscription, and `IN_Q_OVERFLOW` is explicitly skipped. See the tagged
+[inotify backend](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/linux/InotifyBackend.cc).
+
+### Reproduced Parcel Linux behavior
 
 - A normal existing deep-file update was delivered.
 - Moving a populated nested tree into the root emitted the incoming directory,
-  but a later modification of its deep existing file emitted nothing. The
-  Linux backend adds the incoming directory watch without recursively scanning
-  its existing descendants. See the tagged
-  [inotify backend](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/linux/InotifyBackend.cc#L165-L184).
+  but a later modification of its deep existing file emitted nothing.
 - Moving the watched root away emitted its deletion, but a new directory at the
   same pathname was not watched and a deep replacement change emitted nothing.
-  See [root self-event handling](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/linux/InotifyBackend.cc#L193-L214).
 - Each final forced queue overflow generated 20,480 distinct files. Exactly
   8,192 paths were delivered and 12,288 were missing in all three runs; no
   error or invalidation was reported, and a later sentinel still arrived. An
   earlier independent induction produced different counts but the same silent
-  loss. The source explicitly skips `IN_Q_OVERFLOW`.
-  See [overflow handling](https://github.com/parcel-bundler/watcher/blob/v2.5.6/src/linux/InotifyBackend.cc#L96-L132).
-- The public API has static ignores only. Overlapping subscriptions are not a
-  safe atomic-update emulation because the cached directory tree is keyed by
-  root rather than ignore set; live tests produced both stale extra watches and
-  missing newly included watches.
+  loss.
+- Overlapping subscriptions did not safely emulate active ignore replacement:
+  live tests produced stale extra watches and missing newly included watches.
 - Calling one subscription handle's `unsubscribe` twice reopened and retained
   an empty shared inotify backend in the reproduced case. The adapter therefore
   caches an idempotent disposal promise.
 
-Parcel remains a strong stable-tree performance and packaging baseline, but a
-small faithful wrapper cannot reconstruct coverage or loss information that its
-Linux backend does not surface.
+These results apply to exactly 2.5.6's forced Linux inotify backend and recorded
+scenarios, not every Parcel backend or version. Parcel remains the stronger
+default for mature packaging, cross-platform support, typed coalesced events,
+historical queries, and static ignores. A faithful wrapper cannot add explicit
+coverage or recover loss detail that this backend does not surface.
 
 ## Watchbound prototype
 

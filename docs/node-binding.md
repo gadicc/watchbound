@@ -22,19 +22,35 @@ Node and avoids binding this package directly to V8 or libuv APIs. Node-API 6
 also gives the proof a JavaScript `bigint` representation for monotonic batch
 sequences.
 
+The resulting `.node` file is a shared library loaded into the Node or Electron
+process. It is not a helper executable. Synchronous binding entry points,
+native faults, descriptors, Rust threads, and memory therefore belong to the
+host process.
+
 napi-rs is preferred over handwritten Node-API FFI for this milestone because
 it supplies checked value conversion, thread-safe functions, asynchronous tasks,
 module registration, and established native-package tooling while keeping the
 binding source small. Handwritten FFI would make callback and environment
 cleanup the riskiest part of a filesystem prototype.
 
-The binding deliberately does not enable napi-rs's Tokio integration. Initial
-subscription and joined disposal run as Node-API asynchronous tasks on the
-existing worker pool. Establishment cancellation is cooperative after compute
-starts and retains that worker until success or joined rollback. Delivery uses
-at most one `watchbound-node-dispatcher` thread per Node environment rather
-than one bridge thread per subscription. Each registration keeps a separate
-bounded engine queue, one-entry thread-safe function, and one admission credit.
+The binding deliberately does not enable napi-rs's Tokio integration.
+Establishment, exclusion replacement, reconciliation, root recovery, and joined
+disposal run as Node-API asynchronous tasks on the shared libuv worker pool.
+Queued work occupies no slot before compute starts. Started work retains one
+slot until its ordered engine result completes, including cancellation rollback
+or final runtime shutdown; cancellation does not dequeue it or release that
+slot early.
+
+Delivery uses at most one `watchbound-node-dispatcher` thread per Node
+environment rather than one bridge thread per subscription. All environments
+share the one lazy `watchbound-linux-runtime` thread in the loaded binding.
+Each registration keeps a separate bounded engine queue, one-entry thread-safe
+function, and one admission credit. Garbage collection, delivery failure, or
+environment teardown can create at most one transient
+`watchbound-node-cleanup` coordinator per affected environment, with the
+retained dispatcher as fallback. Steady-state Watchbound thread count is
+therefore one runtime plus one dispatcher per environment with live
+subscriptions, independent of subscription count within each environment.
 
 The same representation-only rule applies to root recovery. Node converts
 fixed-size `(device, inode)` and root-state fields to bigint/string objects,
@@ -57,6 +73,18 @@ These fields are governed by schema version 2 of the
 a compatibility-contract version, not a property repeated on each error;
 consumers branch on `code`, and treat `message` and `systemCause` as bounded
 diagnostics only.
+
+Promise-returning native methods still do synchronous work before napi-rs
+queues compute. The JavaScript thread resolves roots, validates and converts
+options, obtains the environment record, installs the cleanup hook, starts or
+joins an environment dispatcher when required, creates and attaches the
+thread-safe function, encodes wrapper exclusion prefixes, validates root
+recovery policy, and closes disposal admission. Module loading, metadata and
+capability calls, engine creation, statistics, subscription getters,
+cancellation-token methods, result conversion, batch normalization, and the
+consumer callback are synchronous too. The filesystem traversal and joined
+topology/disposal work remain off the JavaScript thread, but large inputs,
+caller accessors, callback work, or contended locks can still pause it.
 
 ## Native identity, capabilities, and engine handles
 
@@ -141,9 +169,12 @@ provisional native subscription and waits before rejecting; a disposal/join
 failure supersedes cancellation. After a successful commit, signal abort is a
 no-op. Queued work still waits for a libuv worker turn, and started work keeps
 its worker through rollback. Listener removal is attempted on every terminal
-wrapper path and succeeds for a conforming `AbortSignal`; a malformed
-structural substitute cannot replace the already authoritative result merely
-by throwing during removal.
+wrapper path and succeeds for a conforming `AbortSignal`. A removal throw before
+public commit requests cancellation, joins provisional disposal, and rejects
+with `WATCHBOUND_INVALID_ARGUMENT`; a final cleanup retry cannot replace an
+already authoritative native error or cancellation result. The complete
+terminal precedence and race boundaries are in
+[`api-lifecycle.md`](api-lifecycle.md).
 
 A raw pending-attempt error is not published while its provisional Node
 resources remain live. After a thread-safe function exists, the binding closes
@@ -175,11 +206,22 @@ Node-API callback queue. One dispatcher per environment inspects a fixed number
 of registrations per turn. Its sole per-subscription admission credit prevents
 a second receive or thread-safe-function call until callback completion, so
 `QueueFull` is not used as flow control and no pending-batch or readiness queue
-exists.
+exists. These delivery bounds do not impose a native-watch bound: the default
+subscription and default engine have `watchLimit: null` and
+`nativeWatchBudget: null` until a consumer configures them.
+
+Every callback in one environment still executes on that environment's
+JavaScript thread. A synchronously blocked callback delays peer callback
+completion even though the dispatcher and filesystem runtime continue.
+Sustained peer traffic can fill each peer's own bounded engine queue and mark
+it independently `consumer-backpressure` uncertain. A separate Worker
+environment has a separate JavaScript thread and dispatcher and can make
+callback progress.
 
 Disposal is asynchronous so JavaScript remains able to drain or cancel native
-callbacks while the engine and dispatcher registration join. The disposal promise may resolve
-only after no queued or in-flight callback can newly enter JavaScript.
+callbacks while the engine and dispatcher registration join. The disposal
+promise may resolve only after no queued or in-flight callback can newly enter
+JavaScript.
 An already admitted reconciliation, exclusion update, or root recovery is
 joined or explicitly interrupted by the same lifecycle boundary.
 

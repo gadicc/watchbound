@@ -68,8 +68,8 @@ This is correctness evidence, not a performance reading.
   primary scan. The deep post-recovery sentinel arrived. Joined disposal left
   both subscriptions disposed with zero watches, restored inotify from `0/0`
   through one active instance back to `0/0`, restored eventfds from three
-  through four back to three, joined all three named Watchbound threads, and
-  admitted no callback or retry after disposal.
+  through four back to three, joined all three named Watchbound threads in that
+  pre-shared-delivery build, and admitted no callback or retry after disposal.
 
 The report ran for 2.110 seconds on tmpfs with the `powersave` governor and load
 average 3.49/4.16/4.47 to 3.61/4.17/4.48 on 24 logical CPUs. The immediate
@@ -110,8 +110,8 @@ or replacement for the final performance series.
 - All 45 checks passed. Joined, idempotent disposal left both subscriptions
   disposed with zero watches; inotify returned from `0/0` through one active
   instance to `0/0`, eventfds from three through four to three, and all three
-  named Watchbound threads were joined. No callback or reconciliation began
-  after disposal resolved.
+  named Watchbound threads in that pre-shared-delivery build were joined. No
+  callback or reconciliation began after disposal resolved.
 
 The raw report ran for 2.131 seconds on tmpfs, Linux 7.1.3-2-cachyos, Node
 25.2.1, 24 logical CPUs, the `powersave` governor, and unchanged inotify limits;
@@ -151,8 +151,9 @@ benchmark or a performance reading.
 - Joined disposal left both subscriptions disposed with zero directory watches.
   Inotify instances/watches returned from `0/0` to `0/0`, eventfds from three
   through four active back to three, and named Watchbound threads from zero
-  through three active back to zero. No callback began after disposal and later
-  reconciliation was rejected by lifecycle state.
+  through three active back to zero in that pre-shared-delivery build. No
+  callback began after disposal and later reconciliation was rejected by
+  lifecycle state.
 
 The harness report recorded load average `3.48/3.29/3.01` at both start and
 finish on 24 logical CPUs, the `powersave` governor, tmpfs `/tmp`, and unchanged

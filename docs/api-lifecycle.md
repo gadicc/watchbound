@@ -3,6 +3,45 @@
 The Rust prototype API is intentionally smaller than the eventual package API.
 It exists to make correctness properties executable before stabilizing names.
 
+## In-process execution boundaries
+
+The Node addon is a shared library in the Node or Electron process, not a
+helper process. The host process owns its native faults, descriptors, memory,
+and Watchbound Rust threads.
+
+The JavaScript thread loads and verifies the addon; validates and copies
+arguments, options, and `AbortSignal` state; creates environment registrations
+and callback bridges; encodes exclusion prefixes; reads synchronous getters
+and statistics; updates `observedState`; runs automatic policy; and invokes the
+consumer callback. These synchronous portions can block the event loop. In
+particular, large option or prefix collections, accessors supplied by the
+caller, contended native locks, module loading, and callback work have no
+asynchronous isolation.
+
+Establishment, exclusion replacement, reconciliation, root recovery, and
+joined disposal each use a napi-rs asynchronous task. Its compute function runs
+on Node's shared libuv pool and waits for the ordered Rust-engine result. The
+single lazy `watchbound-linux-runtime` thread owns inotify and all filesystem
+state. At most one `watchbound-node-dispatcher` thread per Node environment
+performs fair callback admission. At most one transient
+`watchbound-node-cleanup` coordinator per affected environment advances
+garbage-collection, delivery-failure, or teardown cleanup; the retained
+dispatcher is its creation-failure fallback.
+
+Steady state has one Watchbound runtime thread for the loaded binding plus one
+dispatcher for each Node environment with live subscriptions. Subscription
+count inside one environment does not change that thread count. Separate
+Worker environments share the process runtime but have separate JavaScript
+threads, dispatchers, environment gates, and callback bridges.
+
+A queued napi-rs task occupies no libuv pool slot before compute starts. Once
+started, it retains one slot while waiting for the engine acknowledgement,
+including cancellation rollback or final runtime shutdown. Cancellation wakes
+the engine but does not remove queued async work or release a running libuv slot
+early. Therefore a task queued behind unrelated pool work cannot settle until
+libuv schedules it, and a started task remains counted against pool capacity
+until its terminal join completes.
+
 ## Subscription establishment
 
 `Engine::subscribe(root, options)` remains synchronous in Rust and delegates
@@ -28,9 +67,49 @@ first, the wrapper joins disposal of the provisional subscription before
 rejecting with `WATCHBOUND_OPERATION_CANCELLED`. Cleanup failure supersedes
 cancellation. After public success, abort is a no-op. Listener removal is
 attempted on every terminal path and succeeds for a conforming `AbortSignal`;
-if a malformed structural substitute throws or lies during removal, that
-cannot replace the authoritative result and may leave its no-op listener
-reachable from the substitute.
+if removal throws on the provisional-success path, the wrapper requests
+cancellation, joins disposal, and rejects with `WATCHBOUND_INVALID_ARGUMENT`.
+The final cleanup retry does not replace an already authoritative native error
+or cancellation result. A substitute that lies about removal can retain a
+no-op listener that the wrapper cannot forcibly detach.
+
+The terminal order and race rules are:
+
+1. JavaScript representation and numeric-option errors precede the initial
+   aborted check. A valid already-aborted request then rejects before native
+   token, environment, bridge, runtime, or filesystem allocation.
+2. The wrapper creates one token, registers the listener, and checks
+   `signal.aborted` again. A registration failure requests cancellation and
+   rejects without calling raw subscribe; the second check covers re-entrant or
+   compatible-object behavior at that boundary.
+3. Rust subscription-option validation precedes engine cancellation state.
+   After valid options, already-requested cancellation wins before symlink,
+   missing-root, runtime, or command admission checks.
+4. During admission and traversal, cancellation, filesystem failure, and
+   engine success compete through one attempt-scoped terminal state. A
+   committed filesystem failure stays that failure. Cancellation that wins
+   first is acknowledged only after bounded worker-owned rollback removes
+   attempt state and releases any final runtime lease.
+5. Engine success creates a provisional Node subscription, not public success.
+   A dropped acknowledgement receiver, bridge publication failure, caller
+   abort, or environment teardown closes delivery and joins cleanup rather than
+   leaving an ownerless subscription.
+6. Environment teardown can win before bridge attachment, during libuv
+   compute, or after provisional state exists. The raw operation reports
+   `WATCHBOUND_OPERATION_INTERRUPTED`, closes the environment admission gate,
+   and starts cleanup without requiring JavaScript promise settlement.
+7. A raw pending-attempt error in a live environment settles only after its
+   unpublished registration is removed, its thread-safe function is
+   abort-released and finalized, and any now-inactive dispatcher joins.
+8. After native handoff, listener removal, the final aborted check, and
+   synchronous `commitPublicSuccess()` form the public commit boundary. An
+   abort that won before commit makes the wrapper join provisional disposal
+   before rejecting with `WATCHBOUND_OPERATION_CANCELLED`.
+9. Provisional cleanup failure supersedes cancellation. Malformed commit
+   output, listener-removal failure, or public-subscription construction
+   failure also fails closed and joins provisional disposal. After a successful
+   public commit, later signal abort is a no-op and disposal owns the remaining
+   lifecycle.
 
 Once a thread-safe function has been allocated for a raw pending attempt, its
 error is not delivered to a live environment before unpublished Node resources
@@ -39,11 +118,9 @@ abort-releases the function, waits for its finalizer, and joins an inactive
 dispatcher. Environment teardown closes the same admission barrier without
 depending on JavaScript settlement.
 
-The napi-rs async task still occupies one shared libuv worker after compute
-starts and through rollback. Queued work observes cancellation only when it
-receives a worker turn. Internal polling and work quanta are bounded, but
-wall-clock settlement can wait for libuv scheduling, filesystem calls, an
-already-admitted callback, and final runtime join.
+Internal polling and work quanta are bounded, but wall-clock settlement can
+wait for libuv scheduling, filesystem calls, an already-admitted callback, and
+final runtime join.
 
 Every component of the root path must be a real, non-symlink directory;
 descendant directory symlinks are skipped. The check is path-based rather than
@@ -180,6 +257,23 @@ root recovery, independently of the exclusion generation.
 If a bounded consumer queue fills, the undelivered detail is replaced by a root
 invalidation and uncertain coverage when delivery can resume.
 
+The Node boundary adds a one-entry thread-safe-function queue and one admission
+credit per subscription. Its environment dispatcher receives no second engine
+batch until the admitted callback finishes and returns that credit. No
+readiness list, retry queue, or other native-to-Node staging queue grows behind
+a slow callback. The engine output queue remains separately bounded, although
+the default `watchLimit: null` and default engine
+`nativeWatchBudget: null` mean native watch cardinality has no
+Watchbound-imposed limit unless the consumer configures one.
+
+A slow callback affects more than its own callback because every callback in
+one Node environment runs on the same JavaScript thread. The dispatcher and
+filesystem runtime keep running, but peer callbacks cannot complete while that
+thread is synchronously blocked. Sustained peer traffic can therefore fill
+each peer's own engine queue and mark those peers independently
+`consumer-backpressure` uncertain. Another Worker environment has a separate
+JavaScript thread and dispatcher and can continue callback progress.
+
 Ordered batches remain the authoritative record of what has crossed the
 delivery boundary. The JavaScript wrapper retains one frozen `observedState`
 projection with `{ sequence, exclusionGeneration, rootState, coverage }`. It is
@@ -245,6 +339,27 @@ native callback holds only a `WeakRef`. Callers must therefore retain the
 subscription for callback delivery; dropping it permits best-effort GC cleanup,
 including when the callback captures the subscription. Explicit `dispose()` is
 the only deterministic cleanup guarantee.
+
+Explicit disposal and environment teardown have different guarantees.
+`dispose()` closes admission synchronously, then its libuv task joins engine
+disposal, any admitted callback in a live environment, thread-safe-function
+finalization, an inactive dispatcher, and any inactive cleanup coordinator.
+Concurrent calls join the same result, and the JavaScript wrapper returns the
+same promise. After that promise resolves, no callback, topology transaction,
+automatic retry, or engine enqueue for the subscription can begin.
+
+Environment teardown is a safety path, not the public joined-disposal promise.
+Its cleanup hook closes the environment-wide admission barrier, marks pending
+establishment as interrupted, abort-releases callback bridges, and schedules
+native cleanup for every established registration. It does not wait for
+JavaScript callbacks, because the environment is closing. A deduplicated
+per-environment cleanup table is advanced by at most one transient coordinator;
+if that thread cannot be created, the retained dispatcher is the fallback.
+Node may delay entering the cleanup hook until queued async work can advance.
+Once the hook begins, Watchbound cleanup needs neither another JavaScript
+callback nor a second libuv worker. The environment-teardown tests establish
+resource restoration and Worker isolation, not the public no-later-callback
+guarantee.
 
 ## Exclusion configuration and lifetime
 
@@ -482,3 +597,39 @@ The implemented distinct root-recovery operation and required identity-policy
 decision are in
 `docs/root-replacement-follow-up.md`; neither manual nor automatic
 reconciliation adopts a replacement identity.
+
+## Workload and support implications
+
+The public contract is designed for caches, indexes, repository previews, and
+other derived state that can be recomputed from conservative path or root
+invalidations. A complete batch does not claim a journal entry for every
+low-level event. On overflow, topology loss, root replacement, or consumer
+pressure, Watchbound prefers an explicit non-complete state and a root boundary
+over detailed `create`, `update`, `delete`, or rename claims that may be
+incomplete.
+
+That tradeoff is poor for audit logs, exact replication, consumers that cannot
+rescan, or applications that require mature cross-platform prebuilds and
+historical event queries. Parcel's typed coalesced events and query API remain
+the more useful contract for those needs when its public loss and resource
+model is acceptable.
+
+The intended maintained-unpublished target is limited to the controlled Ubuntu
+24.04, Linux 6.8+, x86_64, glibc 2.39, Node `>=24.18.0 <25` source build under
+trusted stable local roots; the current `0.2.0` revision remains
+`target-pending-clean-ci`. Node-API compatibility or successful loading does
+not widen that matrix. WSL, network filesystems, Filesystem in Userspace
+(FUSE), overlay filesystems, unusual container mounts, musl, other
+distributions or architectures, and non-Linux platforms are unqualified or
+unsupported. Existing mount points are traversed; no one-filesystem option or
+runtime descendant-mount reconciliation is implemented. See
+[`support-matrix.md`](support-matrix.md).
+
+A motivating Codex repository preview observed 251,811 Node `fs.watch` calls.
+This is only a call count and must not be converted into a directory or unique
+inotify-watch count. This repository retains no artifact mapping those calls to
+unique paths or directories. The historical 1,001- and 10,001-directory tmpfs
+startup ranges do not predict that repository's startup, memory, watch
+cardinality, Electron responsiveness, or cancellation latency. The current
+cancellation and bounded-delivery contract makes a transient preview a possible
+evaluation workload, not an approved integration.

@@ -90,7 +90,7 @@ function completeEvidence(overrides = {}) {
       disposalRequests: 0,
     },
     peer: {
-      deliveredDuringScan: true,
+      advancedAtPublicSettlementAndDelivered: true,
       coverageTruthful: true,
       sequencesStrictlyMonotonic: true,
       generationStayedZero: true,
@@ -359,7 +359,7 @@ test("sequence, exclusion, peer, sentinel, and joined-cleanup failures are corre
   const invalid = completeEvidence();
   invalid.primaryBatches[1].sequence = invalid.primaryBatches[0].sequence;
   invalid.excludedPathsObserved = true;
-  invalid.peer.deliveredDuringScan = false;
+  invalid.peer.advancedAtPublicSettlementAndDelivered = false;
   invalid.postReconciliationSentinelDelivered = false;
   invalid.lifecycle.noCallbackAfterDisposal = false;
   invalid.lifecycle.threadsRestored = false;
@@ -369,7 +369,7 @@ test("sequence, exclusion, peer, sentinel, and joined-cleanup failures are corre
   const failed = failedCheckNames(invalid);
   assert.ok(failed.includes("primary-sequences-strictly-monotonic"));
   assert.ok(failed.includes("current-and-future-excluded-prefixes-stayed-excluded"));
-  assert.ok(failed.includes("peer-delivered-during-reconciliation-scan"));
+  assert.ok(failed.includes("peer-advanced-at-public-settlement-and-delivered"));
   assert.ok(failed.includes("post-reconciliation-deep-sentinel-delivered"));
   assert.ok(failed.includes("no-callback-started-after-disposal-resolved"));
   assert.ok(failed.includes("final-disposal-joined-native-threads"));
@@ -386,7 +386,7 @@ test("missing counters and untruthful peer coverage cannot pass", () => {
   const failed = failedCheckNames(missing);
   assert.ok(failed.includes("all-primary-batches-have-counters"));
   assert.ok(failed.includes("primary-sequences-strictly-monotonic"));
-  assert.ok(failed.includes("peer-delivered-during-reconciliation-scan"));
+  assert.ok(failed.includes("peer-advanced-at-public-settlement-and-delivered"));
   assert.ok(failed.includes("peer-generation-stayed-zero"));
 });
 

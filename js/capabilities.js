@@ -13,8 +13,21 @@ const wrapperPackage = JSON.parse(
 export const WRAPPER_VERSION = wrapperPackage.version;
 
 export function buildCapabilities(native, metadata) {
-  if (native?.schemaVersion !== 1 || metadata?.schemaVersion !== 1) {
-    throw new Error("native capability metadata does not use schema version 1");
+  if (native?.schemaVersion !== 2 || metadata?.schemaVersion !== 1) {
+    throw new Error(
+      "native capability metadata does not use capability schema 2 and metadata schema 1",
+    );
+  }
+  if (
+    native.cancellableEstablishment !== true ||
+    native.sharedNodeDelivery !== true ||
+    native.nativeCallbackQueueCapacity !== 1 ||
+    native.deliveryDispatcherScope !== "node-environment" ||
+    native.deliveryAdmission !== "single-credit" ||
+    native.deliveryDispatcherWorkQuantum !== 64 ||
+    native.deliveryDispatcherPollMilliseconds !== 5
+  ) {
+    throw new Error("native cancellation and shared-delivery capabilities are incompatible");
   }
 
   const runtime = runtimeFacts();
@@ -23,7 +36,7 @@ export function buildCapabilities(native, metadata) {
   const defaults = native.subscriptionDefaults;
 
   return deepFreeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -40,7 +53,7 @@ export function buildCapabilities(native, metadata) {
     },
     runtime,
     support: {
-      status: "supported",
+      status: "target-pending-clean-ci",
       operatingSystem: {
         family: "linux",
         distribution: "ubuntu",
@@ -69,6 +82,8 @@ export function buildCapabilities(native, metadata) {
       exactPathBytes: native.exactPathBytes,
       orderedBatches: true,
       observedState: true,
+      cancellableEstablishment: native.cancellableEstablishment,
+      sharedNodeDelivery: native.sharedNodeDelivery,
     },
     options: {
       engine: {
@@ -144,7 +159,12 @@ export function buildCapabilities(native, metadata) {
         cumulativeCounters: "bigint",
         gauges: "number",
       },
-      nativeCallbackQueueCapacity: 1,
+      nativeCallbackQueueCapacity: native.nativeCallbackQueueCapacity,
+      deliveryDispatcherScope: native.deliveryDispatcherScope,
+      deliveryAdmission: native.deliveryAdmission,
+      deliveryDispatcherWorkQuantum: native.deliveryDispatcherWorkQuantum,
+      deliveryDispatcherPollMilliseconds:
+        native.deliveryDispatcherPollMilliseconds,
     },
   });
 }

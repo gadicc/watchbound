@@ -1,7 +1,9 @@
 # Initial maintained source-build target
 
 Status: supported maintained-unpublished target on 2026-07-21, based on the
-exact-commit clean-CI evidence recorded below. This does not authorize
+exact-commit clean-CI evidence recorded below for `0.1.0`. The `0.2.0`
+private-minor candidate retains this intended target but reports
+`target-pending-clean-ci` until its own exact commit is qualified. This does not authorize
 publication, prebuilds, artifacts, releases, or consumer integration.
 
 ## Supported target
@@ -25,8 +27,9 @@ Support means that a clean controlled source build, native load, tests,
 ordinary conformance, TypeScript fixtures, and environment teardown passed on
 this exact class of host. It does not extend beyond the table.
 
-Capability schema version 1 mirrors this table under `capabilities.support`
-with `status: "supported"`. The adjacent `capabilities.runtime`
+Historical capability schema version 1 mirrors this table with `supported` for
+the qualified `0.1.0` build. Capability schema version 2 retains the table but
+emits `target-pending-clean-ci` for the current `0.2.0` candidate. The adjacent `capabilities.runtime`
 section reports the platform, architecture, kernel, libc, Node, and Node-API
 facts observed in the process that loaded the native binary. Those facts are
 diagnostic only: a match does not independently establish or widen support, and
@@ -95,7 +98,7 @@ the native module from its checked-in Rust source, verifies native/wrapper
 contract identity, and then runs the ordinary gate. Runtime installation does
 not silently download, select, or fall back to a prebuild.
 
-All three package manifests remain private at `0.1.0`, declare MIT licensing
+All three package manifests remain private at `0.2.0`, declare MIT licensing
 and Node `>=24.18.0 <25`, and the wrapper/native manifests declare Linux, x64,
 and glibc. The wrapper depends on the native workspace package by its package
 name rather than reaching across the repository by relative path.

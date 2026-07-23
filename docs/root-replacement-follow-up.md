@@ -248,10 +248,10 @@ already owns the gate either commits before the ordered disposal command or is
 acknowledged as interrupted; disposal joins that acknowledgement, releases all
 old/candidate topology and shared interests, then permits final runtime
 shutdown. A request that loses the lifecycle race cannot begin filesystem work.
-The Node bridge retains its stronger guarantee that no JavaScript callback can
-start after the disposal promise resolves, and wrapper timers cannot restart
-recovery afterward. Repeated disposal remains the same promise/idempotent
-result.
+The Node delivery layer retains its stronger guarantee that no JavaScript
+callback can start after the disposal promise resolves, and wrapper timers
+cannot restart recovery afterward. Repeated disposal remains the same
+promise/idempotent result.
 
 ## TDD and conformance evidence
 

@@ -26,7 +26,11 @@ properties:
 - conservative complete, partial, and uncertain coverage;
 - bounded watches, traversal, batches, queues, retry timers, and evidence;
 - truthful peer subscriptions sharing native watches;
-- idempotent disposal joined through native callback completion.
+- idempotent disposal joined through native callback completion;
+- caller cancellation that cannot leave provisional watches, interests, or a
+  runtime lease after rejection; and
+- Node-environment generation isolation, bounded callback admission, and
+  teardown that does not require JavaScript callbacks to run.
 
 These properties prevent silent overclaims. They do not authenticate a path or
 isolate one operating-system user from another.
@@ -76,6 +80,16 @@ continue to be paired with engine bookkeeping rather than trusted alone.
 Lexical `..` components must continue to be validated before native symlink
 decisions; normalizing them away at the JavaScript or Node boundary would
 weaken the current contract.
+
+Establishment cancellation is a lifecycle boundary rather than a filesystem
+security boundary. A token is single-bind and identified by a checked monotonic
+attempt ID; cancellation cleanup uses the worker's existing logical-interest
+ownership so it cannot remove a shared peer watch. Raw `napi_env` pointer
+values are never stable identities: dispatcher and cleanup registrations
+retain a monotonic environment generation, preventing a stale cleanup record
+from targeting a later environment that reuses the address. Callback and
+command queues remain finite; the dispatcher uses one explicit credit rather
+than probing or retrying a full thread-safe-function queue.
 
 ## Expansion gate
 

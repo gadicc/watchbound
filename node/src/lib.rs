@@ -1,40 +1,34 @@
 //! Thin Node-API proof for watchbound-engine.
 
-use std::collections::HashMap;
 use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
-use std::thread::JoinHandle;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use napi::bindgen_prelude::{
     AsyncTask, BigInt, Buffer, Either, FnArgs, Function, Null, ToNapiValue,
 };
-use napi::threadsafe_function::{
-    ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
-};
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
 use watchbound_engine::{
-    ChangeBatch, Coverage, Engine, ErrorCode, ExclusionHandle, MAX_ERROR_MESSAGE_BYTES, Operation,
-    PartialReason, ReconciliationHandle, ReconciliationResult, RootAttachment, RootIdentity,
-    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
-    RootRecoveryHandle, RootRecoveryResult, RootState, RootStateHandle, RuntimeStats, Stats,
-    StatsHandle, Subscription, SubscriptionOptions, SystemCause, UncertainReason, VERSION,
-    WatchboundError,
+    ChangeBatch, Coverage, Engine, ErrorCode, EstablishmentCancellation, ExclusionHandle,
+    MAX_ERROR_MESSAGE_BYTES, Operation, PartialReason, ReconciliationHandle, ReconciliationResult,
+    RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment,
+    RootRecoveryFailureReason, RootRecoveryHandle, RootRecoveryResult, RootState, RootStateHandle,
+    RuntimeStats, Stats, StatsHandle, Subscription, SubscriptionOptions, SystemCause,
+    UncertainReason, VERSION, WatchboundError,
 };
 
-type BatchThreadsafeFunction =
-    ThreadsafeFunction<ChangeBatch, (), FnArgs<(JsChangeBatch,)>, Status, false, false, 1>;
+mod delivery;
 
 type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
 type TaskOutcome<T> = NodeResult<T>;
 
 const MAX_SYSTEM_DETAIL_BYTES: usize = 128;
-const BINDING_API_VERSION: u32 = 1;
-const CAPABILITY_SCHEMA_VERSION: u32 = 1;
+const BINDING_API_VERSION: u32 = 2;
+const CAPABILITY_SCHEMA_VERSION: u32 = 2;
 const NODE_API_VERSION: u32 = 6;
 
 #[derive(Clone, Debug)]
@@ -135,6 +129,38 @@ impl NodeErrorDetails {
         cause: Error,
     ) -> Self {
         Self::new(code, operation, message).with_system_cause(NodeSystemCause::from_napi(cause))
+    }
+
+    fn from_napi_status(
+        code: ErrorCode,
+        operation: Operation,
+        status: Status,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::new(code, operation, message).with_system_cause(NodeSystemCause::from_napi_status(
+            status,
+            "Node-API operation failed",
+        ))
+    }
+
+    fn internal(operation: Operation, message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::Internal, operation, message)
+    }
+
+    fn operation_interrupted(operation: Operation, message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::OperationInterrupted, operation, message)
+    }
+
+    fn delivery_failure(status: Status) -> Self {
+        Self::new(
+            ErrorCode::Internal,
+            Operation::DeliverBatch,
+            "Node callback bridge could not deliver a batch",
+        )
+        .with_system_cause(NodeSystemCause::from_napi_status(
+            status,
+            format!("Node callback bridge delivery failed: {status}"),
+        ))
     }
 
     fn with_system_cause(mut self, system_cause: NodeSystemCause) -> Self {
@@ -509,6 +535,13 @@ pub struct JsCapabilities {
     pub exact_path_bytes: bool,
     pub process_native_watch_budget: bool,
     pub shared_native_watches: bool,
+    pub cancellable_establishment: bool,
+    pub shared_node_delivery: bool,
+    pub native_callback_queue_capacity: u32,
+    pub delivery_dispatcher_scope: String,
+    pub delivery_admission: String,
+    pub delivery_dispatcher_work_quantum: u32,
+    pub delivery_dispatcher_poll_milliseconds: u32,
     pub subscription_defaults: JsSubscriptionDefaults,
     pub positive_integer_minimum: u32,
     pub positive_integer_maximum: u32,
@@ -529,9 +562,43 @@ pub fn capabilities() -> JsCapabilities {
         exact_path_bytes: true,
         process_native_watch_budget: capabilities.process_native_watch_budget,
         shared_native_watches: capabilities.shared_native_watches,
+        cancellable_establishment: true,
+        shared_node_delivery: true,
+        native_callback_queue_capacity: 1,
+        delivery_dispatcher_scope: "node-environment".to_owned(),
+        delivery_admission: "single-credit".to_owned(),
+        delivery_dispatcher_work_quantum: delivery::DISPATCHER_WORK_QUANTUM as u32,
+        delivery_dispatcher_poll_milliseconds: delivery::DISPATCHER_POLL_MILLISECONDS,
         subscription_defaults: SubscriptionOptions::default().into(),
         positive_integer_minimum: 1,
         positive_integer_maximum: u32::MAX,
+    }
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsDeliveryDiagnostics {
+    pub dispatcher_environments: u32,
+    pub dispatcher_threads: u32,
+    pub registrations: u32,
+    pub outstanding_callbacks: u32,
+    pub cleanup_coordinator_threads: u32,
+    pub cleanup_requests: u32,
+    pub active_threadsafe_functions: u32,
+    pub environment_generations: u64,
+}
+
+#[napi]
+pub fn delivery_diagnostics() -> JsDeliveryDiagnostics {
+    let diagnostics = delivery::diagnostics();
+    JsDeliveryDiagnostics {
+        dispatcher_environments: saturating_u32(diagnostics.dispatcher_environments),
+        dispatcher_threads: saturating_u32(diagnostics.dispatcher_threads),
+        registrations: saturating_u32(diagnostics.registrations),
+        outstanding_callbacks: saturating_u32(diagnostics.outstanding_callbacks),
+        cleanup_coordinator_threads: saturating_u32(diagnostics.cleanup_coordinator_threads),
+        cleanup_requests: saturating_u32(diagnostics.cleanup_requests),
+        active_threadsafe_functions: saturating_u32(diagnostics.active_threadsafe_functions),
+        environment_generations: diagnostics.environment_generations,
     }
 }
 
@@ -564,6 +631,227 @@ pub struct NativeEngine {
     engine: Engine,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NodeAttemptPhase {
+    Unbound,
+    Bound,
+    NodeReadyProvisional,
+    PublicCommitted,
+}
+
+struct EstablishmentAttemptInner {
+    phase: NodeAttemptPhase,
+    cancel_requested: bool,
+    handoff_ready: bool,
+    state: Weak<SubscriptionState>,
+}
+
+struct EstablishmentAttempt {
+    engine: EstablishmentCancellation,
+    inner: Mutex<EstablishmentAttemptInner>,
+}
+
+impl EstablishmentAttempt {
+    fn new() -> NodeResult<Self> {
+        Ok(Self {
+            engine: EstablishmentCancellation::new().map_err(NodeErrorDetails::from)?,
+            inner: Mutex::new(EstablishmentAttemptInner {
+                phase: NodeAttemptPhase::Unbound,
+                cancel_requested: false,
+                handoff_ready: false,
+                state: Weak::new(),
+            }),
+        })
+    }
+
+    fn bind(&self) -> NodeResult<()> {
+        let mut inner = lock_unpoisoned(&self.inner);
+        if inner.phase != NodeAttemptPhase::Unbound {
+            return Err(NodeErrorDetails::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
+                "establishment cancellation token is already bound to a subscription attempt",
+            ));
+        }
+        inner.phase = NodeAttemptPhase::Bound;
+        Ok(())
+    }
+
+    fn cancel(&self) {
+        self.cancel_with_delivery_close(true);
+    }
+
+    fn cancel_without_delivery_close(&self) {
+        self.cancel_with_delivery_close(false);
+    }
+
+    fn cancel_with_delivery_close(&self, close_delivery: bool) {
+        let state = {
+            let mut inner = lock_unpoisoned(&self.inner);
+            if inner.phase == NodeAttemptPhase::PublicCommitted || inner.cancel_requested {
+                return;
+            }
+            inner.cancel_requested = true;
+            inner.state.upgrade()
+        };
+        self.engine.cancel();
+        if close_delivery && let Some(state) = state {
+            state.close_delivery_admission();
+        }
+    }
+
+    fn cancellation_requested(&self) -> bool {
+        lock_unpoisoned(&self.inner).cancel_requested
+    }
+
+    fn attach_provisional_state(&self, state: &Arc<SubscriptionState>) -> bool {
+        let mut inner = lock_unpoisoned(&self.inner);
+        debug_assert_eq!(inner.phase, NodeAttemptPhase::Bound);
+        inner.state = Arc::downgrade(state);
+        !inner.cancel_requested
+    }
+
+    fn note_node_ready(&self, auto_commit: bool) -> bool {
+        let mut inner = lock_unpoisoned(&self.inner);
+        debug_assert_eq!(inner.phase, NodeAttemptPhase::Bound);
+        inner.phase = if auto_commit && !inner.cancel_requested {
+            NodeAttemptPhase::PublicCommitted
+        } else {
+            NodeAttemptPhase::NodeReadyProvisional
+        };
+        !inner.cancel_requested
+    }
+
+    fn mark_handoff_ready(&self) {
+        let mut inner = lock_unpoisoned(&self.inner);
+        if inner.phase == NodeAttemptPhase::NodeReadyProvisional {
+            inner.handoff_ready = true;
+        }
+    }
+
+    fn commit_public_success(&self) -> NodeResult<bool> {
+        let mut inner = lock_unpoisoned(&self.inner);
+        match inner.phase {
+            NodeAttemptPhase::NodeReadyProvisional => {
+                if !inner.handoff_ready {
+                    Err(NodeErrorDetails::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::Subscribe,
+                        "establishment success has not reached the native handoff",
+                    ))
+                } else if inner.cancel_requested {
+                    Ok(false)
+                } else {
+                    inner.phase = NodeAttemptPhase::PublicCommitted;
+                    Ok(true)
+                }
+            }
+            NodeAttemptPhase::PublicCommitted => Ok(true),
+            NodeAttemptPhase::Unbound | NodeAttemptPhase::Bound => Err(NodeErrorDetails::new(
+                ErrorCode::InvalidArgument,
+                Operation::Subscribe,
+                "establishment success is not ready to be publicly committed",
+            )),
+        }
+    }
+}
+
+#[napi]
+pub struct NativeEstablishmentCancellation {
+    attempt: Arc<EstablishmentAttempt>,
+}
+
+#[napi]
+impl NativeEstablishmentCancellation {
+    #[napi]
+    pub fn cancel(&self) {
+        self.attempt.cancel();
+    }
+
+    #[napi]
+    pub fn commit_public_success(&self, env: Env) -> Result<bool> {
+        self.attempt
+            .commit_public_success()
+            .map_err(|error| sync_error(&env, error))
+    }
+}
+
+#[napi]
+pub fn create_establishment_cancellation(env: Env) -> Result<NativeEstablishmentCancellation> {
+    Ok(NativeEstablishmentCancellation {
+        attempt: Arc::new(EstablishmentAttempt::new().map_err(|error| sync_error(&env, error))?),
+    })
+}
+
+struct ThreadpoolTestBlockerState {
+    started: AtomicBool,
+    released: Mutex<bool>,
+    changed: Condvar,
+}
+
+#[napi(js_name = "__WatchboundTestOnlyThreadpoolBlocker")]
+pub struct TestOnlyThreadpoolBlocker {
+    state: Arc<ThreadpoolTestBlockerState>,
+}
+
+#[napi]
+impl TestOnlyThreadpoolBlocker {
+    #[napi(getter)]
+    pub fn started(&self) -> bool {
+        self.state.started.load(Ordering::Acquire)
+    }
+
+    #[napi]
+    pub fn block(&self) -> AsyncTask<ThreadpoolBlockTask> {
+        AsyncTask::new(ThreadpoolBlockTask {
+            state: Arc::clone(&self.state),
+        })
+    }
+
+    #[napi]
+    pub fn release(&self) {
+        *lock_unpoisoned(&self.state.released) = true;
+        self.state.changed.notify_all();
+    }
+}
+
+pub struct ThreadpoolBlockTask {
+    state: Arc<ThreadpoolTestBlockerState>,
+}
+
+impl Task for ThreadpoolBlockTask {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.state.started.store(true, Ordering::Release);
+        let mut released = lock_unpoisoned(&self.state.released);
+        while !*released {
+            released = self
+                .state
+                .changed
+                .wait(released)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        Ok(())
+    }
+
+    fn resolve(&mut self, _env: Env, _output: Self::Output) -> Result<Self::JsValue> {
+        Ok(())
+    }
+}
+
+#[napi(js_name = "__watchboundTestOnlyCreateThreadpoolBlocker")]
+pub fn create_threadpool_test_blocker() -> TestOnlyThreadpoolBlocker {
+    TestOnlyThreadpoolBlocker {
+        state: Arc::new(ThreadpoolTestBlockerState {
+            started: AtomicBool::new(false),
+            released: Mutex::new(false),
+            changed: Condvar::new(),
+        }),
+    }
+}
+
 #[napi]
 impl NativeEngine {
     #[napi(getter)]
@@ -576,6 +864,14 @@ impl NativeEngine {
         self.engine.runtime_stats().into()
     }
 
+    #[napi]
+    pub fn create_establishment_cancellation(
+        &self,
+        env: Env,
+    ) -> Result<NativeEstablishmentCancellation> {
+        create_establishment_cancellation(env)
+    }
+
     #[napi(ts_return_type = "Promise<NativeSubscription>")]
     pub fn subscribe(
         &self,
@@ -583,8 +879,9 @@ impl NativeEngine {
         root: String,
         options: Option<JsSubscriptionOptions>,
         callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+        cancellation: Option<&NativeEstablishmentCancellation>,
     ) -> Result<AsyncTask<SubscribeTask>> {
-        prepare_subscribe(env, self.engine, root, options, callback)
+        prepare_subscribe(env, self.engine, root, options, callback, cancellation)
     }
 }
 
@@ -622,8 +919,9 @@ pub fn subscribe(
     root: String,
     options: Option<JsSubscriptionOptions>,
     callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+    cancellation: Option<&NativeEstablishmentCancellation>,
 ) -> Result<AsyncTask<SubscribeTask>> {
-    prepare_subscribe(env, Engine::new(), root, options, callback)
+    prepare_subscribe(env, Engine::new(), root, options, callback, cancellation)
 }
 
 fn prepare_subscribe(
@@ -632,6 +930,7 @@ fn prepare_subscribe(
     root: String,
     options: Option<JsSubscriptionOptions>,
     callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+    cancellation: Option<&NativeEstablishmentCancellation>,
 ) -> Result<AsyncTask<SubscribeTask>> {
     let root = resolve_root(root).map_err(|error| sync_error(&env, error))?;
     let options = options
@@ -639,35 +938,73 @@ fn prepare_subscribe(
         .transpose()
         .map_err(|error| sync_error(&env, error))?
         .unwrap_or_default();
-    let threadsafe_function: BatchThreadsafeFunction = callback
-        .build_threadsafe_function::<ChangeBatch>()
-        .callee_handled::<false>()
-        .weak::<false>()
-        .max_queue_size::<1>()
-        .build_callback(|context: ThreadsafeCallContext<ChangeBatch>| {
-            Ok(FnArgs::from((JsChangeBatch::from(context.value),)))
-        })
-        .map_err(|error| {
-            sync_error(
-                &env,
-                NodeErrorDetails::from_napi(
-                    ErrorCode::ResourceUnavailable,
-                    Operation::Subscribe,
-                    "Node callback bridge could not be created",
-                    error,
-                ),
-            )
-        })?;
-    let shutdown = Arc::new(ShutdownGate::new());
-    let cleanup_registration =
-        register_environment_cleanup(&env, &shutdown).map_err(|error| sync_error(&env, error))?;
+    let externally_committed = cancellation.is_some();
+    let attempt = match cancellation {
+        Some(cancellation) => Arc::clone(&cancellation.attempt),
+        None => Arc::new(EstablishmentAttempt::new().map_err(|error| sync_error(&env, error))?),
+    };
+    attempt.bind().map_err(|error| sync_error(&env, error))?;
+    if attempt.cancellation_requested() {
+        return Err(sync_error(
+            &env,
+            NodeErrorDetails::new(
+                ErrorCode::OperationCancelled,
+                Operation::Subscribe,
+                "subscription establishment was cancelled",
+            ),
+        ));
+    }
+    let shutdown = Arc::new(ShutdownGate::new(Arc::clone(&attempt)));
+    let environment = delivery::environment_for(&env).map_err(|error| sync_error(&env, error))?;
+    let delivery = delivery::DeliveryState::new(&environment);
+    let cleanup_registration = environment
+        .register(&shutdown)
+        .map_err(|error| sync_error(&env, error))?;
+    let threadsafe_function =
+        match delivery::RawBatchThreadsafeFunction::new(&env, &callback, &delivery) {
+            Ok(threadsafe_function) => Arc::new(threadsafe_function),
+            Err(error) => {
+                drop(cleanup_registration);
+                let cleanup_result = environment.join_dispatcher_if_inactive();
+                return Err(sync_error(&env, cleanup_result.err().unwrap_or(error)));
+            }
+        };
+    // Attachment and environment teardown share the admission barrier. A
+    // forced embedding teardown therefore either observes this bridge or wins
+    // first and makes this path release the unobserved bridge itself.
+    if let Err(error) = cleanup_registration.attach_threadsafe_function(&threadsafe_function) {
+        delivery.close_admission();
+        drop(cleanup_registration);
+        let release_status = threadsafe_function.release(true);
+        drop(threadsafe_function);
+        let release_result = if release_status == Status::Ok || release_status == Status::Closing {
+            Ok(())
+        } else {
+            Err(NodeErrorDetails::from_napi_status(
+                ErrorCode::Internal,
+                Operation::Subscribe,
+                release_status,
+                "unattached Node callback bridge could not be released",
+            ))
+        };
+        // An interrupted environment is already draining Node-API resources,
+        // so waiting for its JavaScript-thread finalizer here would deadlock.
+        let dispatcher_result = environment.join_dispatcher_if_inactive();
+        return Err(sync_error(
+            &env,
+            release_result.and(dispatcher_result).err().unwrap_or(error),
+        ));
+    }
 
     Ok(AsyncTask::new(SubscribeTask {
         engine,
         root,
         options,
         threadsafe_function: Some(threadsafe_function),
+        delivery,
         shutdown,
+        attempt,
+        auto_commit: !externally_committed,
         cleanup_registration: Some(cleanup_registration),
     }))
 }
@@ -676,9 +1013,51 @@ pub struct SubscribeTask {
     engine: Engine,
     root: PathBuf,
     options: SubscriptionOptions,
-    threadsafe_function: Option<BatchThreadsafeFunction>,
+    threadsafe_function: Option<Arc<delivery::RawBatchThreadsafeFunction>>,
+    delivery: Arc<delivery::DeliveryState>,
     shutdown: Arc<ShutdownGate>,
-    cleanup_registration: Option<EnvironmentCleanupRegistration>,
+    attempt: Arc<EstablishmentAttempt>,
+    auto_commit: bool,
+    cleanup_registration: Option<delivery::EnvironmentRegistration>,
+}
+
+impl SubscribeTask {
+    fn cleanup_unpublished_delivery(&mut self) -> NodeResult<()> {
+        self.delivery.close_admission();
+        self.shutdown.signal();
+
+        let environment = self
+            .cleanup_registration
+            .as_ref()
+            .map(delivery::EnvironmentRegistration::environment);
+        // Removing the pending registration first lets the shared dispatcher
+        // stop while the thread-safe function's main-loop finalizer runs.
+        self.cleanup_registration.take();
+
+        let release_result = self.threadsafe_function.take().map_or(Ok(()), |bridge| {
+            let status = bridge.release(true);
+            if status == Status::Ok {
+                // This compute method runs on libuv, so the JavaScript thread
+                // remains free to execute the Node-API finalizer. Promise
+                // rejection is not published until that finalizer has run.
+                self.delivery.wait_until_finalized_or_environment_closing();
+            }
+            if status == Status::Ok || status == Status::Closing {
+                Ok(())
+            } else {
+                Err(NodeErrorDetails::from_napi_status(
+                    ErrorCode::Internal,
+                    Operation::Subscribe,
+                    status,
+                    "pending Node callback bridge could not be released",
+                ))
+            }
+        });
+        let dispatcher_result = environment.map_or(Ok(()), |environment| {
+            environment.join_dispatcher_if_inactive()
+        });
+        release_result.and(dispatcher_result)
+    }
 }
 
 impl Task for SubscribeTask {
@@ -694,16 +1073,64 @@ impl Task for SubscribeTask {
                     "Node environment teardown interrupted subscription setup",
                 ));
             }
-            let subscription = self
-                .engine
-                .subscribe(&self.root, self.options.clone())
-                .map_err(NodeErrorDetails::from)?;
+            let pending = match self.engine.begin_subscribe_with_cancellation(
+                &self.root,
+                self.options.clone(),
+                self.attempt.engine.clone(),
+            ) {
+                Ok(pending) => pending,
+                Err(error)
+                    if self.shutdown.environment_closing.load(Ordering::Acquire)
+                        && error.code() == ErrorCode::OperationCancelled =>
+                {
+                    return Err(NodeErrorDetails::operation_interrupted(
+                        Operation::Subscribe,
+                        "Node environment teardown interrupted subscription setup",
+                    ));
+                }
+                Err(error) => return Err(NodeErrorDetails::from(error)),
+            };
+            let subscription = match pending.wait() {
+                Ok(subscription) => subscription,
+                Err(error)
+                    if self.shutdown.environment_closing.load(Ordering::Acquire)
+                        && error.code() == ErrorCode::OperationCancelled =>
+                {
+                    return Err(NodeErrorDetails::operation_interrupted(
+                        Operation::Subscribe,
+                        "Node environment teardown interrupted subscription setup",
+                    ));
+                }
+                Err(error) => return Err(NodeErrorDetails::from(error)),
+            };
             if self.shutdown.stop.load(Ordering::Acquire) {
                 subscription.dispose().map_err(NodeErrorDetails::from)?;
                 return Err(NodeErrorDetails::new(
                     ErrorCode::OperationInterrupted,
                     Operation::Subscribe,
                     "Node environment teardown interrupted subscription setup",
+                ));
+            }
+            if self.attempt.cancellation_requested() {
+                subscription.dispose().map_err(NodeErrorDetails::from)?;
+                return Err(NodeErrorDetails::new(
+                    ErrorCode::OperationCancelled,
+                    Operation::Subscribe,
+                    "subscription establishment was cancelled",
+                ));
+            }
+            if self.threadsafe_function.is_none() {
+                return Err(NodeErrorDetails::new(
+                    ErrorCode::Internal,
+                    Operation::Subscribe,
+                    "subscribe task callback bridge was already consumed",
+                ));
+            }
+            if self.cleanup_registration.is_none() {
+                return Err(NodeErrorDetails::new(
+                    ErrorCode::Internal,
+                    Operation::Subscribe,
+                    "subscribe task cleanup registration was already consumed",
                 ));
             }
             let threadsafe_function = self.threadsafe_function.take().ok_or_else(|| {
@@ -720,19 +1147,43 @@ impl Task for SubscribeTask {
                     "subscribe task cleanup registration was already consumed",
                 )
             })?;
-            SubscriptionState::start(
+            let state = SubscriptionState::start(
                 subscription,
                 threadsafe_function,
+                Arc::clone(&self.delivery),
                 Arc::clone(&self.shutdown),
                 cleanup_registration,
-            )
-            .map(Arc::new)
+            );
+            let may_publish = self.attempt.attach_provisional_state(&state);
+            if may_publish {
+                if let Err(error) = state.publish_delivery() {
+                    let cleanup_result = state.dispose_join_and_drain();
+                    return match cleanup_result {
+                        Ok(()) => Err(error),
+                        Err(cleanup_error) => Err(cleanup_error),
+                    };
+                }
+            } else {
+                state.close_delivery_admission();
+            }
+            let ready = self.attempt.note_node_ready(self.auto_commit);
+            if !ready {
+                state.close_delivery_admission();
+            }
+            Ok(state)
         })();
+        if outcome.is_err()
+            && (self.threadsafe_function.is_some() || self.cleanup_registration.is_some())
+            && let Err(cleanup_error) = self.cleanup_unpublished_delivery()
+        {
+            return Ok(Err(cleanup_error));
+        }
         Ok(outcome)
     }
 
     fn resolve(&mut self, env: Env, state: Self::Output) -> Result<Self::JsValue> {
         let state = task_result(&env, state)?;
+        self.attempt.mark_handoff_ready();
         Ok(NativeSubscription { state })
     }
 }
@@ -759,14 +1210,8 @@ impl NativeSubscription {
         let stats = self.state.stats.stats();
         JsStats::from_engine(
             stats,
-            self.state
-                .callback_tracker
-                .callback_errors
-                .load(Ordering::Relaxed),
-            self.state
-                .callback_tracker
-                .bridge_delivery_errors
-                .load(Ordering::Relaxed),
+            self.state.delivery.callback_errors(),
+            self.state.delivery.bridge_delivery_errors(),
         )
     }
 
@@ -843,6 +1288,7 @@ impl NativeSubscription {
 
     #[napi(ts_return_type = "Promise<void>")]
     pub fn dispose(&self) -> AsyncTask<DisposeTask> {
+        self.state.close_delivery_admission();
         AsyncTask::new(DisposeTask {
             state: Arc::clone(&self.state),
         })
@@ -854,13 +1300,7 @@ impl Drop for NativeSubscription {
         if self.state.cleanup_finished() {
             return;
         }
-        self.state.shutdown.signal();
-        let state = Arc::clone(&self.state);
-        let _ = std::thread::Builder::new()
-            .name("watchbound-node-reaper".to_owned())
-            .spawn(move || {
-                let _ = state.dispose_join_and_drain();
-            });
+        self.state.request_background_cleanup();
     }
 }
 
@@ -953,23 +1393,29 @@ pub struct SubscriptionState {
     reconciliation: ReconciliationHandle,
     root_state: RootStateHandle,
     root_recovery: RootRecoveryHandle,
-    threadsafe_function: Mutex<Option<Arc<BatchThreadsafeFunction>>>,
-    bridge: Mutex<Option<JoinHandle<NodeResult<()>>>>,
+    subscription: Arc<Subscription>,
+    threadsafe_function: Arc<delivery::RawBatchThreadsafeFunction>,
+    delivery: Arc<delivery::DeliveryState>,
+    environment: Arc<delivery::EnvironmentRecord>,
     shutdown: Arc<ShutdownGate>,
-    callback_tracker: Arc<CallbackTracker>,
     cleanup_started: AtomicBool,
+    cleanup_finalizing: AtomicBool,
+    cleanup_requested: AtomicBool,
+    cleanup_engine_result: Mutex<Option<NodeResult<()>>>,
+    cleanup_coordination_error: Mutex<Option<NodeErrorDetails>>,
     cleanup_result: Mutex<Option<NodeResult<()>>>,
     cleanup_condition: Condvar,
-    cleanup_registration: Mutex<Option<EnvironmentCleanupRegistration>>,
+    cleanup_registration: Mutex<Option<delivery::EnvironmentRegistration>>,
 }
 
 impl SubscriptionState {
     fn start(
         subscription: Subscription,
-        threadsafe_function: BatchThreadsafeFunction,
+        threadsafe_function: Arc<delivery::RawBatchThreadsafeFunction>,
+        delivery: Arc<delivery::DeliveryState>,
         shutdown: Arc<ShutdownGate>,
-        cleanup_registration: EnvironmentCleanupRegistration,
-    ) -> NodeResult<Self> {
+        cleanup_registration: delivery::EnvironmentRegistration,
+    ) -> Arc<Self> {
         let initial_coverage = subscription.initial_coverage().clone();
         let initial_root_state = *subscription.initial_root_state();
         let stats = subscription.stats_handle();
@@ -977,31 +1423,9 @@ impl SubscriptionState {
         let reconciliation = subscription.reconciliation_handle();
         let root_state = subscription.root_state_handle();
         let root_recovery = subscription.root_recovery_handle();
-        let callback_tracker = Arc::new(CallbackTracker::new());
-        let threadsafe_function = Arc::new(threadsafe_function);
-        let bridge_callback_tracker = Arc::clone(&callback_tracker);
-        let bridge_shutdown = Arc::clone(&shutdown);
-        let bridge_threadsafe_function = Arc::clone(&threadsafe_function);
-        let bridge = std::thread::Builder::new()
-            .name("watchbound-node-bridge".to_owned())
-            .spawn(move || {
-                bridge_batches(
-                    subscription,
-                    bridge_threadsafe_function,
-                    bridge_callback_tracker,
-                    bridge_shutdown,
-                )
-            })
-            .map_err(|error| {
-                NodeErrorDetails::from_io(
-                    ErrorCode::ResourceUnavailable,
-                    Operation::Subscribe,
-                    "Node callback bridge thread could not be created",
-                    &error,
-                )
-            })?;
-
-        Ok(Self {
+        let environment = cleanup_registration.environment();
+        let subscription = Arc::new(subscription);
+        let state = Arc::new(Self {
             initial_coverage,
             initial_root_state,
             stats,
@@ -1009,15 +1433,34 @@ impl SubscriptionState {
             reconciliation,
             root_state,
             root_recovery,
-            threadsafe_function: Mutex::new(Some(threadsafe_function)),
-            bridge: Mutex::new(Some(bridge)),
+            subscription,
+            threadsafe_function,
+            delivery,
+            environment,
             shutdown,
-            callback_tracker,
             cleanup_started: AtomicBool::new(false),
+            cleanup_finalizing: AtomicBool::new(false),
+            cleanup_requested: AtomicBool::new(false),
+            cleanup_engine_result: Mutex::new(None),
+            cleanup_coordination_error: Mutex::new(None),
             cleanup_result: Mutex::new(None),
             cleanup_condition: Condvar::new(),
             cleanup_registration: Mutex::new(Some(cleanup_registration)),
-        })
+        });
+        state.delivery.attach_state(&state);
+        state
+    }
+
+    fn publish_delivery(self: &Arc<Self>) -> NodeResult<()> {
+        let publish_result = {
+            let mut registration = lock_unpoisoned(&self.cleanup_registration);
+            registration
+                .as_mut()
+                .expect("subscription registration was stored above")
+                .publish(self)
+        };
+        publish_result?;
+        Ok(())
     }
 
     fn dispose_join_and_drain(&self) -> NodeResult<()> {
@@ -1026,31 +1469,29 @@ impl SubscriptionState {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok();
         if !owns_cleanup {
-            return self.wait_for_cleanup();
+            let cleanup_result = self.wait_for_cleanup();
+            let dispatcher_result = self.environment.join_dispatcher_if_inactive();
+            let coordinator_result = self.environment.join_cleanup_if_inactive();
+            return cleanup_result
+                .and(dispatcher_result)
+                .and(coordinator_result);
         }
 
-        self.shutdown.signal();
-        let result = lock_unpoisoned(&self.bridge)
-            .take()
-            .map_or(Ok(()), |bridge| {
-                bridge.join().map_err(|_| {
-                    NodeErrorDetails::new(
-                        ErrorCode::Internal,
-                        Operation::Dispose,
-                        "Node callback bridge thread panicked",
-                    )
-                })?
-            });
+        self.perform_engine_cleanup(true);
         if !self.shutdown.environment_closing.load(Ordering::Acquire) {
-            self.callback_tracker
-                .wait_until_empty_or_environment_closing(&self.shutdown);
+            self.delivery.wait_until_drained_or_environment_closing();
         }
-        lock_unpoisoned(&self.threadsafe_function).take();
-        lock_unpoisoned(&self.cleanup_registration).take();
-
-        *lock_unpoisoned(&self.cleanup_result) = Some(result.clone());
-        self.cleanup_condition.notify_all();
-        result
+        self.finalize_cleanup();
+        let cleanup_result = self.wait_for_cleanup();
+        // Coordinator-failure assignment can race the first join while
+        // background cleanup is handing ownership to an explicit disposer.
+        // Finalization removes this registration, so these final joins cannot
+        // be suppressed by a late marker for the disposed subscription.
+        let dispatcher_result = self.environment.join_dispatcher_if_inactive();
+        let coordinator_result = self.environment.join_cleanup_if_inactive();
+        cleanup_result
+            .and(dispatcher_result)
+            .and(coordinator_result)
     }
 
     fn wait_for_cleanup(&self) -> NodeResult<()> {
@@ -1070,67 +1511,209 @@ impl SubscriptionState {
     fn cleanup_finished(&self) -> bool {
         lock_unpoisoned(&self.cleanup_result).is_some()
     }
-}
 
-fn bridge_batches(
-    subscription: Subscription,
-    threadsafe_function: Arc<BatchThreadsafeFunction>,
-    callback_tracker: Arc<CallbackTracker>,
-    shutdown: Arc<ShutdownGate>,
-) -> NodeResult<()> {
-    let mut delivery_error = None;
-    while !shutdown.stop.load(Ordering::Acquire) {
-        let received = subscription.recv_timeout(Duration::from_millis(10));
-        let batch = match received {
-            Ok(batch) => batch,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        };
-        if shutdown.stop.load(Ordering::Acquire) {
-            break;
+    pub(crate) fn dispatch_one(self: &Arc<Self>) -> bool {
+        if self.shutdown.stop.load(Ordering::Acquire) || !self.delivery.can_receive() {
+            return false;
         }
-
-        callback_tracker.begin();
-        let completion_tracker = Arc::clone(&callback_tracker);
-        let status = threadsafe_function.call_with_return_value(
-            batch,
-            ThreadsafeFunctionCallMode::Blocking,
-            move |result, _env| {
-                completion_tracker.finish_callback(result.is_err());
-                Ok(())
-            },
-        );
-        if status != Status::Ok {
-            callback_tracker.finish_delivery_error();
-            delivery_error = Some(
-                NodeErrorDetails::new(
-                    ErrorCode::Internal,
-                    Operation::DeliverBatch,
-                    "Node callback bridge could not deliver a batch",
-                )
-                .with_system_cause(NodeSystemCause::from_napi_status(
-                    status,
-                    format!("Node callback bridge delivery failed: {status}"),
-                )),
-            );
-            break;
+        match self.subscription.try_recv() {
+            Ok(batch) => self.delivery.try_admit(batch, &self.threadsafe_function),
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.request_background_cleanup();
+                false
+            }
         }
     }
 
-    let dispose_result = subscription.dispose().map_err(NodeErrorDetails::from);
-    delivery_error.map_or(dispose_result, Err)
+    fn close_delivery_admission(&self) {
+        self.delivery.close_admission();
+        if let Some(registration) = lock_unpoisoned(&self.cleanup_registration).as_ref() {
+            registration.deactivate();
+        }
+        self.environment.notify_dispatcher();
+    }
+
+    pub(crate) fn abort_delivery_for_environment(&self) {
+        self.delivery.close_admission_with_barrier_held();
+        let _ = self.threadsafe_function.release(true);
+    }
+
+    fn request_background_cleanup(self: &Arc<Self>) {
+        self.delivery.close_admission();
+        self.shutdown.signal();
+        // Finalization removes this same registration. Keep its guard through
+        // cleanup-thread coordination so an explicit disposer cannot publish
+        // a terminal result between a spawn failure and storing that failure,
+        // or let a late fallback assignment resurrect cleanup afterward.
+        let registration = lock_unpoisoned(&self.cleanup_registration);
+        let Some(registration) = registration.as_ref() else {
+            return;
+        };
+        let retained = registration.begin_background_cleanup(self);
+        if self
+            .cleanup_requested
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            delivery::cleanup_request_started();
+        }
+        if retained || self.background_cleanup_requested() {
+            let coordinator = self.environment.request_cleanup();
+            match coordinator {
+                Ok(()) => registration.coordinator_ready(),
+                Err(error) => {
+                    self.note_cleanup_coordination_error(error.clone());
+                    registration.coordinator_failed(error);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn request_delivery_failure_cleanup(self: &Arc<Self>) {
+        self.request_background_cleanup();
+    }
+
+    pub(crate) fn mark_environment_cleanup_requested(&self) {
+        if self
+            .cleanup_requested
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            delivery::cleanup_request_started();
+        }
+    }
+
+    pub(crate) fn background_cleanup_requested(&self) -> bool {
+        self.cleanup_requested.load(Ordering::Acquire) && !self.cleanup_finished()
+    }
+
+    pub(crate) fn note_cleanup_coordination_error(&self, error: NodeErrorDetails) {
+        let mut stored = lock_unpoisoned(&self.cleanup_coordination_error);
+        if stored.is_none() {
+            *stored = Some(error);
+        }
+    }
+
+    pub(crate) fn advance_background_cleanup(&self, join_dispatcher: bool) -> bool {
+        if self.cleanup_finished() {
+            return true;
+        }
+        if self
+            .cleanup_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            self.perform_engine_cleanup(join_dispatcher);
+        }
+        if lock_unpoisoned(&self.cleanup_engine_result).is_none() {
+            return false;
+        }
+        if !self.shutdown.environment_closing.load(Ordering::Acquire)
+            && self.delivery.outstanding_callbacks() != 0
+        {
+            return false;
+        }
+        self.finalize_cleanup();
+        self.cleanup_finished()
+    }
+
+    fn perform_engine_cleanup(&self, join_dispatcher: bool) {
+        self.close_delivery_admission();
+        self.shutdown.signal();
+        let coordination_error = lock_unpoisoned(&self.cleanup_registration)
+            .as_ref()
+            .and_then(|registration| registration.prepare_engine_cleanup(join_dispatcher));
+        if let Some(error) = coordination_error {
+            self.note_cleanup_coordination_error(error);
+        }
+        let dispose_result = self.subscription.dispose().map_err(NodeErrorDetails::from);
+        let dispatcher_result = if join_dispatcher {
+            self.environment.join_dispatcher_if_inactive()
+        } else {
+            Ok(())
+        };
+        let result = dispose_result.and(dispatcher_result);
+        *lock_unpoisoned(&self.cleanup_engine_result) = Some(result);
+        self.cleanup_condition.notify_all();
+    }
+
+    fn finalize_cleanup(&self) {
+        if self
+            .cleanup_finalizing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let environment_closing = self.shutdown.environment_closing.load(Ordering::Acquire);
+        let release_status = self.threadsafe_function.release(environment_closing);
+        if release_status == Status::Ok {
+            self.delivery.wait_until_finalized_or_environment_closing();
+        }
+        let mut result = lock_unpoisoned(&self.cleanup_engine_result)
+            .clone()
+            .unwrap_or_else(|| {
+                Err(NodeErrorDetails::internal(
+                    Operation::Dispose,
+                    "Node cleanup finalized before engine disposal completed",
+                ))
+            });
+        if release_status != Status::Ok && release_status != Status::Closing && result.is_ok() {
+            result = Err(NodeErrorDetails::from_napi_status(
+                ErrorCode::Internal,
+                Operation::Dispose,
+                release_status,
+                "Node callback bridge could not be released",
+            ));
+        }
+        result = cleanup_result_with_coordination_error(
+            result,
+            lock_unpoisoned(&self.cleanup_coordination_error).clone(),
+        );
+        result = cleanup_result_with_delivery_error(result, self.delivery.delivery_error());
+        lock_unpoisoned(&self.cleanup_registration).take();
+        *lock_unpoisoned(&self.cleanup_result) = Some(result);
+        if self.cleanup_requested.swap(false, Ordering::AcqRel) {
+            delivery::cleanup_request_finished();
+        }
+        self.cleanup_condition.notify_all();
+        self.environment.notify_dispatcher();
+    }
 }
 
-struct ShutdownGate {
+fn cleanup_result_with_coordination_error(
+    cleanup_result: NodeResult<()>,
+    coordination_error: Option<NodeErrorDetails>,
+) -> NodeResult<()> {
+    match (cleanup_result, coordination_error) {
+        (Ok(()), Some(coordination_error)) => Err(coordination_error),
+        (cleanup_result, _) => cleanup_result,
+    }
+}
+
+fn cleanup_result_with_delivery_error(
+    cleanup_result: NodeResult<()>,
+    delivery_error: Option<NodeErrorDetails>,
+) -> NodeResult<()> {
+    match (cleanup_result, delivery_error) {
+        (Ok(()), Some(delivery_error)) => Err(delivery_error),
+        (cleanup_result, _) => cleanup_result,
+    }
+}
+
+pub(crate) struct ShutdownGate {
     stop: AtomicBool,
     environment_closing: AtomicBool,
+    attempt: Arc<EstablishmentAttempt>,
 }
 
 impl ShutdownGate {
-    fn new() -> Self {
+    fn new(attempt: Arc<EstablishmentAttempt>) -> Self {
         Self {
             stop: AtomicBool::new(false),
             environment_closing: AtomicBool::new(false),
+            attempt,
         }
     }
 
@@ -1138,154 +1721,10 @@ impl ShutdownGate {
         self.stop.store(true, Ordering::Release);
     }
 
-    fn signal_environment_teardown(&self) {
+    fn signal_environment_teardown_under_admission_barrier(&self) {
         self.environment_closing.store(true, Ordering::Release);
+        self.attempt.cancel_without_delivery_close();
         self.signal();
-    }
-}
-
-struct EnvironmentCleanupRegistry {
-    next_registration_id: u64,
-    registrations: HashMap<u64, Weak<ShutdownGate>>,
-}
-
-impl EnvironmentCleanupRegistry {
-    fn new() -> Self {
-        Self {
-            next_registration_id: 1,
-            registrations: HashMap::new(),
-        }
-    }
-
-    fn register(&mut self, shutdown: &Arc<ShutdownGate>) -> NodeResult<u64> {
-        let registration_id = self.next_registration_id;
-        self.next_registration_id = self.next_registration_id.checked_add(1).ok_or_else(|| {
-            NodeErrorDetails::new(
-                ErrorCode::Internal,
-                Operation::Subscribe,
-                "environment cleanup registration IDs exhausted",
-            )
-        })?;
-        self.registrations
-            .insert(registration_id, Arc::downgrade(shutdown));
-        Ok(registration_id)
-    }
-}
-
-struct EnvironmentCleanupRegistration {
-    environment_key: usize,
-    registration_id: u64,
-}
-
-impl Drop for EnvironmentCleanupRegistration {
-    fn drop(&mut self) {
-        let mut environments = lock_unpoisoned(environment_cleanup_registries());
-        if let Some(environment) = environments.get_mut(&self.environment_key) {
-            environment.registrations.remove(&self.registration_id);
-        }
-    }
-}
-
-static ENVIRONMENT_CLEANUP_REGISTRIES: OnceLock<Mutex<HashMap<usize, EnvironmentCleanupRegistry>>> =
-    OnceLock::new();
-
-fn environment_cleanup_registries() -> &'static Mutex<HashMap<usize, EnvironmentCleanupRegistry>> {
-    ENVIRONMENT_CLEANUP_REGISTRIES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn register_environment_cleanup(
-    env: &Env,
-    shutdown: &Arc<ShutdownGate>,
-) -> NodeResult<EnvironmentCleanupRegistration> {
-    let environment_key = env.raw() as usize;
-    let mut environments = lock_unpoisoned(environment_cleanup_registries());
-    if let std::collections::hash_map::Entry::Vacant(environment) =
-        environments.entry(environment_key)
-    {
-        env.add_env_cleanup_hook(environment_key, cleanup_environment)
-            .map_err(|error| {
-                NodeErrorDetails::from_napi(
-                    ErrorCode::Internal,
-                    Operation::Subscribe,
-                    "Node environment cleanup hook could not be registered",
-                    error,
-                )
-            })?;
-        environment.insert(EnvironmentCleanupRegistry::new());
-    }
-    let registration_id = environments
-        .get_mut(&environment_key)
-        .expect("environment registry inserted above")
-        .register(shutdown)?;
-    Ok(EnvironmentCleanupRegistration {
-        environment_key,
-        registration_id,
-    })
-}
-
-fn cleanup_environment(environment_key: usize) {
-    let registrations = lock_unpoisoned(environment_cleanup_registries())
-        .remove(&environment_key)
-        .map(|environment| environment.registrations)
-        .unwrap_or_default();
-    for shutdown in registrations
-        .into_values()
-        .filter_map(|shutdown| shutdown.upgrade())
-    {
-        shutdown.signal_environment_teardown();
-    }
-}
-
-struct CallbackTracker {
-    outstanding: Mutex<usize>,
-    condition: Condvar,
-    callback_errors: AtomicU64,
-    bridge_delivery_errors: AtomicU64,
-}
-
-impl CallbackTracker {
-    fn new() -> Self {
-        Self {
-            outstanding: Mutex::new(0),
-            condition: Condvar::new(),
-            callback_errors: AtomicU64::new(0),
-            bridge_delivery_errors: AtomicU64::new(0),
-        }
-    }
-
-    fn begin(&self) {
-        *lock_unpoisoned(&self.outstanding) += 1;
-    }
-
-    fn finish_callback(&self, error: bool) {
-        if error {
-            self.callback_errors.fetch_add(1, Ordering::Relaxed);
-        }
-        self.finish_one();
-    }
-
-    fn finish_delivery_error(&self) {
-        self.bridge_delivery_errors.fetch_add(1, Ordering::Relaxed);
-        self.finish_one();
-    }
-
-    fn finish_one(&self) {
-        let mut outstanding = lock_unpoisoned(&self.outstanding);
-        *outstanding = outstanding
-            .checked_sub(1)
-            .expect("callback tracker completed without a matching begin");
-        self.condition.notify_all();
-    }
-
-    fn wait_until_empty_or_environment_closing(&self, shutdown: &ShutdownGate) {
-        let mut outstanding = lock_unpoisoned(&self.outstanding);
-        while *outstanding != 0 && !shutdown.environment_closing.load(Ordering::Acquire) {
-            let (next, _) = self
-                .condition
-                .wait_timeout(outstanding, Duration::from_millis(10))
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            outstanding = next;
-        }
     }
 }
 
@@ -1356,63 +1795,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cleanup_registration_is_weak_and_removable() {
-        let environment_key = usize::MAX;
-        let shutdown = Arc::new(ShutdownGate::new());
-        let registration_id = {
-            let mut environments = lock_unpoisoned(environment_cleanup_registries());
-            let environment = environments
-                .entry(environment_key)
-                .or_insert_with(EnvironmentCleanupRegistry::new);
-            environment.register(&shutdown).unwrap()
-        };
-        assert_eq!(Arc::strong_count(&shutdown), 1);
+    fn raw_establishment_token_is_single_bind() {
+        let attempt = EstablishmentAttempt::new().unwrap();
+        attempt.bind().unwrap();
+        let error = attempt.bind().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.operation, Operation::Subscribe);
+    }
 
-        drop(EnvironmentCleanupRegistration {
-            environment_key,
-            registration_id,
-        });
+    #[test]
+    fn raw_establishment_token_remembers_pre_bind_cancellation() {
+        let attempt = EstablishmentAttempt::new().unwrap();
+        attempt.cancel();
+        attempt.cancel();
+        attempt.bind().unwrap();
+        assert!(attempt.cancellation_requested());
+        assert!(attempt.engine.is_cancelled());
+    }
 
-        let mut environments = lock_unpoisoned(environment_cleanup_registries());
-        assert!(
-            environments
-                .get(&environment_key)
-                .unwrap()
-                .registrations
-                .is_empty()
+    #[test]
+    fn public_commit_is_invalid_before_node_ready() {
+        let attempt = EstablishmentAttempt::new().unwrap();
+        attempt.bind().unwrap();
+        let error = attempt.commit_public_success().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn cleanup_failure_precedes_an_earlier_delivery_failure() {
+        let cleanup_error = NodeErrorDetails::internal(Operation::Dispose, "engine cleanup failed");
+        let delivery_error = NodeErrorDetails::delivery_failure(Status::Closing);
+        let result =
+            cleanup_result_with_delivery_error(Err(cleanup_error.clone()), Some(delivery_error))
+                .unwrap_err();
+        assert_eq!(result.code, cleanup_error.code);
+        assert_eq!(result.message, cleanup_error.message);
+    }
+
+    #[test]
+    fn cleanup_coordination_failure_precedes_a_delivery_failure() {
+        let coordination_error = NodeErrorDetails::new(
+            ErrorCode::ResourceUnavailable,
+            Operation::Dispose,
+            "cleanup coordinator could not be created",
         );
-        environments.remove(&environment_key);
-    }
-
-    #[test]
-    fn environment_cleanup_signals_live_registrations() {
-        let environment_key = usize::MAX - 1;
-        let shutdown = Arc::new(ShutdownGate::new());
-        {
-            let mut environments = lock_unpoisoned(environment_cleanup_registries());
-            let environment = environments
-                .entry(environment_key)
-                .or_insert_with(EnvironmentCleanupRegistry::new);
-            environment.register(&shutdown).unwrap();
-        }
-
-        cleanup_environment(environment_key);
-
-        assert!(shutdown.stop.load(Ordering::Acquire));
-        assert!(shutdown.environment_closing.load(Ordering::Acquire));
-        assert!(!lock_unpoisoned(environment_cleanup_registries()).contains_key(&environment_key));
-    }
-
-    #[test]
-    fn callback_tracker_separates_callback_and_delivery_errors() {
-        let tracker = CallbackTracker::new();
-        tracker.begin();
-        tracker.finish_callback(true);
-        tracker.begin();
-        tracker.finish_delivery_error();
-
-        assert_eq!(tracker.callback_errors.load(Ordering::Relaxed), 1);
-        assert_eq!(tracker.bridge_delivery_errors.load(Ordering::Relaxed), 1);
-        assert_eq!(*lock_unpoisoned(&tracker.outstanding), 0);
+        let delivery_error = NodeErrorDetails::delivery_failure(Status::Closing);
+        let result = cleanup_result_with_delivery_error(
+            cleanup_result_with_coordination_error(Ok(()), Some(coordination_error.clone())),
+            Some(delivery_error),
+        )
+        .unwrap_err();
+        assert_eq!(result.code, coordination_error.code);
+        assert_eq!(result.message, coordination_error.message);
     }
 }

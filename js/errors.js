@@ -3,6 +3,7 @@ export const WatchboundErrorCode = Object.freeze({
   SUBSCRIPTION_CLOSED: "WATCHBOUND_SUBSCRIPTION_CLOSED",
   TOPOLOGY_TRANSACTION_CONFLICT: "WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT",
   OPERATION_INTERRUPTED: "WATCHBOUND_OPERATION_INTERRUPTED",
+  OPERATION_CANCELLED: "WATCHBOUND_OPERATION_CANCELLED",
   CONSUMER_BACKPRESSURE: "WATCHBOUND_CONSUMER_BACKPRESSURE",
   ROOT_STATE_CONFLICT: "WATCHBOUND_ROOT_STATE_CONFLICT",
   ROOT_UNAVAILABLE: "WATCHBOUND_ROOT_UNAVAILABLE",
@@ -111,6 +112,16 @@ export function invalidArgumentError(operation, message) {
     code: WatchboundErrorCode.INVALID_ARGUMENT,
     operation,
   });
+}
+
+export function operationCancelledError(message) {
+  return new WatchboundError(
+    message ?? "subscription establishment was cancelled",
+    {
+      code: WatchboundErrorCode.OPERATION_CANCELLED,
+      operation: "subscribe",
+    },
+  );
 }
 
 export function invokeWatchbound(operation, invoke) {

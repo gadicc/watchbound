@@ -1,11 +1,11 @@
-# Private 0.1.0 API freeze
+# Private 0.2.0 API revision
 
-Status: frozen private API on 2026-07-21. The exact 0.1.0 freeze passed both
-clean target lanes, and the subsequent support-qualification declaration emits
-`supported` for only the recorded narrow target. That declaration is accepted
-only after its exact commit also passes both lanes.
+Status: private-minor candidate pending exact-commit clean CI. The exact 0.1.0
+freeze and its support declaration remain the historical qualified baseline;
+the `0.2.0` capability emits `target-pending-clean-ci` until separately
+qualified.
 
-This freeze does not publish a package or crate, create a release or tag,
+This revision does not publish a package or crate, create a release or tag,
 produce or distribute a prebuild, upload an artifact, or authorize consumer
 integration. All JavaScript packages remain private and both Rust crates remain
 `publish = false`.
@@ -23,6 +23,13 @@ needed to exhaustively consume those values.
 separately supported consumer API. Rust `watchbound-engine` remains the reusable
 filesystem-semantics layer; the Node binding translates representation and
 lifecycle only.
+
+`SubscriptionOptions` adds `signal?: AbortSignal`. It applies only while
+establishing the subscription. An already-aborted valid request allocates no
+native attempt. Later cancellation removes attempt-owned interests and watches,
+preserves shared peers, joins final runtime shutdown when applicable, and
+rejects with non-retryable `WATCHBOUND_OPERATION_CANCELLED`. Once subscribe
+resolves, abort is a no-op and explicit disposal owns the established lifetime.
 
 ## Observation and callback authority
 
@@ -48,7 +55,7 @@ Coverage is the closed union `complete`, reasoned `partial`, or reasoned
 `uncertain`. Loss is sticky until an operation earns a conservative boundary;
 Watchbound never reconstructs detail it may have missed.
 
-Rejected operations use structured schema-version-1 `WatchboundError` values.
+Rejected operations use structured schema-version-2 `WatchboundError` values.
 The closed code, operation, and retry-after unions—not messages—are the policy
 surface. Retryability is derived from the code. Expected root-candidate
 outcomes are successful `not-attached` results with a closed failure-reason
@@ -63,6 +70,18 @@ live configurations fail explicitly until final joined disposal. Subscription
 `watchLimit` separately counts that subscription's logical directories. Every
 queue, batch, scan turn, retry, timer, diagnostic, and native-to-JavaScript
 delivery path remains bounded.
+
+One process-wide Linux runtime is shared across environments. Native-to-Node
+delivery uses at most one dispatcher per Node environment with pending or
+established subscriptions, not one bridge thread per subscription. Each
+subscription owns one bounded engine queue, one-entry callback queue, and one
+admission credit.
+Pressure accounting and delivery failure remain subscription-local; a blocked
+same-environment JavaScript loop can still delay every callback in that
+environment, while separate Worker environments retain callback progress.
+Environment teardown does not depend on JavaScript callbacks running. Explicit
+disposal and live-environment GC/delivery cleanup close admission first, then
+wait for already-admitted callbacks to quiesce before finalization.
 
 The native boundary preserves exact Linux path bytes. Roots are JavaScript
 strings whose lexical components are retained through native symlink
@@ -84,8 +103,10 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; the qualified 0.1.0 API emits
-`supported`. Exhaustive narrowing fixtures compile in the ordinary gate.
+`target-pending-clean-ci` and `supported`; this `0.2.0` candidate emits
+`target-pending-clean-ci`. Exhaustive narrowing fixtures compile in the
+ordinary gate. Capability schema 2 and binding API 2 expose cancellation and
+shared-delivery facts; loader metadata remains schema 1.
 
 Patch releases may make compatible fixes, documentation/test changes, and
 internal changes that preserve this contract. Any externally observable option,
@@ -103,12 +124,19 @@ resolves, and joins final runtime shutdown. Concurrent or repeated disposal is
 idempotent and returns the same outcome. Explicit disposal is the deterministic
 lifecycle contract; garbage-collection cleanup remains best effort.
 
+Cancellation before public subscribe success has the same joined no-later-
+callback boundary. A callback admitted before cancellation wins may run before
+rejection, matching the callback-before-resolution rule, but none can newly
+enter afterward.
+
 ## Target and exclusions
 
-The only supported target is a controlled source build on Ubuntu 24.04
+The intended maintained target remains a controlled source build on Ubuntu 24.04
 x86_64, Linux 6.8 or newer within that support line, glibc 2.39, Node
 `>=24.18.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
 pnpm 10.33.2, and a working Ubuntu C toolchain under trusted stable local roots.
+This target description does not turn the unqualified `0.2.0` commit into
+`supported`; that status requires its own exact clean evidence.
 
 Unsupported targets include other Node ranges, distributions or glibc
 versions; musl; arm64 and other architectures; non-Linux systems; WSL,

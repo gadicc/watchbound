@@ -22,6 +22,7 @@ import {
   buildCapabilities,
   normalizeRuntimeStats,
 } from "./capabilities.js";
+import { establishNativeSubscription } from "./native-establishment.js";
 
 export {
   WatchboundError,
@@ -104,9 +105,9 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
   }
 
   const automaticConfig = normalizeAutomaticReconciliation(
-    options.automaticReconciliation,
+    readSubscriptionOption(options, "automaticReconciliation"),
   );
-  const { automaticReconciliation: _automaticReconciliation, ...nativeOptions } = options;
+  const nativeOptions = copyNativeSubscriptionOptions(options);
 
   // Preserve every caller-supplied component for the engine's symlink-ancestry
   // validation. path.resolve(root) would erase `symlink/..` before native code
@@ -123,105 +124,139 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
     observedState: null,
   };
   const weakCallbackHolder = new WeakRef(callbackHolder);
-  const nativeSubscription = await invokeWatchbound(
-    "subscribe",
-    () => nativeEngine.subscribe(
-      absoluteRoot,
-      nativeOptions,
-      createNativeCallback(weakCallbackHolder, resolvedRoot),
-    ),
-  );
-  const automaticPolicy = automaticConfig === null
-    ? null
-    : createAutomaticReconciliationPolicy(
-        automaticConfig,
-        () => invokeWatchbound("reconcile", () => nativeSubscription.reconcile()),
-      );
-  callbackHolder.observeCoverage = automaticPolicy?.observe ?? null;
-  if (
-    callbackHolder.observeCoverage !== null &&
-    callbackHolder.pendingCoverageObservation !== null
-  ) {
-    callbackHolder.observeCoverage(callbackHolder.pendingCoverageObservation);
-  }
-  callbackHolder.pendingCoverageObservation = null;
-  const initialCoverage = normalizeCoverage(nativeSubscription.initialCoverage);
-  const initialRootState = normalizeRootState(nativeSubscription.initialRootState);
-  initializeObservedState(callbackHolder, initialCoverage, initialRootState);
-  let disposePromise;
-  let subscription;
-  subscription = Object.freeze({
-    initialCoverage,
-    initialRootState,
-    get observedState() {
-      return callbackHolder.observedState;
-    },
-    get exclusionGeneration() {
-      return nativeSubscription.exclusionGeneration;
-    },
-    get rootState() {
-      return normalizeRootState(nativeSubscription.rootState);
-    },
-    get automaticReconciliation() {
-      return automaticPolicy?.status() ?? automaticReconciliationDisabled;
-    },
-    stats: () => nativeSubscription.stats(),
-    replaceExclusions: (generation, prefixes) => {
-      if (typeof generation !== "bigint" || generation < 0n) {
-        throw invalidArgumentError(
-          "replace-exclusions",
-          "generation must be a non-negative bigint",
-        );
-      }
-      if (!Array.isArray(prefixes)) {
-        throw invalidArgumentError(
-          "replace-exclusions",
-          "prefixes must be an array of strings or Uint8Array values",
-        );
-      }
-      const encoded = invokeWatchbound(
-        "replace-exclusions",
-        () => prefixes.map((prefix) => {
-          if (typeof prefix === "string") return Buffer.from(prefix);
-          if (prefix instanceof Uint8Array) return Buffer.from(prefix);
-          throw invalidArgumentError(
-            "replace-exclusions",
-            "each exclusion prefix must be a string or Uint8Array",
+  return establishNativeSubscription({
+    nativeEngine,
+    root: absoluteRoot,
+    options: nativeOptions,
+    callback: createNativeCallback(weakCallbackHolder, resolvedRoot),
+    buildSubscription(nativeSubscription) {
+      const automaticPolicy = automaticConfig === null
+        ? null
+        : createAutomaticReconciliationPolicy(
+            automaticConfig,
+            () => invokeWatchbound("reconcile", () => nativeSubscription.reconcile()),
           );
-        }),
-      );
-      return invokeWatchbound(
-        "replace-exclusions",
-        () => nativeSubscription.replaceExclusions(generation, encoded),
-      );
-    },
-    reconcile: () => invokeWatchbound(
-      "reconcile",
-      () => nativeSubscription.reconcile(),
-    ),
-    recoverRoot: (recoveryOptions) => {
-      const identityPolicy = validateRootRecoveryOptions(recoveryOptions);
-      const recover = () => invokeWatchbound(
-        "recover-root",
-        async () => normalizeRootRecoveryResult(
-          await nativeSubscription.recoverRoot(identityPolicy),
+      callbackHolder.observeCoverage = automaticPolicy?.observe ?? null;
+      if (
+        callbackHolder.observeCoverage !== null &&
+        callbackHolder.pendingCoverageObservation !== null
+      ) {
+        callbackHolder.observeCoverage(callbackHolder.pendingCoverageObservation);
+      }
+      callbackHolder.pendingCoverageObservation = null;
+      const initialCoverage = normalizeCoverage(nativeSubscription.initialCoverage);
+      const initialRootState = normalizeRootState(nativeSubscription.initialRootState);
+      initializeObservedState(callbackHolder, initialCoverage, initialRootState);
+      let disposePromise;
+      let subscription;
+      subscription = Object.freeze({
+        initialCoverage,
+        initialRootState,
+        get observedState() {
+          return callbackHolder.observedState;
+        },
+        get exclusionGeneration() {
+          return nativeSubscription.exclusionGeneration;
+        },
+        get rootState() {
+          return normalizeRootState(nativeSubscription.rootState);
+        },
+        get automaticReconciliation() {
+          return automaticPolicy?.status() ?? automaticReconciliationDisabled;
+        },
+        stats: () => nativeSubscription.stats(),
+        replaceExclusions: (generation, prefixes) => {
+          if (typeof generation !== "bigint" || generation < 0n) {
+            throw invalidArgumentError(
+              "replace-exclusions",
+              "generation must be a non-negative bigint",
+            );
+          }
+          if (!Array.isArray(prefixes)) {
+            throw invalidArgumentError(
+              "replace-exclusions",
+              "prefixes must be an array of strings or Uint8Array values",
+            );
+          }
+          const encoded = invokeWatchbound(
+            "replace-exclusions",
+            () => prefixes.map((prefix) => {
+              if (typeof prefix === "string") return Buffer.from(prefix);
+              if (prefix instanceof Uint8Array) return Buffer.from(prefix);
+              throw invalidArgumentError(
+                "replace-exclusions",
+                "each exclusion prefix must be a string or Uint8Array",
+              );
+            }),
+          );
+          return invokeWatchbound(
+            "replace-exclusions",
+            () => nativeSubscription.replaceExclusions(generation, encoded),
+          );
+        },
+        reconcile: () => invokeWatchbound(
+          "reconcile",
+          () => nativeSubscription.reconcile(),
         ),
-      );
-      return automaticPolicy
-        ? automaticPolicy.recoverRoot(identityPolicy, recover)
-        : recover();
+        recoverRoot: (recoveryOptions) => {
+          const identityPolicy = validateRootRecoveryOptions(recoveryOptions);
+          const recover = () => invokeWatchbound(
+            "recover-root",
+            async () => normalizeRootRecoveryResult(
+              await nativeSubscription.recoverRoot(identityPolicy),
+            ),
+          );
+          return automaticPolicy
+            ? automaticPolicy.recoverRoot(identityPolicy, recover)
+            : recover();
+        },
+        dispose: () =>
+          (disposePromise ??= (automaticPolicy
+            ? automaticPolicy.dispose(() => invokeWatchbound(
+                "dispose",
+                () => nativeSubscription.dispose(),
+              ))
+            : invokeWatchbound("dispose", () => nativeSubscription.dispose())
+          ).finally(() => callbackHolders.delete(subscription))),
+      });
+      callbackHolders.set(subscription, callbackHolder);
+      return subscription;
     },
-    dispose: () =>
-      (disposePromise ??= (automaticPolicy
-        ? automaticPolicy.dispose(() => invokeWatchbound(
-            "dispose",
-            () => nativeSubscription.dispose(),
-          ))
-        : invokeWatchbound("dispose", () => nativeSubscription.dispose())
-      ).finally(() => callbackHolders.delete(subscription))),
   });
-  callbackHolders.set(subscription, callbackHolder);
-  return subscription;
+}
+
+function readSubscriptionOption(options, name) {
+  try {
+    return options[name];
+  } catch {
+    throw invalidArgumentError(
+      "subscribe",
+      `${name} could not be read`,
+    );
+  }
+}
+
+function copyNativeSubscriptionOptions(options) {
+  try {
+    const nativeOptions = {};
+    for (const key of Reflect.ownKeys(options)) {
+      if (key === "automaticReconciliation") continue;
+      const descriptor = Object.getOwnPropertyDescriptor(options, key);
+      if (!descriptor?.enumerable) continue;
+      Object.defineProperty(nativeOptions, key, {
+        value: options[key],
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    return nativeOptions;
+  } catch {
+    throw invalidArgumentError(
+      "subscribe",
+      "subscription option properties could not be read",
+    );
+  }
 }
 
 function createNativeCallback(weakCallbackHolder, resolvedRoot) {

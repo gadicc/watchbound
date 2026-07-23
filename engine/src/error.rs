@@ -10,6 +10,7 @@ pub enum ErrorCode {
     InvalidArgument,
     SubscriptionClosed,
     TopologyTransactionConflict,
+    OperationCancelled,
     OperationInterrupted,
     ConsumerBackpressure,
     RootStateConflict,
@@ -25,6 +26,7 @@ impl ErrorCode {
             Self::InvalidArgument => "WATCHBOUND_INVALID_ARGUMENT",
             Self::SubscriptionClosed => "WATCHBOUND_SUBSCRIPTION_CLOSED",
             Self::TopologyTransactionConflict => "WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT",
+            Self::OperationCancelled => "WATCHBOUND_OPERATION_CANCELLED",
             Self::OperationInterrupted => "WATCHBOUND_OPERATION_INTERRUPTED",
             Self::ConsumerBackpressure => "WATCHBOUND_CONSUMER_BACKPRESSURE",
             Self::RootStateConflict => "WATCHBOUND_ROOT_STATE_CONFLICT",
@@ -45,6 +47,7 @@ impl ErrorCode {
             Self::RuntimeConfigurationConflict => Some(RetryAfter::RuntimeDisposed),
             Self::InvalidArgument
             | Self::SubscriptionClosed
+            | Self::OperationCancelled
             | Self::OperationInterrupted
             | Self::Internal => None,
         }

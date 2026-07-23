@@ -123,8 +123,8 @@ method together with explicit coverage, typed consumer backpressure, and atomic 
 Unsupported adapters are excluded with a reason and receive no pass credit. A successful
 acknowledgement means the matching result coverage and root batch have entered the bounded native
 output path; it does not mean the JavaScript callback has already run. Joined disposal must release
-both subscriptions, watches, descriptors, bridge state, and the final worker without allowing a
-later callback or reconciliation.
+both subscriptions, watches, descriptors, dispatcher registrations, and the final worker without
+allowing a later callback or reconciliation.
 
 The quick strict command above runs this scenario but still omits forced overflow. For modest repeat
 coverage, use `pnpm test:reconciliation-stress`, which expands to:
@@ -146,7 +146,8 @@ original subscription. It requires unchanged generation zero and committed gener
 monotonic batch counters, one singleton root recovery boundary with coverage identical to the public
 result, truthful peer coverage and delivery during the bounded scan, exclusion preservation, a deep
 post-recovery sentinel, lifecycle rejection after idempotent disposal, and restoration of watches,
-inotify descriptors, the runtime eventfd, bridge threads, worker, and subscription state.
+inotify descriptors, the runtime eventfd, environment dispatcher threads, worker, and subscription
+state.
 
 Loss-interval detail is retained only as diagnostic evidence; it is never credited as guaranteed
 reconstruction. `root-replaced` remains non-recoverable. Reconciliation acknowledgement means the

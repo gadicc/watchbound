@@ -17,7 +17,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v1 reports facts, target support, defaults, and bounds", () => {
+test("capability schema v2 reports cancellation, shared delivery, target state, defaults, and bounds", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -28,12 +28,12 @@ test("capability schema v1 reports facts, target support, defaults, and bounds",
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 1);
+  assert.equal(capabilities.schemaVersion, 2);
   assert.deepEqual(capabilities.versions, {
-    wrapper: "0.1.0",
-    native: "0.1.0",
-    engine: "0.1.0",
-    bindingApi: 1,
+    wrapper: "0.2.0",
+    native: "0.2.0",
+    engine: "0.2.0",
+    bindingApi: 2,
   });
   assert.deepEqual(capabilities.build, {
     delivery: "controlled-source-build",
@@ -57,7 +57,7 @@ test("capability schema v1 reports facts, target support, defaults, and bounds",
       typeof capabilities.runtime.libc.version === "string",
   );
   assert.deepEqual(capabilities.support, {
-    status: "supported",
+    status: "target-pending-clean-ci",
     operatingSystem: {
       family: "linux",
       distribution: "ubuntu",
@@ -86,6 +86,8 @@ test("capability schema v1 reports facts, target support, defaults, and bounds",
     exactPathBytes: true,
     orderedBatches: true,
     observedState: true,
+    cancellableEstablishment: true,
+    sharedNodeDelivery: true,
   });
   assert.deepEqual(capabilities.options, {
     engine: {
@@ -160,6 +162,10 @@ test("capability schema v1 reports facts, target support, defaults, and bounds",
       gauges: "number",
     },
     nativeCallbackQueueCapacity: 1,
+    deliveryDispatcherScope: "node-environment",
+    deliveryAdmission: "single-credit",
+    deliveryDispatcherWorkQuantum: 64,
+    deliveryDispatcherPollMilliseconds: 5,
   });
   assertDeeplyFrozen(capabilities);
   assert.doesNotThrow(() => JSON.stringify(capabilities));

@@ -3,6 +3,7 @@ export declare const WatchboundErrorCode: Readonly<{
   SUBSCRIPTION_CLOSED: "WATCHBOUND_SUBSCRIPTION_CLOSED";
   TOPOLOGY_TRANSACTION_CONFLICT: "WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT";
   OPERATION_INTERRUPTED: "WATCHBOUND_OPERATION_INTERRUPTED";
+  OPERATION_CANCELLED: "WATCHBOUND_OPERATION_CANCELLED";
   CONSUMER_BACKPRESSURE: "WATCHBOUND_CONSUMER_BACKPRESSURE";
   ROOT_STATE_CONFLICT: "WATCHBOUND_ROOT_STATE_CONFLICT";
   ROOT_UNAVAILABLE: "WATCHBOUND_ROOT_UNAVAILABLE";
@@ -175,6 +176,11 @@ export interface SubscriptionOptions {
   maxBatchPaths?: number;
   outputQueueCapacity?: number;
   automaticReconciliation?: boolean | AutomaticReconciliationOptions;
+  /**
+   * Cancels establishment only. Once subscribe resolves, aborting this signal
+   * is a no-op and the returned subscription must be disposed explicitly.
+   */
+  signal?: AbortSignal;
 }
 
 export interface AutomaticReconciliationOptions {
@@ -260,7 +266,7 @@ export type AutomaticReconciliationStatus =
 export type SupportStatus = "target-pending-clean-ci" | "supported";
 
 export interface Capabilities {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly versions: {
     readonly wrapper: string;
     readonly native: string;
@@ -318,6 +324,8 @@ export interface Capabilities {
     readonly exactPathBytes: boolean;
     readonly orderedBatches: boolean;
     readonly observedState: boolean;
+    readonly cancellableEstablishment: boolean;
+    readonly sharedNodeDelivery: boolean;
   };
   readonly options: {
     readonly engine: {
@@ -364,6 +372,10 @@ export interface Capabilities {
       readonly gauges: "number";
     };
     readonly nativeCallbackQueueCapacity: 1;
+    readonly deliveryDispatcherScope: "node-environment";
+    readonly deliveryAdmission: "single-credit";
+    readonly deliveryDispatcherWorkQuantum: 64;
+    readonly deliveryDispatcherPollMilliseconds: 5;
   };
 }
 

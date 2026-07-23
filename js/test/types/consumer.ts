@@ -200,6 +200,7 @@ function inspectErrorCode(code: WatchboundErrorCodeType): string {
     case "WATCHBOUND_SUBSCRIPTION_CLOSED":
     case "WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT":
     case "WATCHBOUND_OPERATION_INTERRUPTED":
+    case "WATCHBOUND_OPERATION_CANCELLED":
     case "WATCHBOUND_CONSUMER_BACKPRESSURE":
     case "WATCHBOUND_ROOT_STATE_CONFLICT":
     case "WATCHBOUND_ROOT_UNAVAILABLE":
@@ -227,7 +228,7 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 1 = capabilities.schemaVersion;
+  const schemaVersion: 2 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const targetTriple: string = capabilities.build.targetTriple;
   const sourceBuild: "controlled-source-build" = capabilities.build.delivery;
@@ -255,6 +256,17 @@ function inspectCapabilities(): void {
   const callbackBoundary: "before-callback" =
     capabilities.observability.observedStateBoundary;
   const hasObservedState: boolean = capabilities.features.observedState;
+  const cancellableEstablishment: boolean =
+    capabilities.features.cancellableEstablishment;
+  const sharedNodeDelivery: boolean = capabilities.features.sharedNodeDelivery;
+  const dispatcherScope: "node-environment" =
+    capabilities.observability.deliveryDispatcherScope;
+  const deliveryAdmission: "single-credit" =
+    capabilities.observability.deliveryAdmission;
+  const dispatcherWorkQuantum: 64 =
+    capabilities.observability.deliveryDispatcherWorkQuantum;
+  const dispatcherPollMilliseconds: 5 =
+    capabilities.observability.deliveryDispatcherPollMilliseconds;
 
   void schemaVersion;
   void bindingApi;
@@ -272,6 +284,12 @@ function inspectCapabilities(): void {
   void authoritative;
   void callbackBoundary;
   void hasObservedState;
+  void cancellableEstablishment;
+  void sharedNodeDelivery;
+  void dispatcherScope;
+  void deliveryAdmission;
+  void dispatcherWorkQuantum;
+  void dispatcherPollMilliseconds;
 }
 
 function inspectRuntimeStats(stats: RuntimeStats): string {
@@ -372,6 +390,7 @@ async function usePublicApi(): Promise<void> {
   const callback = (batch: ChangeBatch): void => {
     inspectBatch(batch);
   };
+  const establishmentController = new AbortController();
   const fromEngine: Subscription = await bounded.subscribe(
     "/tmp/watchbound-types",
     callback,
@@ -385,6 +404,7 @@ async function usePublicApi(): Promise<void> {
         initialDelayMs: 25,
         maxDelayMs: 1_000,
       },
+      signal: establishmentController.signal,
     },
   );
   const fromDefault: Subscription = await subscribe(
@@ -435,6 +455,10 @@ subscribe("/tmp/watchbound-types", () => {}, { watchLimit: 8_192n });
 subscribe("/tmp/watchbound-types", () => {}, {
   // @ts-expect-error Automatic-reconciliation option values are numeric.
   automaticReconciliation: { maxAttempts: "3" },
+});
+subscribe("/tmp/watchbound-types", () => {}, {
+  // @ts-expect-error Establishment cancellation requires an AbortSignal.
+  signal: { aborted: false },
 });
 
 declare const negativeSubscription: Subscription;

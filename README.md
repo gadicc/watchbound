@@ -6,9 +6,10 @@ as an explicit result rather than an assumption, uses one inotify watch per
 included directory, batches invalidations, and reports partial or uncertain
 coverage when it cannot safely claim completeness.
 
-The packages remain private and unpublished at the first frozen `0.1.0` API.
-The narrow controlled-source-build target below is supported by the recorded
-clean CI evidence; private `0.x` does not claim public major-version stability.
+The packages remain private and unpublished. The first frozen `0.1.0` API has
+recorded clean-CI evidence; the cancellable-establishment and shared-delivery
+`0.2.0` revision reports `target-pending-clean-ci` until its exact commit is
+separately qualified. Private `0.x` does not claim public major-version stability.
 It is intentionally independent of Codex Desktop and does not contain
 Git-ignore or application policy.
 
@@ -37,22 +38,39 @@ napi-rs asynchronous tasks. Those tasks occupy Node's shared libuv worker pool
 while the filesystem state machine runs on one process-wide
 `watchbound-linux-runtime` Rust thread.
 
-Every established subscription currently adds one
-`watchbound-node-bridge` thread. It receives bounded native batches and crosses
-back through a one-entry Node-API thread-safe-function queue; the JavaScript
-callback itself still runs on the JavaScript thread. A slow callback can
-therefore cause UI latency, but bounded pressure degrades that subscription to
-explicit uncertain coverage rather than creating an unbounded callback stream.
+Each Node environment with a pending or established subscription owns at most
+one `watchbound-node-dispatcher` thread. Starting it at pending registration
+also provides a retained cleanup fallback if transient coordinator creation
+fails. Subscriptions retain separate bounded engine queues, one-entry Node-API
+thread-safe-function queues, and one callback admission credit. The dispatcher
+visits subscriptions in frozen high-water rounds and never drains a second
+native batch while that subscription lacks credit. The
+JavaScript callback still runs on its environment's JavaScript thread. A slow
+callback can therefore cause same-environment UI latency. Dispatcher inspection
+and the filesystem runtime continue, and every subscription accounts for its
+own bounded pressure and uncertainty. However, a synchronously blocked
+JavaScript loop also prevents peer callbacks in that environment from
+completing; sustained peer traffic can eventually fill that peer's own engine
+queue. Actual callback progress while another callback is blocked requires a
+separate Worker environment.
 The detailed lifecycle and ownership rules are in
 [`docs/node-binding.md`](docs/node-binding.md) and
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md).
 
+Subscription options may include an establishment-only `AbortSignal`.
+Cancellation remains joined after native traversal starts: it removes
+attempt-owned watches and interests, preserves shared peers, joins a final
+runtime shutdown, and prevents a callback from newly entering after rejection.
+Once `subscribe()` resolves, aborting that signal is a no-op and callers use
+`subscription.dispose()`. Establishment still occupies one shared libuv worker
+until native success or rollback completes; queued work may therefore delay
+cancellation settlement.
+
 Watchbound fits consumers that can treat paths as conservative invalidations,
 recompute derived state after a root invalidation, and act on explicit partial
 or uncertain coverage. It is a poor fit for exact filesystem journals,
-short-lived enormous roots without cancellable establishment, unsupported
-platforms/filesystems, or applications that cannot own a native source-build
-and joined-disposal lifecycle.
+unsupported platforms/filesystems, or applications that cannot own a native
+source-build and joined-disposal lifecycle.
 
 ## Watchbound and `@parcel/watcher`
 
@@ -62,9 +80,9 @@ typed file events plus historical snapshot queries. This repository compares
 Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
 inotify backend.
 
-| Capability | Watchbound private `0.1.0` | `@parcel/watcher` 2.5.6 |
+| Capability | Watchbound private `0.2.0` | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
-| Delivery and targets | Controlled source build; qualified only for the narrow Linux x64/glibc target below | Published prebuilds across Linux, macOS, Windows, and FreeBSD targets |
+| Delivery and targets | Controlled source build; `0.2.0` is `target-pending-clean-ci` for the narrow Linux x64/glibc target below | Published prebuilds across Linux, macOS, Windows, and FreeBSD targets |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -78,15 +96,15 @@ inotify backend.
 | Watched-root replacement | Typed loss plus explicit policy-gated recovery | No public recovery; replacement was not watched in reproduced 2.5.6 trials |
 | Consumer backpressure | Bounded and subscription-local, with typed uncertainty | No public backpressure state |
 | Post-loss reconciliation | Explicit and opt-in bounded automatic reconciliation | No public reconciliation operation |
-| Cancel pending establishment | Not currently exposed | Not exposed by the public `subscribe()` API |
-| Native delivery thread scaling | One shared runtime plus one bridge thread per subscription | Shared backend and debounce threads; no bridge thread per subscription |
-| Node callback admission | One-entry queue plus bounded engine output | Thread-safe-function queue is explicitly unlimited |
+| Cancel pending establishment | Establishment-only `AbortSignal`; cooperative after native work starts; joined rollback | Not exposed by the public `subscribe()` API |
+| Native delivery thread scaling | At most one lazy process runtime; one dispatcher per Node environment while pending, established, or cleanup-keepalive state exists; at most one transient cleanup coordinator per affected environment | Shared backend and debounce threads; no bridge thread per subscription |
+| Node callback admission | Per-subscription one-entry queue, one admission credit, and bounded engine output | One thread-safe-function per callback with an explicitly unlimited queue |
 | Disposal contract | Idempotent, joined, and no callback may start after resolution | Async `unsubscribe()`; no equivalent public joined/no-later-callback guarantee |
 
-Parcel already has the thread-scaling property sought by a future shared
-Watchbound delivery bridge, but not its required bounded callback admission or
-typed consumer-backpressure contract. Neither package currently exposes
-cancellation for already-started subscription establishment.
+Parcel already shares its backend and debounce threads, while Watchbound now
+scales delivery threads by Node environment rather than subscription. Parcel
+does not provide Watchbound's bounded callback admission, typed
+consumer-backpressure coverage, or pending-establishment cancellation.
 
 The first final tmpfs series measured Watchbound recursive startup at median
 32.31–36.59 ms for 10,001 directories, versus 47.42–49.11 ms for Parcel and
@@ -140,13 +158,16 @@ and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
 default engine. `engine.nativeWatchBudget` is its request, while
 `engine.runtimeStats()` describes actual process-global resources.
 
-The deeply frozen, JSON-serializable `capabilities` export has schema version 1
+The deeply frozen, JSON-serializable `capabilities` export has schema version 2
 and separates versions/build facts, observed runtime facts, the support target,
-features, option defaults and bounds, and observability. Runtime facts do not
-widen support: only the approved narrow source-build target has status
-`supported`. See [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
-and [`docs/support-matrix.md`](docs/support-matrix.md). The frozen private API
-surface and compatibility policy are recorded in
+features, option defaults and bounds, and observability. It reports
+establishment cancellation, per-environment shared delivery, a one-entry
+callback queue, and single-credit admission explicitly. Runtime facts do not
+widen support: this `0.2.0` revision remains `target-pending-clean-ci` until
+exact clean target evidence supports a later status declaration. See
+[`docs/api-lifecycle.md`](docs/api-lifecycle.md)
+and [`docs/support-matrix.md`](docs/support-matrix.md). The private API revision
+and compatibility policy are recorded in
 [`docs/private-api-freeze.md`](docs/private-api-freeze.md).
 
 ## Evaluate

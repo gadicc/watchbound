@@ -5,13 +5,45 @@ It exists to make correctness properties executable before stabilizing names.
 
 ## Subscription establishment
 
-`Engine::subscribe(root, options)` remains synchronous in Rust. It validates the
-root, acquires the process-wide Linux runtime, sends an ordered establishment
-command, and waits for its acknowledgement. The shared worker traverses the
+`Engine::subscribe(root, options)` remains synchronous in Rust and delegates
+through the cancellable establishment machinery with a never-cancelled token.
+`Engine::begin_subscribe` exposes an attempt whose cancellation handle can be
+signalled while `wait()` occupies the caller. Establishment validates the root,
+acquires the process-wide Linux runtime, sends an ordered command, and waits
+for its acknowledgement. The shared worker traverses the
 initial tree in bounded, round-robin topology turns, installs all available
 logical watch interests, and returns immutable `initial_coverage` and
 `initial_root_state` values from that same establishment acknowledgement.
 Native work and other subscriptions continue between those topology turns.
+
+JavaScript `SubscriptionOptions` adds an establishment-only
+`signal?: AbortSignal`. Pure representation errors precede the aborted check.
+An already-aborted valid request rejects before a native token or filesystem
+resource is created. Otherwise the wrapper creates one single-bind native
+token, registers a temporary listener, strips `signal` from native options, and
+passes the token to raw subscribe. Cancellation before native acknowledgement
+is acknowledged only after worker-owned rollback. Native success remains
+provisional until synchronous `commitPublicSuccess()`; if cancellation won
+first, the wrapper joins disposal of the provisional subscription before
+rejecting with `WATCHBOUND_OPERATION_CANCELLED`. Cleanup failure supersedes
+cancellation. After public success, abort is a no-op. Listener removal is
+attempted on every terminal path and succeeds for a conforming `AbortSignal`;
+if a malformed structural substitute throws or lies during removal, that
+cannot replace the authoritative result and may leave its no-op listener
+reachable from the substitute.
+
+Once a thread-safe function has been allocated for a raw pending attempt, its
+error is not delivered to a live environment before unpublished Node resources
+are joined. The binding closes admission, removes the dispatcher placeholder,
+abort-releases the function, waits for its finalizer, and joins an inactive
+dispatcher. Environment teardown closes the same admission barrier without
+depending on JavaScript settlement.
+
+The napi-rs async task still occupies one shared libuv worker after compute
+starts and through rollback. Queued work observes cancellation only when it
+receives a worker turn. Internal polling and work quanta are bounded, but
+wall-clock settlement can wait for libuv scheduling, filesystem calls, an
+already-admitted callback, and final runtime join.
 
 Every component of the root path must be a real, non-symlink directory;
 descendant directory symlinks are skipped. The check is path-based rather than
@@ -79,21 +111,21 @@ reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
 
-## Capability schema version 1
+## Capability schema version 2
 
 The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
 has these top-level sections:
 
 | Section | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `1`. |
+| `schemaVersion` | Exactly `2`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Controlled-source-build delivery, `prebuilt: false`, build profile and target triple, Node-API 6, and Rust 1.88 minimum. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; qualified 0.1.0 emits `supported`. |
-| `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, and observed state. |
+| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; the unqualified 0.2.0 candidate emits `target-pending-clean-ci`. |
+| `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
-| `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, and the native callback-queue bound. |
+| `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, and single-credit admission. |
 
 The exact identity leaves are `versions.{wrapper,native,engine,bindingApi}`,
 `build.{delivery,prebuilt,profile,targetTriple,nodeApi,rustMinimum}`, and
@@ -102,7 +134,8 @@ Feature booleans are `recursive`, `movedInTreeDiscovery`,
 `explicitWatchLimits`, `processNativeWatchBudget`, `sharedNativeWatches`,
 `overflowReporting`, `dynamicExclusions`, `reconciliation`,
 `automaticReconciliation`, `rootReplacementRecovery`, `exactPathBytes`,
-`orderedBatches`, and `observedState`.
+`orderedBatches`, `observedState`, `cancellableEstablishment`, and
+`sharedNodeDelivery`.
 
 Runtime facts describe the process that loaded the binding; they are not a
 support claim and do not widen the fixed `support` target. Qualification comes
@@ -125,7 +158,10 @@ getters may lead observed state. Initial coverage/root state and subscription
 stats are present. Runtime stats have process scope, count unique native watches
 and deferred logical interests, and use an inactive zero snapshot. Sequences and
 cumulative counters are bigint, gauges are numbers, and the native callback
-queue capacity is one.
+queue capacity is one. `deliveryDispatcherScope` is `node-environment` and
+`deliveryAdmission` is `single-credit`.
+`deliveryDispatcherWorkQuantum` is 64 registrations per turn and
+`deliveryDispatcherPollMilliseconds` is 5.
 
 ## Delivery
 
@@ -163,10 +199,10 @@ optimistically advance `observedState`. If a successful operation emits no
 batch, `observedState` may remain behind indefinitely.
 
 `watchedDirectories` and `deferredDirectories` are live gauges and become zero
-after disposal. Event, topology-scan, batch, overflow, callback-error, and bridge
+after disposal. Event, topology-scan, batch, overflow, callback-error, and
 delivery-error counters are cumulative. `batchesDelivered` means queued across
-the Rust engine channel; the separate Node bridge counter reports a later
-thread-safe-function delivery failure.
+the Rust engine channel; `bridgeDeliveryErrors` retains its compatibility name
+and reports a later dispatcher/thread-safe-function delivery failure.
 
 The shared worker keeps pending paths, sequence numbers, coverage, and output
 channels per subscription. Consumer backpressure therefore degrades only the
@@ -177,24 +213,33 @@ shared kernel queue and conservatively makes every live subscription uncertain.
 
 Rust `dispose` is idempotent and safe to call concurrently. The first caller
 sends an ordered disposal command; other callers join the same transition. The
-worker removes the subscription's logical interests and acknowledges only after
-no later enqueue for it can begin, then the handle drains already queued
-batches. A shared kernel watch remains installed while any other logical
-interest needs it. Disposal of the final subscription additionally shuts down
-and joins the runtime and closes its inotify and command-wakeup descriptors.
-Dropping a subscription performs the same cleanup. Returned final-interest
-tokens are offered round-robin to other subscriptions before they need any
-resubscription. Statistics remain readable after explicit disposal; its logical
+worker closes event, topology, promotion, and maintenance admission for that
+subscription, then removes at most 64 stored items per scheduler turn. It
+yields to runnable peers between disposal turns and acknowledges only after no
+later enqueue for the disposed subscription can begin. The handle then drains
+already queued batches, charging each batch and path against a separate
+64-item destructor quantum and yielding between quanta. Only then may final
+runtime release shut down and join the worker and close its inotify and
+command-wakeup descriptors; shutdown also drains residual runtime
+watch-lifetime registries through the fixed worker quantum. A shared kernel
+watch remains installed while any other logical interest needs it. Dropping a
+subscription performs the same cleanup. Returned final-interest tokens are
+offered round-robin to other subscriptions before they need any resubscription.
+Statistics remain readable after explicit disposal; its logical
 watched/deferred counts are zero.
 
 The Node layer exposes asynchronous disposal so the JavaScript event loop can
-continue draining or cancelling the bounded Node-API bridge while the Rust
-worker joins. Its stronger user-visible guarantee is: once the disposal promise
-resolves, no callback for that subscription can begin.
+continue draining or cancelling bounded Node-API delivery while the Rust worker
+joins. It first closes that subscription's admission credit and marks its
+dispatcher registration inactive. A turn that already retained the
+registration may still recheck it, but cannot admit a callback after the
+subscription barrier closes. Its stronger user-visible guarantee is: once the
+disposal promise resolves, no callback for that subscription can begin.
 
 Synchronous JavaScript callback throws increment `callbackErrors` and do not
 stop later delivery. A Node thread-safe-function delivery failure increments
-`bridgeDeliveryErrors`, terminates the bridge, and makes joined disposal reject.
+`bridgeDeliveryErrors`, closes only that dispatcher registration, and makes
+joined disposal reject.
 The wrapper retains its callback through the returned subscription while the
 native callback holds only a `WeakRef`. Callers must therefore retain the
 subscription for callback delivery; dropping it permits best-effort GC cleanup,
@@ -247,7 +292,7 @@ and a new update cannot begin after disposal. Exclusion configuration lives only
 for that subscription and is released with its topology, deferred records,
 watches, descriptors, and final worker shutdown.
 
-Rejected exclusion operations carry the schema-version-1 structured metadata
+Rejected exclusion operations carry the schema-version-2 structured metadata
 defined in [`error-contract.md`](error-contract.md). In particular, invalid
 prefixes and generations use `WATCHBOUND_INVALID_ARGUMENT`, a concurrent
 topology operation uses `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`, and work
@@ -318,8 +363,8 @@ the callback can run later. Mutations during uncertainty or scanning are
 covered by that root boundary, current and future exclusions remain effective,
 a peer subscription continues independently, and a later deep mutation is
 delivered. Joined disposal then rejects later reconciliation and verifies that
-callbacks, watches, descriptors, bridge state, and the final worker do not
-survive the lifecycle boundary.
+callbacks, watches, descriptors, dispatcher registrations, and the final
+worker do not survive the lifecycle boundary.
 
 This deterministic callback-backpressure case is suitable for ordinary
 development, but is not evidence for real kernel-overflow recovery. The

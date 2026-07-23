@@ -1,7 +1,8 @@
 # Node binding decision
 
-Status: selected for the maintained-unpublished source-build package and
-qualified narrow target. This is not a stable public package commitment.
+Status: selected for the maintained-unpublished source-build package. The
+`0.1.0` baseline has narrow-target evidence; the `0.2.0` binding revision is
+`target-pending-clean-ci`. This is not a stable public package commitment.
 
 ## Choice
 
@@ -27,10 +28,13 @@ module registration, and established native-package tooling while keeping the
 binding source small. Handwritten FFI would make callback and environment
 cleanup the riskiest part of a filesystem prototype.
 
-The proof deliberately does not enable napi-rs's Tokio integration. Initial
-subscription and joined disposal can run as Node-API asynchronous tasks on the
-existing worker pool. A dedicated bridge thread waits for Rust engine batches
-and crosses into JavaScript through one bounded thread-safe function.
+The binding deliberately does not enable napi-rs's Tokio integration. Initial
+subscription and joined disposal run as Node-API asynchronous tasks on the
+existing worker pool. Establishment cancellation is cooperative after compute
+starts and retains that worker until success or joined rollback. Delivery uses
+at most one `watchbound-node-dispatcher` thread per Node environment rather
+than one bridge thread per subscription. Each registration keeps a separate
+bounded engine queue, one-entry thread-safe function, and one admission credit.
 
 The same representation-only rule applies to root recovery. Node converts
 fixed-size `(device, inode)` and root-state fields to bigint/string objects,
@@ -48,7 +52,7 @@ native failures become `WATCHBOUND_INTERNAL` rather than inheriting untrusted
 retry metadata. Partial and uncertain coverage, and expected `not-attached`
 root-recovery outcomes, remain successful structured results.
 
-These fields are governed by schema version 1 of the
+These fields are governed by schema version 2 of the
 [structured operation-error contract](error-contract.md). The schema version is
 a compatibility-contract version, not a property repeated on each error;
 consumers branch on `code`, and treat `message` and `systemCause` as bounded
@@ -56,21 +60,23 @@ diagnostics only.
 
 ## Native identity, capabilities, and engine handles
 
-The one native binary loaded into the process exposes schema version 1 binding
-metadata: native and engine versions, binding API version 1, Node-API 6, target
-triple, and build profile. Its raw capabilities also provide feature flags,
+The one native binary loaded into the process exposes metadata schema version 1:
+native and engine versions, binding API version 2, Node-API 6, target triple,
+and build profile. Its raw capability schema is version 2 and also provides
+establishment-cancellation and shared-delivery facts alongside feature flags,
 Rust subscription defaults, the shared positive-`u32` option bounds, process
 budgeting, and shared-native-watch support. The wrapper combines those values
 with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 1`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 2`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision;
-`support.status` is `supported` for the fixed narrow target regardless of the
-current process facts, and those facts never broaden that target.
+`support.status` is `target-pending-clean-ci` for the `0.2.0` candidate until
+its exact commit is separately qualified. Current process facts never broaden
+the fixed target.
 
 Node exposes a cheap `NativeEngine`, and the wrapper exposes
 `createEngine({ nativeWatchBudget: number | null })`. Creation stores a request
@@ -102,7 +108,7 @@ The loader accepts exactly `watchbound.linux-x64-gnu.node` beside the package.
 It has no environment-variable override, optional-package lookup, WASI branch,
 download, or install-time build fallback. Before exporting the binding it
 requires Linux x64, detected glibc, Node-API 6 or newer, metadata schema 1,
-binding API 1, matching package/native/engine versions, Node-API build floor 6,
+binding API 2, matching package/native/engine versions, Node-API build floor 6,
 the `x86_64-unknown-linux-gnu` target, and a release build profile. The wrapper
 then asserts its own package version against the native package version.
 
@@ -111,7 +117,7 @@ Definitive loader failures have bounded `WATCHBOUND_UNSUPPORTED_PLATFORM`,
 `WATCHBOUND_NATIVE_NOT_BUILT`, `WATCHBOUND_NATIVE_LOAD_FAILED`,
 `WATCHBOUND_NATIVE_VERSION_MISMATCH`, or `WATCHBOUND_NATIVE_API_MISMATCH`
 codes. These import-time packaging diagnostics are separate from the
-schema-version-1 operational error taxonomy. Runtime facts outside the fixed
+schema-version-2 operational error taxonomy. Runtime facts outside the fixed
 support matrix do not become supported merely because a locally built addon can
 load. The full delivery decision and future prebuild gates are in
 [`native-delivery.md`](native-delivery.md).
@@ -123,8 +129,32 @@ establishment acknowledgement. Node exposes them as `initialCoverage` and
 `initialRootState`, and the JavaScript wrapper normalizes them into its immutable
 sequence-zero, exclusion-generation-zero, root-generation-zero baseline.
 
+The wrapper accepts `signal?: AbortSignal` for establishment only. After pure
+argument validation it creates one native single-bind cancellation token,
+registers a temporary abort listener, strips `signal` from native subscription
+options, and passes the token as the optional fourth raw subscribe argument.
+Cancellation before or during native work rejects with non-retryable
+`WATCHBOUND_OPERATION_CANCELLED` only after rollback is joined. Native success
+is provisional until the wrapper calls synchronous
+`commitPublicSuccess()`. If cancellation already won, the wrapper disposes the
+provisional native subscription and waits before rejecting; a disposal/join
+failure supersedes cancellation. After a successful commit, signal abort is a
+no-op. Queued work still waits for a libuv worker turn, and started work keeps
+its worker through rollback. Listener removal is attempted on every terminal
+wrapper path and succeeds for a conforming `AbortSignal`; a malformed
+structural substitute cannot replace the already authoritative result merely
+by throwing during removal.
+
+A raw pending-attempt error is not published while its provisional Node
+resources remain live. After a thread-safe function exists, the binding closes
+admission, removes the unpublished registration, abort-releases the function,
+waits for its finalizer, and joins an inactive dispatcher before error
+settlement in a live environment. Dispatcher creation failure before that
+allocation creates no thread-safe function, and attachment races with
+environment teardown under the environment admission barrier.
+
 The wrapper's `observedState` is one frozen projection of that baseline or the
-last batch whose bridge callback entered JavaScript. Callback entry can race
+last batch whose dispatcher callback entered JavaScript. Callback entry can race
 the subscribe promise's continuation, so the wrapper retains an early batch and
 does not overwrite it when constructing the public subscription. On every
 delivery it updates `observedState` before automatic policy and the user's
@@ -140,22 +170,37 @@ has entered wrapper JavaScript.
 
 ## Lifecycle requirements
 
-The bridge must preserve two independent bounds: the engine output channel and
-the Node-API callback queue. It must never create an unbounded promise or closure
-per native event.
+Delivery preserves two independent bounds: the engine output channel and the
+Node-API callback queue. One dispatcher per environment inspects a fixed number
+of registrations per turn. Its sole per-subscription admission credit prevents
+a second receive or thread-safe-function call until callback completion, so
+`QueueFull` is not used as flow control and no pending-batch or readiness queue
+exists.
 
 Disposal is asynchronous so JavaScript remains able to drain or cancel native
-callbacks while the engine and bridge join. The disposal promise may resolve
+callbacks while the engine and dispatcher registration join. The disposal promise may resolve
 only after no queued or in-flight callback can newly enter JavaScript.
 An already admitted reconciliation, exclusion update, or root recovery is
 joined or explicitly interrupted by the same lifecycle boundary.
 
-One cleanup hook is registered per Node environment. Each subscription adds a
-removable weak registration; environment teardown signals all still-live
-subscriptions without waiting for JavaScript callbacks. Native object
-finalization launches a reaper for best-effort joined cleanup. Teardown cannot
-depend on JavaScript callbacks running, and explicit disposal remains the only
-full user-visible guarantee.
+One cleanup hook and generation-specific environment record are registered per
+Node environment; raw `napi_env` pointers are lookup keys rather than identity.
+Environment teardown closes the shared admission barrier, signals pending and
+established attempts, and requests native cleanup without waiting for
+JavaScript callbacks. Finalization uses a deduplicated per-environment cleanup
+table and at most one transient coordinator per affected environment, rather
+than one reaper thread per object. Selection and Node cleanup phases are
+bounded. Established engine disposal removes at most 64 stored items per
+runtime scheduler turn, suppresses new work for that subscription, and yields
+to runnable peers between turns. After the worker closes its sender, the
+calling cleanup path drains queued batches and their paths in separate 64-item
+destructor quanta before final runtime release. A coordinator still waits for
+that joined result before advancing the same registration, so one large
+cleanup can delay later cleanup in the same environment without monopolizing
+the engine runtime. The dispatcher and other environments remain independent,
+and coordinator failure uses the retained dispatcher as a cycle-safe fallback.
+Teardown cannot depend on JavaScript callbacks running, and explicit disposal
+remains the only full user-visible guarantee.
 
 The ordinary Node suite destroys a worker environment while its production
 binding has a live, callback-proven subscription. The parent process observes
@@ -164,13 +209,20 @@ uses, and explicitly disposes a fresh subscription. This is cleanup evidence,
 not an upgrade of best-effort environment teardown into the joined public
 disposal guarantee.
 
+A separate size-one-libuv-pool child initiates Worker teardown while
+establishment work is queued. Node itself does not enter the environment
+cleanup hook until that queued async work can advance, so the test then releases
+its deterministic blocker. From hook entry onward, Watchbound cleanup requires
+neither a JavaScript callback nor a second libuv worker and must restore the
+exact Node/runtime baseline before a fresh subscription is accepted.
+
 The JavaScript wrapper owns the callback strongly through the returned
 subscription, while the native callback closure reaches that holder through a
 `WeakRef`. This breaks callback-captures-subscription GC cycles without letting
 an otherwise live subscription lose its callback. Callback exceptions and
 thread-safe-function delivery failures are counted separately; the former do
-not stop the bridge, while the latter are terminal and surface when disposal
-joins it.
+not stop later delivery, while the latter close only that registration and
+surface when disposal joins it.
 
 ## Still gated
 

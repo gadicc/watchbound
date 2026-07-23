@@ -4,7 +4,13 @@ export declare function assertWrapperVersion(version: string): void
 export declare class NativeEngine {
   get nativeWatchBudget(): number | null
   runtimeStats(): JsRuntimeStats
-  subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (arg0: JsChangeBatch) => void): Promise<NativeSubscription>
+  createEstablishmentCancellation(): NativeEstablishmentCancellation
+  subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (arg0: JsChangeBatch) => void, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>
+}
+
+export declare class NativeEstablishmentCancellation {
+  cancel(): void
+  commitPublicSuccess(): boolean
 }
 
 export declare class NativeSubscription {
@@ -19,11 +25,29 @@ export declare class NativeSubscription {
   dispose(): Promise<void>
 }
 
+/**
+ * @internal Unsupported deterministic integration-test seam. Not product API.
+ */
+export declare class __WatchboundTestOnlyThreadpoolBlocker {
+  get started(): boolean
+  block(): Promise<void>
+  release(): void
+}
+
 export declare function bindingMetadata(): JsBindingMetadata
 
 export declare function capabilities(): JsCapabilities
 
 export declare function createEngine(options?: JsEngineOptions | undefined | null): NativeEngine
+
+export declare function createEstablishmentCancellation(): NativeEstablishmentCancellation
+
+/**
+ * @internal Unsupported deterministic integration-test seam. Not product API.
+ */
+export declare function __watchboundTestOnlyCreateThreadpoolBlocker(): __WatchboundTestOnlyThreadpoolBlocker
+
+export declare function deliveryDiagnostics(): JsDeliveryDiagnostics
 
 export interface JsBindingMetadata {
   schemaVersion: number
@@ -47,9 +71,27 @@ export interface JsCapabilities {
   exactPathBytes: boolean
   processNativeWatchBudget: boolean
   sharedNativeWatches: boolean
+  cancellableEstablishment: boolean
+  sharedNodeDelivery: boolean
+  nativeCallbackQueueCapacity: number
+  deliveryDispatcherScope: string
+  deliveryAdmission: string
+  deliveryDispatcherWorkQuantum: number
+  deliveryDispatcherPollMilliseconds: number
   subscriptionDefaults: JsSubscriptionDefaults
   positiveIntegerMinimum: number
   positiveIntegerMaximum: number
+}
+
+export interface JsDeliveryDiagnostics {
+  dispatcherEnvironments: number
+  dispatcherThreads: number
+  registrations: number
+  outstandingCallbacks: number
+  cleanupCoordinatorThreads: number
+  cleanupRequests: number
+  activeThreadsafeFunctions: number
+  environmentGenerations: bigint
 }
 
 export interface JsChangeBatch {
@@ -140,4 +182,4 @@ export interface JsSubscriptionOptions {
   outputQueueCapacity?: number
 }
 
-export declare function subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (arg0: JsChangeBatch) => void): Promise<NativeSubscription>
+export declare function subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (arg0: JsChangeBatch) => void, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>

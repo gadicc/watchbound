@@ -15,9 +15,12 @@ triage, and release-gate evidence.
 ## Project state
 
 Watchbound remains private and unpublished. Version `0.1.0` is the first frozen
-private API. The repository supports controlled source builds only on the
-target in `support-matrix.md`; that narrow maintained-unpublished status must
-not imply a public or consumer-ready compatibility promise.
+private API. Version `0.2.0` adds cancellable establishment and shared
+per-environment delivery as a private-minor candidate and reports
+`target-pending-clean-ci` until its exact commit is qualified. The repository
+targets controlled source builds only on the host in `support-matrix.md`; that
+narrow maintained-unpublished status must not imply a public or consumer-ready
+compatibility promise.
 
 The exact-commit verification and documentation gates supporting recognition
 as maintained-unpublished are recorded in `consumer-api-stabilization.md`.
@@ -56,6 +59,12 @@ Every code change must pass, on the exact claimed target where relevant:
 4. `pnpm check`;
 5. `pnpm test:soak` for lifecycle/resource-affecting changes;
 6. applicable strict, non-heavy conformance scenarios, run serially.
+
+Cancellation/shared-delivery changes additionally require deterministic
+attempt barriers or fake-native settlement seams, a `UV_THREADPOOL_SIZE=1`
+child fixture, one/many/churned registration tests, two live Node environments,
+callback-pressure isolation/accounting, and exact final dispatcher,
+registration, cleanup-coordinator, descriptor, and thread baselines.
 
 `pnpm test:root-recovery-stress` is the ordinary three-run direct-and-ancestor
 replacement gate for changes that can affect identity recovery. It bounds each

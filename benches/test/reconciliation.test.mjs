@@ -66,6 +66,34 @@ test("automatic reconciliation is a separate quick conformance requirement", () 
   assert.deepEqual(options.scenarios, ["automatic-reconciliation"]);
 });
 
+test("ordinary reconciliation expects one shared runtime and one environment dispatcher", () => {
+  const source = fs.readFileSync(
+    new URL("../lib/scenarios.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /threadsAtStart\.count \+ 3/u);
+  assert.match(source, /threadsWhileSubscribed\.count === threadsAtStart\.count \+ 2/u);
+  assert.match(source, /native-runtime-and-environment-dispatcher-threads-were-observed/u);
+});
+
+test("reconciliation peer fairness uses native progress at public settlement, not callback timing", () => {
+  const source = fs.readFileSync(
+    new URL("../lib/scenarios.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /peer-change-delivered-during-primary-reconciliation-phase/u,
+  );
+  assert.match(
+    source,
+    /peer-change-advanced-at-public-settlement-and-delivered/u,
+  );
+  assert.match(source, /peerStatsAtReconciliationSettlementPromise/u);
+  assert.match(source, /peerAdvancedAtReconciliationSettlement/u);
+  assert.doesNotMatch(source, /peerAdvancedByReconciliationAcknowledgement/u);
+});
+
 test("reconciliation topology preparation stays modest and separates peer coverage", () => {
   const runDirectory = `/tmp/watchbound-reconciliation-prepare-${process.pid}-${Date.now()}`;
   try {

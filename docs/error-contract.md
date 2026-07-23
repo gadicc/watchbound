@@ -1,6 +1,7 @@
 # Structured operation-error contract
 
-Status: schema version 1, approved for the maintained-unpublished API.
+Status: schema version 2 for the private `0.2.0` maintained-unpublished
+candidate. Schema version 1 remains the frozen `0.1.0` contract.
 
 Watchbound errors describe why an operation could not complete. They are not a
 substitute for coverage: watch pressure encountered during traversal remains a
@@ -35,10 +36,11 @@ The operation values are `create-engine`, `subscribe`, `replace-exclusions`,
 | `WATCHBOUND_SUBSCRIPTION_CLOSED` | New work observed a disposing or disposed subscription. | No | Creating a different subscription |
 | `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT` | Another topology transaction already owns the subscription-local slot. | Yes | `topology-transaction-settles` |
 | `WATCHBOUND_OPERATION_INTERRUPTED` | Already admitted work was cancelled by disposal or environment teardown. | No | Not applicable |
+| `WATCHBOUND_OPERATION_CANCELLED` | The caller's establishment-only signal won before public subscription success; rollback is joined before rejection. | No | Not applicable |
 | `WATCHBOUND_CONSUMER_BACKPRESSURE` | A required operation boundary could not enter a full delivery queue. | Yes | `delivery-drains` |
 | `WATCHBOUND_ROOT_STATE_CONFLICT` | The requested operation conflicts with the current attached/lost root state. | Yes | `root-state-changes` through the explicit root workflow |
 | `WATCHBOUND_ROOT_UNAVAILABLE` | Initial root admission could not establish a stable accessible directory. | Yes | `filesystem-state-changes` |
-| `WATCHBOUND_RESOURCE_UNAVAILABLE` | The process runtime, native primitives, or required bridge thread could not be created. | Yes | `resources-available` |
+| `WATCHBOUND_RESOURCE_UNAVAILABLE` | The process runtime, native primitives, or required environment dispatcher could not be created. | Yes | `resources-available` |
 | `WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` | A live shared runtime has a different native-watch budget. | Yes | `runtime-disposed` after its final joined subscription disposal |
 | `WATCHBOUND_INTERNAL` | An invariant, channel, worker, or binding mechanism failed. | No | Investigation rather than automatic retry |
 
@@ -46,6 +48,13 @@ Retryability is derived from the code in the Rust engine and mirrored by the
 binding and wrapper. A call site cannot assign contradictory retry metadata.
 Retryable means a retry is permitted after the named external condition; it is
 not a promise that the retry will succeed or permission for an unbounded loop.
+
+`WATCHBOUND_OPERATION_CANCELLED` is distinct from
+`WATCHBOUND_OPERATION_INTERRUPTED`: the former records an explicit caller
+request during establishment, while the latter remains disposal/environment
+teardown evidence. If rollback, runtime release, or final join fails, that
+stronger structured cleanup error supersedes cancellation rather than
+presenting incomplete cleanup as successful cancellation.
 
 ## Successful non-error states
 

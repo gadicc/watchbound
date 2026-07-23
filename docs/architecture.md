@@ -50,8 +50,8 @@ accounting, and bounded delivery.
 | Area | Owns now | Must not own |
 | --- | --- | --- |
 | `engine/` | inotify lifecycle, recursive topology, moved-in scanning, watch accounting, explicit coverage, bounded batches, overflow detection, joined disposal, engine statistics | Codex, Electron, Git, logical workspace paths, launcher logs, application defaults |
-| `node/` | Node-API conversion, one bounded bridge per proof subscription, callback lifecycle | topology policy, Git subprocesses, direct V8/libuv APIs |
-| `js/` | ergonomic JavaScript entry point and TypeScript declarations | hidden recovery or coverage claims |
+| `node/` | Node-API conversion, attempt tokens, one bounded dispatcher per Node environment, callback/environment lifecycle | topology policy, Git subprocesses, direct V8/libuv APIs |
+| `js/` | ergonomic JavaScript entry point, establishment-only AbortSignal policy, and TypeScript declarations | hidden recovery or coverage claims |
 | `benches/` | isolated adapters, scenarios, measurements, raw JSON results | product policy or benchmark-only behavior in the engine |
 | future consumer | Git ignore decisions, logical path mapping, UI/logging policy, retries above the filesystem engine | Linux descriptors, rename cookies, inotify queue mechanics |
 
@@ -267,18 +267,20 @@ ordered commands with completion acknowledgements rather than concurrent
 mutations of watcher maps. The same command envelope carries the requested
 generation for exclusion updates and returns it on the acknowledgement.
 
-Scheduler turns are explicitly bounded to 16 commands, two native reads and 64
-decoded native events, 64 topology directories or 256 directory entries, and
-allocator inspection of 16 subscriptions and 64 deferred candidates for the
-selected subscription. Runnable topology and allocator subscriptions are
-visited round-robin. With a bounded runtime, initial discovery yields after one
-new unique native allocation so concurrently runnable large subscriptions can
-share the available tokens. A large initial scan, promotion, or moved-in tree
-yields between turns so other roots can receive events, while the affected
-subscription keeps its topology transition private until its scan completes.
-Native parsing also yields when pending topology detail reaches that
-subscription's path bound. Per-subscription batch and output-queue bounds remain
-unchanged, and backpressure changes only that subscription's coverage.
+Scheduler turns are explicitly bounded to 16 control commands plus 16 work
+commands, two native reads and 64 decoded native events, 64 topology
+directories or 256 directory entries, and allocator inspection of 16
+subscriptions and 64 deferred candidates for the selected subscription.
+Runnable topology and allocator subscriptions use frozen rounds so admissions
+in a later round cannot starve an existing peer. With a bounded runtime,
+initial discovery yields after one new unique native allocation so concurrently
+runnable large subscriptions can share the available tokens. A large initial
+scan, promotion, or moved-in tree yields between turns so other roots can
+receive events, while the affected subscription keeps its topology transition
+private until its scan completes. Native parsing also yields when pending
+topology detail reaches that subscription's path bound. Per-subscription batch
+and output-queue bounds remain unchanged, and backpressure changes only that
+subscription's coverage.
 
 The descriptor registry holds reference-counted logical `(subscription, path)`
 interests because overlapping roots or aliased directory identities can share
@@ -329,21 +331,24 @@ engine's active configuration rather than its own request.
 
 ### Versioned public capabilities
 
-The wrapper combines native schema-version-1 feature/default metadata, loaded
+The wrapper combines native capability-schema-version-2 feature/default metadata, loaded
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 1`. Features distinguish
+and `observability`, under `schemaVersion: 2`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
-watches. Options publish exact defaults, `u32` hard bounds, scope, units, and
-accounting. Observability publishes ordered-batch authority, callback-entry
-state, result/getter lead, stats scope, counter encodings, and the one-entry
-native callback queue.
+watches, and expose cancellable establishment and shared Node delivery. Options
+publish exact defaults, `u32` hard bounds, scope, units, and accounting.
+Observability publishes ordered-batch authority, callback-entry state,
+result/getter lead, stats scope, counter encodings, the one-entry native
+callback queue, per-environment dispatcher scope, single-credit admission, and
+the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded the
 single native binary, not evidence that the host is supported. The separate
-`support` section is `supported` for the narrow controlled source-build target
-in `support-matrix.md`; matching facts do not widen that fixed target and
+`support` section is `target-pending-clean-ci` for the `0.2.0` candidate until
+its exact commit is qualified for the narrow controlled source-build target in
+`support-matrix.md`; matching facts do not widen that fixed target and
 nonmatching facts do not broaden it.
 
 ### Allocator and promotion state machine
@@ -557,7 +562,7 @@ proves the root batch entered the bounded native path, not that its callback
 already ran. A second subscription must retain complete generation-zero
 coverage and deliver while the primary scan is in progress. A later deep
 sentinel and joined final disposal prove continued delivery and cleanup of
-watches, descriptors, bridge state, and the worker.
+watches, descriptors, dispatcher registrations, and the worker.
 
 This is deterministic ordinary-development evidence for post-consumer-loss
 reconciliation. It does not induce or prove recovery from a real inotify queue
@@ -580,13 +585,83 @@ one unchanged exclusion generation, whose coverage equals the public result.
 Acknowledgement follows bounded root enqueue, not necessarily callback entry.
 A second subscription retains explicit truthful coverage and delivery while
 the primary bounded scan yields. Joined disposal restores subscription state,
-watches, the shared inotify descriptor and eventfd, both bridges, and the final
-runtime worker. This machinery is separately permission-gated. Explicitly
-confirmed targeted manual and automatic trials exercised and passed this
+watches, the shared inotify descriptor and eventfd, the environment dispatcher,
+and the final runtime worker. This machinery is separately permission-gated.
+Explicitly confirmed targeted manual and automatic trials exercised and passed this
 contract through the public surface; both remain correctness evidence rather
 than performance results. The automatic variant enables the wrapper policy and
 requires zero harness calls to the manual method. Explicit root recovery has a
 separate ordinary conformance scenario and never runs from this policy.
+
+### Cancellable establishment and per-environment delivery
+
+Establishment is an attempt before it is a subscription. A checked,
+single-bind cancellation record exists before native async work is queued and
+can wake the exact process runtime after admission. The Linux worker alone
+commits success, filesystem failure, or caller cancellation. Cancellation
+cleanup is worker-owned, closes new topology/event admission, removes
+attempt-owned state in bounded scheduler quanta, retains shared peer interests,
+and acknowledges only after rollback. A vanished acknowledgement receiver
+converts provisional success into cleanup rather than leaving an ownerless
+subscription. The provisional runtime lease is released after that
+acknowledgement; a final lease joins runtime shutdown.
+
+The JavaScript wrapper maps `signal?: AbortSignal` to the raw single-bind token.
+It does not pass the signal through napi-rs. Native success remains provisional
+until synchronous `commitPublicSuccess()` wins on the JavaScript thread. If an
+abort already won, the wrapper joins disposal before returning the exact
+non-retryable cancellation error. The listener is temporary; removal is
+attempted on every terminal path and succeeds for a conforming `AbortSignal`.
+A structurally signal-like object's removal method may instead throw or lie,
+without replacing the authoritative establishment result. The signal controls
+establishment only; explicit subscription disposal controls an already
+committed subscription.
+
+If a pending raw subscription ends after its thread-safe function and
+dispatcher placeholder exist, error delivery is also provisional. The binding
+first closes admission, removes the unpublished registration, abort-releases
+the thread-safe function, waits for its finalizer, and joins any now-inactive
+dispatcher. Only then may an environment that can still settle JavaScript
+receive the pending-attempt error. Environment teardown uses the same admission
+barrier but does not depend on JavaScript settlement.
+
+Native-to-Node delivery is scoped to environment identity rather than raw
+`napi_env` pointer values. Each environment generation owns at most one
+dispatcher, an ordered registration map, frozen high-water scheduling rounds,
+and one admission barrier shared with teardown. A turn inspects at most 64
+total registrations and receives at most one engine batch from each selected
+active registration, with a 5 ms poll fallback because engine receivers do not
+expose readiness handles. IDs created after a round begins wait for the next
+round, so registration churn cannot starve an older peer. Each subscription has
+one callback credit. The dispatcher does not receive another batch until
+completion restores that credit, so a full Node queue is neither a retry
+mechanism nor an unbounded staging queue.
+
+Explicit disposal closes the subscription admission gate before engine
+disposal. A dispatcher turn that already retained the registration may still
+visit it, but its admission recheck cannot enqueue a new callback after that
+linearization point. Environment teardown closes the environment gate before
+invalidating Node-API resources and never waits for JavaScript callbacks. GC
+and terminal delivery failures mark pre-existing
+entries in a deduplicated per-environment cleanup table; at most one transient
+coordinator per affected environment advances phased Node cleanup and polls
+callback quiescence in nonblocking phases. It can inspect other selected
+registrations between polls, but finalization of that registration still waits
+for its admitted callbacks to finish. Its engine-disposal phase waits for a
+joined result, while the runtime removes at most 64 stored subscription items
+per scheduler turn and yields to runnable peers between turns. Once its sender
+is closed, the cleanup caller also destroys queued batches and their paths in
+64-item quanta before final runtime release. One large cleanup can therefore
+delay later cleanup in the same environment's coordinator without monopolizing
+the engine runtime. Other environments and the separate dispatcher remain
+independent. Coordinator failure falls back to the retained dispatcher without
+self-joining. Closing one Worker cannot close another environment's dispatcher
+or callback resources.
+
+Node may defer entering an environment cleanup hook until queued async work can
+advance. Watchbound does not claim control over that platform boundary. Once
+the hook starts, it closes admission and drives cleanup without requiring a
+JavaScript callback or a second libuv worker.
 
 ## Binding decision
 
@@ -602,7 +677,7 @@ repeatable benchmark suite is run:
 
 1. Normal deep changes and post-move changes in populated incoming trees have no
    misses across repeated runs.
-2. Watch-limit exhaustion, root lifecycle loss, native overflow, and bridge
+2. Watch-limit exhaustion, root lifecycle loss, native overflow, and delivery
    backpressure each produce explicit non-complete coverage.
 3. Disposal is deterministic and no JavaScript callback starts after disposal
    resolves.

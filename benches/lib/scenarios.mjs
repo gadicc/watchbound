@@ -392,8 +392,9 @@ export function evaluateOverflowReconciliationEvidence(evidence) {
     ),
     check("reconciliation-scan-progress-observed", evidence.scanProgressObserved === true),
     check(
-      "peer-delivered-during-reconciliation-scan",
-      peer.deliveredDuringScan === true && peer.coverageTruthful === true,
+      "peer-advanced-at-public-settlement-and-delivered",
+      peer.advancedAtPublicSettlementAndDelivered === true &&
+      peer.coverageTruthful === true,
     ),
     check("peer-sequences-strictly-monotonic", peer.sequencesStrictlyMonotonic === true),
     check("peer-generation-stayed-zero", peer.generationStayedZero === true),
@@ -1558,7 +1559,7 @@ async function runReconciliation(
       threadsWhileSubscribed = watchboundThreadSample();
       eventfdsWhileSubscribed = eventfdSample();
       const threadsReady = !threadsAtStart.supported || !threadsWhileSubscribed.supported ||
-        threadsWhileSubscribed.count >= threadsAtStart.count + 3;
+        threadsWhileSubscribed.count === threadsAtStart.count + 2;
       const eventfdReady = !eventfdsAtStart.supported || !eventfdsWhileSubscribed.supported ||
         eventfdsWhileSubscribed.count >= eventfdsAtStart.count + 1;
       return threadsReady && eventfdReady;
@@ -1662,8 +1663,11 @@ async function runReconciliation(
 
     const reconciliationCheckpoint = recorder.checkpoint();
     const statsBeforeReconciliation = await safeStats(primary.session);
+    const peerStatsBeforeReconciliation = await safeStats(peer.session);
     const reconciliationStartedAtMs = nowMs();
     let reconciliationSettled = false;
+    let reconciliationSettledAtMs = null;
+    let peerStatsAtReconciliationSettlementPromise = null;
     const requestedReconciliation = automatic
       ? (async () => {
           const terminalObserved = await waitFor(() =>
@@ -1687,10 +1691,14 @@ async function runReconciliation(
       : primary.session.reconcile();
     const reconciliationPromise = requestedReconciliation.then(
       (result) => {
+        reconciliationSettledAtMs = nowMs();
+        peerStatsAtReconciliationSettlementPromise = safeStats(peer.session);
         reconciliationSettled = true;
         return result;
       },
       (error) => {
+        reconciliationSettledAtMs = nowMs();
+        peerStatsAtReconciliationSettlementPromise = safeStats(peer.session);
         reconciliationSettled = true;
         throw error;
       },
@@ -1714,7 +1722,11 @@ async function runReconciliation(
     } catch (error) {
       reconciliationError = serializeError(error);
     }
-    const reconciliationAcknowledgedAtMs = nowMs();
+    const peerStatsAtReconciliationSettlement =
+      await peerStatsAtReconciliationSettlementPromise;
+    const peerAdvancedAtReconciliationSettlement =
+      Number(peerStatsAtReconciliationSettlement?.rawEvents ?? 0) >
+      Number(peerStatsBeforeReconciliation?.rawEvents ?? 0);
     const recoveryRootObserved = reconciliationResult != null && await waitFor(
       () => recorder.batchesSince(reconciliationCheckpoint).some((batch) =>
         batch.paths.includes(path.resolve(prepared.root)) &&
@@ -1819,7 +1831,7 @@ async function runReconciliation(
       ? threadsAtStart.count === threadsAtEnd.count
       : null;
     const activeThreadsObserved = threadsAtStart.supported && threadsWhileSubscribed.supported
-      ? threadsWhileSubscribed.count >= threadsAtStart.count + 3
+      ? threadsWhileSubscribed.count === threadsAtStart.count + 2
       : null;
     const eventfdsRestored = eventfdsAtStart.supported && eventfdsAtEnd.supported
       ? eventfdsAtStart.count === eventfdsAtEnd.count
@@ -1878,9 +1890,10 @@ async function runReconciliation(
             excludedPathsObserved,
             originalSubscription: primaryOperationEvidenceBeforeDisposal,
             peer: {
-              deliveredDuringScan: scanProgressObserved && peerDelivered &&
-                peerDeliveryBatch?.atMs >= reconciliationStartedAtMs &&
-                peerDeliveryBatch?.atMs <= reconciliationAcknowledgedAtMs,
+              advancedAtPublicSettlementAndDelivered:
+                scanProgressObserved &&
+                peerAdvancedAtReconciliationSettlement &&
+                peerDelivered,
               coverageTruthful: peerCoverageTruthful && allPeerBatches.every((batch) =>
                 typeof batch.coverage?.state === "string"
               ),
@@ -1985,7 +1998,7 @@ async function runReconciliation(
       },
       reconciliation: {
         startedAtMs: reconciliationStartedAtMs,
-        acknowledgedAtMs: reconciliationAcknowledgedAtMs,
+        settledAtMs: reconciliationSettledAtMs,
         statsBefore: statsBeforeReconciliation,
         scanProgressObserved,
         statsAtScanProgress,
@@ -1993,8 +2006,8 @@ async function runReconciliation(
         error: reconciliationError,
         callbackRootObserved: recoveryRootObserved,
         matchingRootBoundaries: matchingRecoveryBoundaries,
-        callbackAfterAcknowledgement:
-          matchingRecoveryBoundaries[0]?.atMs > reconciliationAcknowledgedAtMs,
+        callbackAfterSettlement:
+          matchingRecoveryBoundaries[0]?.atMs > reconciliationSettledAtMs,
       },
       peerGenerationZero: {
         startedAtMs: peerReconcileStartedAtMs,
@@ -2117,14 +2130,17 @@ async function runReconciliation(
           { count: peerGenerationZeroObservation.rootBoundaryCount },
         ),
         check(
-          "peer-change-delivered-during-primary-reconciliation-phase",
-          scanProgressObserved && peerDelivered &&
-          peerDeliveryBatch?.atMs >= reconciliationStartedAtMs &&
-          peerDeliveryBatch?.atMs <= reconciliationAcknowledgedAtMs,
+          "peer-change-advanced-at-public-settlement-and-delivered",
+          scanProgressObserved &&
+          peerAdvancedAtReconciliationSettlement &&
+          peerDelivered,
           {
             reconciliationStartedAtMs,
-            reconciliationAcknowledgedAtMs,
+            reconciliationSettledAtMs,
             peerDeliveredAtMs: peerDeliveryBatch?.atMs ?? null,
+            rawEventsBefore: peerStatsBeforeReconciliation?.rawEvents ?? null,
+            rawEventsAtPublicSettlement:
+              peerStatsAtReconciliationSettlement?.rawEvents ?? null,
           },
         ),
         check("peer-coverage-remained-complete", peerCoverageStayedComplete),
@@ -2167,10 +2183,10 @@ async function runReconciliation(
           : check("final-disposal-restored-eventfd-resources", eventfdsRestored),
         activeThreadsObserved == null
           ? unavailableCheck(
-              "native-runtime-and-bridge-threads-were-observed",
+              "native-runtime-and-environment-dispatcher-threads-were-observed",
               threadsWhileSubscribed.reason ?? threadsAtStart.reason,
             )
-          : check("native-runtime-and-bridge-threads-were-observed", activeThreadsObserved, {
+          : check("native-runtime-and-environment-dispatcher-threads-were-observed", activeThreadsObserved, {
               baseline: threadsAtStart.count,
               active: threadsWhileSubscribed.count,
             }),

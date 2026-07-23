@@ -16,10 +16,224 @@ pub use error::{
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::Duration;
+
+const ATTEMPT_CREATED: u8 = 0;
+const ATTEMPT_BOUND: u8 = 1;
+const ATTEMPT_CANCEL_REQUESTED_UNBOUND: u8 = 2;
+const ATTEMPT_CANCEL_REQUESTED_BOUND: u8 = 3;
+const ATTEMPT_SUCCEEDED: u8 = 4;
+const ATTEMPT_FAILED: u8 = 5;
+const ATTEMPT_CANCELLED: u8 = 6;
+const MAX_OUTPUT_DISPOSAL_ITEMS_PER_TURN: usize = 64;
+
+static NEXT_ESTABLISHMENT_ATTEMPT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// One attempt-scoped, cooperatively observed establishment cancellation.
+///
+/// A token may be bound to exactly one call to
+/// [`Engine::begin_subscribe_with_cancellation`]. Cancellation is idempotent
+/// and has no effect after the engine has committed establishment success.
+#[derive(Clone)]
+pub struct EstablishmentCancellation {
+    shared: Arc<EstablishmentCancellationState>,
+}
+
+pub(crate) struct EstablishmentCancellationState {
+    id: u64,
+    state: AtomicU8,
+    runtime: Mutex<Option<Weak<backend::linux::Runtime>>>,
+    #[cfg(test)]
+    command_admission_full_observations: AtomicUsize,
+}
+
+impl EstablishmentCancellation {
+    pub fn new() -> Result<Self> {
+        let id = allocate_establishment_attempt_id(&NEXT_ESTABLISHMENT_ATTEMPT_ID)?;
+        Ok(Self {
+            shared: Arc::new(EstablishmentCancellationState {
+                id,
+                state: AtomicU8::new(ATTEMPT_CREATED),
+                runtime: Mutex::new(None),
+                #[cfg(test)]
+                command_admission_full_observations: AtomicUsize::new(0),
+            }),
+        })
+    }
+
+    /// Requests cancellation without waiting for rollback.
+    pub fn cancel(&self) {
+        if self.shared.request_cancel() {
+            let runtime = self
+                .shared
+                .runtime
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+                .and_then(Weak::upgrade);
+            if let Some(runtime) = runtime {
+                runtime.wake();
+            }
+        }
+    }
+
+    /// Whether cancellation won or is awaiting joined rollback.
+    pub fn is_cancelled(&self) -> bool {
+        self.shared.cancellation_requested()
+    }
+
+    pub(crate) fn shared(&self) -> Arc<EstablishmentCancellationState> {
+        Arc::clone(&self.shared)
+    }
+}
+
+fn allocate_establishment_attempt_id(next: &AtomicU64) -> Result<u64> {
+    next.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        current.checked_add(1)
+    })
+    .map_err(|_| {
+        WatchboundError::new(
+            ErrorCode::Internal,
+            Operation::Subscribe,
+            "subscription establishment attempt IDs are exhausted",
+        )
+    })
+}
+
+impl std::fmt::Debug for EstablishmentCancellation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EstablishmentCancellation")
+            .field("id", &self.shared.id)
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
+impl EstablishmentCancellationState {
+    pub(crate) fn bind(&self) -> Result<()> {
+        loop {
+            let state = self.state.load(Ordering::Acquire);
+            let next = match state {
+                ATTEMPT_CREATED => ATTEMPT_BOUND,
+                ATTEMPT_CANCEL_REQUESTED_UNBOUND => ATTEMPT_CANCEL_REQUESTED_BOUND,
+                _ => {
+                    return Err(WatchboundError::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::Subscribe,
+                        "establishment cancellation token is already bound",
+                    ));
+                }
+            };
+            if self
+                .state
+                .compare_exchange(state, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    fn attach_runtime(&self, runtime: &Arc<backend::linux::Runtime>) {
+        *self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::downgrade(runtime));
+    }
+
+    fn detach_runtime(&self) {
+        self.runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+    }
+
+    fn request_cancel(&self) -> bool {
+        loop {
+            let state = self.state.load(Ordering::Acquire);
+            let next = match state {
+                ATTEMPT_CREATED => ATTEMPT_CANCEL_REQUESTED_UNBOUND,
+                ATTEMPT_BOUND => ATTEMPT_CANCEL_REQUESTED_BOUND,
+                ATTEMPT_CANCEL_REQUESTED_UNBOUND
+                | ATTEMPT_CANCEL_REQUESTED_BOUND
+                | ATTEMPT_CANCELLED
+                | ATTEMPT_SUCCEEDED
+                | ATTEMPT_FAILED => return false,
+                _ => unreachable!("unknown establishment attempt state"),
+            };
+            if self
+                .state
+                .compare_exchange(state, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    pub(crate) fn cancellation_requested(&self) -> bool {
+        matches!(
+            self.state.load(Ordering::Acquire),
+            ATTEMPT_CANCEL_REQUESTED_UNBOUND | ATTEMPT_CANCEL_REQUESTED_BOUND | ATTEMPT_CANCELLED
+        )
+    }
+
+    pub(crate) fn try_commit_success(&self) -> bool {
+        self.state
+            .compare_exchange(
+                ATTEMPT_BOUND,
+                ATTEMPT_SUCCEEDED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    pub(crate) fn try_commit_failure(&self) -> bool {
+        self.state
+            .compare_exchange(
+                ATTEMPT_BOUND,
+                ATTEMPT_FAILED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    pub(crate) fn finish_cancelled(&self) {
+        let _ = self.state.compare_exchange(
+            ATTEMPT_CANCEL_REQUESTED_BOUND,
+            ATTEMPT_CANCELLED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        self.detach_runtime();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_command_admission_full(&self) {
+        self.command_admission_full_observations
+            .fetch_add(1, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn command_admission_full_observations(&self) -> usize {
+        self.command_admission_full_observations
+            .load(Ordering::Acquire)
+    }
+}
+
+pub(crate) fn operation_cancelled_error() -> WatchboundError {
+    WatchboundError::new(
+        ErrorCode::OperationCancelled,
+        Operation::Subscribe,
+        "subscription establishment was cancelled",
+    )
+}
 
 /// Whether a subscription can currently account for its recursive tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -340,59 +554,224 @@ impl Engine {
         root: impl AsRef<Path>,
         options: SubscriptionOptions,
     ) -> Result<Subscription> {
-        options.validate()?;
-        let root = reject_symlink_ancestry(&absolute_path(root.as_ref())?)?;
-        let metadata = std::fs::symlink_metadata(&root).map_err(|error| {
-            WatchboundError::from_io(
-                ErrorCode::RootUnavailable,
-                Operation::Subscribe,
-                format!("watch root is unavailable: {}", root.display()),
-                &error,
-            )
-        })?;
-        if !metadata.is_dir() {
-            return Err(WatchboundError::new(
-                ErrorCode::InvalidArgument,
-                Operation::Subscribe,
-                format!("watch root is not a directory: {}", root.display()),
-            ));
-        }
-
-        self.subscribe_validated_root(root, options)
+        self.begin_subscribe(root, options)?.wait()
     }
 
+    /// Admits a subscription attempt and returns a handle that can wait for or
+    /// cooperatively cancel its initial traversal.
+    pub fn begin_subscribe(
+        &self,
+        root: impl AsRef<Path>,
+        options: SubscriptionOptions,
+    ) -> Result<PendingSubscription> {
+        options.validate()?;
+        let cancellation = EstablishmentCancellation::new()?;
+        self.begin_subscribe_validated_options(root.as_ref(), options, cancellation)
+    }
+
+    /// Admits a subscription attempt using a caller-created, single-bind
+    /// cancellation token.
+    pub fn begin_subscribe_with_cancellation(
+        &self,
+        root: impl AsRef<Path>,
+        options: SubscriptionOptions,
+        cancellation: EstablishmentCancellation,
+    ) -> Result<PendingSubscription> {
+        options.validate()?;
+        self.begin_subscribe_validated_options(root.as_ref(), options, cancellation)
+    }
+
+    fn begin_subscribe_validated_options(
+        &self,
+        root: &Path,
+        options: SubscriptionOptions,
+        cancellation: EstablishmentCancellation,
+    ) -> Result<PendingSubscription> {
+        cancellation.shared.bind()?;
+        if cancellation.shared.cancellation_requested() {
+            cancellation.shared.finish_cancelled();
+            return Err(operation_cancelled_error());
+        }
+
+        let validated_root = (|| {
+            let root = reject_symlink_ancestry(&absolute_path(root)?)?;
+            let metadata = std::fs::symlink_metadata(&root).map_err(|error| {
+                WatchboundError::from_io(
+                    ErrorCode::RootUnavailable,
+                    Operation::Subscribe,
+                    format!("watch root is unavailable: {}", root.display()),
+                    &error,
+                )
+            })?;
+            if !metadata.is_dir() {
+                return Err(WatchboundError::new(
+                    ErrorCode::InvalidArgument,
+                    Operation::Subscribe,
+                    format!("watch root is not a directory: {}", root.display()),
+                ));
+            }
+            Ok(root)
+        })();
+        let root = match validated_root {
+            Ok(root) => root,
+            Err(error) => return Err(commit_pre_runtime_failure(&cancellation.shared, error)),
+        };
+        self.begin_subscribe_admitted_root(root, options, cancellation)
+    }
+
+    fn begin_subscribe_admitted_root(
+        &self,
+        root: PathBuf,
+        options: SubscriptionOptions,
+        cancellation: EstablishmentCancellation,
+    ) -> Result<PendingSubscription> {
+        if cancellation.shared.cancellation_requested() {
+            cancellation.shared.finish_cancelled();
+            return Err(operation_cancelled_error());
+        }
+
+        let stats = Arc::new(SharedStats::new());
+        let runtime = match acquire_runtime(self.runtime_watch_budget) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                return Err(commit_pre_runtime_failure(&cancellation.shared, error));
+            }
+        };
+        cancellation.shared.attach_runtime(&runtime);
+        if cancellation.shared.cancellation_requested() {
+            cancellation.shared.finish_cancelled();
+            return match release_runtime(&runtime) {
+                Ok(()) => Err(operation_cancelled_error()),
+                Err(error) => Err(error),
+            };
+        }
+        let pending =
+            match runtime.begin_subscribe(root, options, Arc::clone(&stats), cancellation.shared())
+            {
+                Ok(pending) => pending,
+                Err(error) => {
+                    cancellation.shared.detach_runtime();
+                    return match release_runtime(&runtime) {
+                        Ok(()) => Err(error),
+                        Err(release_error) => Err(release_error),
+                    };
+                }
+            };
+
+        Ok(PendingSubscription {
+            pending: Some(pending),
+            runtime: Some(runtime),
+            stats,
+            cancellation,
+        })
+    }
+
+    #[cfg(test)]
     fn subscribe_validated_root(
         &self,
         root: PathBuf,
         options: SubscriptionOptions,
     ) -> Result<Subscription> {
-        let stats = Arc::new(SharedStats::new());
-        let runtime = acquire_runtime(self.runtime_watch_budget)?;
-        let established = match runtime.subscribe(root, options, Arc::clone(&stats)) {
-            Ok(established) => established,
-            Err(error) => {
-                let _ = release_runtime(&runtime);
-                return Err(error);
-            }
-        };
+        options.validate()?;
+        let cancellation = EstablishmentCancellation::new()?;
+        cancellation.shared.bind()?;
+        self.begin_subscribe_admitted_root(root, options, cancellation)?
+            .wait()
+    }
+}
 
-        Ok(Subscription {
-            initial_coverage: established.initial_coverage,
-            initial_root_state: established.initial_root_state,
-            receiver: Mutex::new(established.receiver),
-            stats,
-            control: Arc::new(SubscriptionControl {
-                lifecycle: Mutex::new(Lifecycle::Active {
+/// A joined initial-establishment operation.
+pub struct PendingSubscription {
+    pending: Option<backend::linux::PendingEstablishedSubscription>,
+    runtime: Option<Arc<backend::linux::Runtime>>,
+    stats: Arc<SharedStats>,
+    cancellation: EstablishmentCancellation,
+}
+
+impl PendingSubscription {
+    pub fn cancellation_handle(&self) -> EstablishmentCancellation {
+        self.cancellation.clone()
+    }
+
+    pub fn wait(mut self) -> Result<Subscription> {
+        self.finish()
+    }
+
+    fn finish(&mut self) -> Result<Subscription> {
+        let pending = self
+            .pending
+            .take()
+            .expect("pending subscription may only be completed once");
+        let runtime = self
+            .runtime
+            .take()
+            .expect("pending subscription runtime may only be completed once");
+        match pending.wait() {
+            Ok(established) => {
+                self.cancellation.shared.detach_runtime();
+                Ok(subscription_from_established(
                     runtime,
-                    subscription_id: established.id,
-                }),
-                disposed: Condvar::new(),
-                exclusion_generation: AtomicU64::new(0),
-                root_state: established.root_state,
-                topology_transaction_in_flight: AtomicBool::new(false),
-                topology_transaction_finished: Condvar::new(),
+                    Arc::clone(&self.stats),
+                    established,
+                ))
+            }
+            Err(error) => {
+                self.cancellation.shared.detach_runtime();
+                match release_runtime(&runtime) {
+                    Ok(()) => Err(error),
+                    Err(release_error) => Err(release_error),
+                }
+            }
+        }
+    }
+}
+
+impl Drop for PendingSubscription {
+    fn drop(&mut self) {
+        if self.pending.is_none() {
+            return;
+        }
+        self.cancellation.cancel();
+        if let Ok(subscription) = self.finish() {
+            let _ = subscription.dispose();
+        }
+    }
+}
+
+fn commit_pre_runtime_failure(
+    cancellation: &EstablishmentCancellationState,
+    error: WatchboundError,
+) -> WatchboundError {
+    if cancellation.try_commit_failure() {
+        cancellation.detach_runtime();
+        error
+    } else {
+        cancellation.finish_cancelled();
+        operation_cancelled_error()
+    }
+}
+
+fn subscription_from_established(
+    runtime: Arc<backend::linux::Runtime>,
+    stats: Arc<SharedStats>,
+    established: backend::linux::EstablishedSubscription,
+) -> Subscription {
+    Subscription {
+        initial_coverage: established.initial_coverage,
+        initial_root_state: established.initial_root_state,
+        receiver: Mutex::new(established.receiver),
+        stats,
+        control: Arc::new(SubscriptionControl {
+            lifecycle: Mutex::new(Lifecycle::Active {
+                runtime,
+                subscription_id: established.id,
             }),
-        })
+            disposed: Condvar::new(),
+            exclusion_generation: AtomicU64::new(0),
+            root_state: established.root_state,
+            topology_transaction_in_flight: AtomicBool::new(false),
+            topology_transaction_finished: Condvar::new(),
+        }),
     }
 }
 
@@ -555,18 +934,17 @@ impl Subscription {
         };
 
         let mut result = runtime.dispose(subscription_id);
+        drain_disconnected_output(
+            &self
+                .receiver
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
         if let Err(error) = release_runtime(&runtime)
             && result.is_ok()
         {
             result = Err(error);
         }
-        while self
-            .receiver
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .try_recv()
-            .is_ok()
-        {}
         self.stats.disposed.store(true, Ordering::Release);
 
         let stored_error = result.as_ref().err().cloned();
@@ -773,6 +1151,38 @@ fn stored_result(error: &Option<WatchboundError>) -> Result<()> {
     }
 }
 
+fn drain_disconnected_output(receiver: &Receiver<ChangeBatch>) -> usize {
+    let mut batch: Option<ChangeBatch> = None;
+    let mut quanta = 0;
+    loop {
+        quanta += 1;
+        let mut removed = 0;
+        while removed < MAX_OUTPUT_DISPOSAL_ITEMS_PER_TURN {
+            if let Some(current) = batch.as_mut() {
+                if current.invalidated_paths.pop().is_some() {
+                    removed += 1;
+                } else {
+                    batch.take();
+                    removed += 1;
+                }
+                continue;
+            }
+            match receiver.try_recv() {
+                Ok(next) => {
+                    batch = Some(next);
+                    removed += 1;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return quanta,
+            }
+        }
+        // The worker has already closed this subscription's sender. Yielding
+        // between fixed destructor quanta keeps cleanup from monopolizing the
+        // calling thread while unrelated runtime peers continue independently.
+        std::thread::yield_now();
+    }
+}
+
 static RUNTIME: OnceLock<Mutex<Option<Weak<backend::linux::Runtime>>>> = OnceLock::new();
 
 fn runtime_registry() -> &'static Mutex<Option<Weak<backend::linux::Runtime>>> {
@@ -962,6 +1372,7 @@ mod tests {
                 true,
                 Some(RetryAfter::TopologyTransactionSettles),
             ),
+            (ErrorCode::OperationCancelled, false, None),
             (ErrorCode::OperationInterrupted, false, None),
             (
                 ErrorCode::ConsumerBackpressure,
@@ -998,6 +1409,32 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_establishment_attempt_ids_fail_without_wrapping() {
+        let next = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(
+            allocate_establishment_attempt_id(&next).unwrap(),
+            u64::MAX - 1
+        );
+        let error = allocate_establishment_attempt_id(&next).unwrap_err();
+        assert_error_contract(
+            &error,
+            ErrorCode::Internal,
+            Operation::Subscribe,
+            false,
+            None,
+        );
+        assert_eq!(next.load(Ordering::Acquire), u64::MAX);
+    }
+
+    #[test]
+    fn repeated_cancellation_requests_do_not_request_another_runtime_wakeup() {
+        let cancellation = EstablishmentCancellation::new().unwrap();
+        assert!(cancellation.shared.request_cancel());
+        assert!(!cancellation.shared.request_cancel());
+        assert!(!cancellation.shared.request_cancel());
+    }
+
+    #[test]
     fn zero_runtime_budget_is_an_invalid_engine_argument() {
         let error = Engine::with_runtime_watch_budget(0).unwrap_err();
         assert_error_contract(
@@ -1031,6 +1468,72 @@ mod tests {
 
         assert_eq!(error.message().len(), MAX_ERROR_MESSAGE_BYTES);
         assert!(error.message().is_char_boundary(error.message().len()));
+    }
+
+    #[test]
+    fn disconnected_output_is_destroyed_in_path_bounded_quanta() {
+        let batch_count = 3;
+        let paths_per_batch = MAX_OUTPUT_DISPOSAL_ITEMS_PER_TURN * 2 + 1;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(batch_count);
+        for batch in 0..batch_count {
+            sender
+                .send(ChangeBatch {
+                    sequence: batch as u64,
+                    exclusion_generation: 0,
+                    root_state: RootState {
+                        generation: 0,
+                        identity: RootIdentity {
+                            device: 1,
+                            inode: 1,
+                        },
+                        attachment: RootAttachment::Attached,
+                        loss_evidence: None,
+                    },
+                    invalidated_paths: (0..paths_per_batch)
+                        .map(|path| PathBuf::from(format!("batch-{batch}/path-{path}")))
+                        .collect(),
+                    coverage: Coverage::Complete,
+                })
+                .unwrap();
+        }
+        drop(sender);
+
+        let quanta = drain_disconnected_output(&receiver);
+
+        assert_eq!(quanta, 7);
+        assert_eq!(receiver.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[test]
+    fn disposal_closes_sender_before_waiting_for_a_blocked_receiver() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = TestRoot::new("blocked-receiver-disposal");
+        let subscription = Arc::new(
+            Engine::new()
+                .subscribe(&root.0, SubscriptionOptions::default())
+                .unwrap(),
+        );
+        let waiting_subscription = Arc::clone(&subscription);
+        let (locked, receiver_locked) = std::sync::mpsc::sync_channel(1);
+        let waiter = std::thread::spawn(move || {
+            let receiver = waiting_subscription
+                .receiver
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            locked.send(()).unwrap();
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(5)),
+                Err(RecvTimeoutError::Disconnected)
+            );
+        });
+        receiver_locked.recv().unwrap();
+
+        subscription.dispose().unwrap();
+
+        waiter.join().unwrap();
+        assert_eq!(subscription.try_recv(), Err(TryRecvError::Disconnected));
     }
 
     #[test]

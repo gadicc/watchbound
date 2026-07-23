@@ -1,18 +1,282 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const test = require("node:test");
+const { promisify } = require("node:util");
 const binding = require("../index.js");
+
+const execFileAsync = promisify(execFile);
 
 async function waitFor(predicate, message, timeoutMs = 3_000) {
   const deadline = Date.now() + timeoutMs;
   while (!predicate() && Date.now() < deadline) await delay(10);
   assert.ok(predicate(), message);
 }
+
+function liveDeliveryResources(diagnostics) {
+  return {
+    dispatcherEnvironments: diagnostics.dispatcherEnvironments,
+    dispatcherThreads: diagnostics.dispatcherThreads,
+    registrations: diagnostics.registrations,
+    outstandingCallbacks: diagnostics.outstandingCallbacks,
+    cleanupCoordinatorThreads: diagnostics.cleanupCoordinatorThreads,
+    cleanupRequests: diagnostics.cleanupRequests,
+    activeThreadsafeFunctions: diagnostics.activeThreadsafeFunctions,
+  };
+}
+
+test("raw establishment cancellation is single-bind and commits provisionally", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-cancel-"));
+  let provisional;
+  let committed;
+  let provisionalCallbacks = 0;
+  try {
+    const alreadyCancelled = binding.createEstablishmentCancellation();
+    const generationsBefore = binding.deliveryDiagnostics().environmentGenerations;
+    alreadyCancelled.cancel();
+    alreadyCancelled.cancel();
+    assert.throws(
+      () => binding.subscribe(root, {}, () => {}, alreadyCancelled),
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_OPERATION_CANCELLED");
+        assert.equal(error.operation, "subscribe");
+        assert.equal(error.retryable, false);
+        return true;
+      },
+    );
+    assert.equal(
+      binding.deliveryDiagnostics().environmentGenerations,
+      generationsBefore,
+      "an already-cancelled raw attempt allocated an environment",
+    );
+
+    const cancelledBeforeCompute = binding.createEstablishmentCancellation();
+    const deliveryBeforeQueuedCancellation = binding.deliveryDiagnostics();
+    const cancelledPromise = binding.subscribe(root, {}, () => {}, cancelledBeforeCompute);
+    cancelledBeforeCompute.cancel();
+    await assert.rejects(cancelledPromise, (error) => {
+      assert.equal(error.name, "WatchboundError");
+      assert.equal(error.code, "WATCHBOUND_OPERATION_CANCELLED");
+      assert.equal(error.operation, "subscribe");
+      assert.equal(error.retryable, false);
+      return true;
+    });
+    const deliveryAfterQueuedCancellation = binding.deliveryDiagnostics();
+    assert.deepEqual(
+      liveDeliveryResources(deliveryAfterQueuedCancellation),
+      liveDeliveryResources(deliveryBeforeQueuedCancellation),
+      "queued cancellation resolved before its Node delivery resources were joined",
+    );
+    assert.ok(
+      deliveryAfterQueuedCancellation.environmentGenerations
+        >= deliveryBeforeQueuedCancellation.environmentGenerations
+        && deliveryAfterQueuedCancellation.environmentGenerations
+          <= deliveryBeforeQueuedCancellation.environmentGenerations + 1n,
+      "one queued cancellation allocated more than one environment generation",
+    );
+
+    const provisionalToken = binding.createEstablishmentCancellation();
+    provisional = await binding.subscribe(root, {}, () => {
+      provisionalCallbacks += 1;
+    }, provisionalToken);
+    provisionalToken.cancel();
+    assert.equal(provisionalToken.commitPublicSuccess(), false);
+    assert.throws(
+      () => binding.subscribe(root, {}, () => {}, provisionalToken),
+      (error) => {
+        assert.equal(error.name, "WatchboundError");
+        assert.equal(error.code, "WATCHBOUND_INVALID_ARGUMENT");
+        assert.equal(error.operation, "subscribe");
+        return true;
+      },
+    );
+    await provisional.dispose();
+    provisional = undefined;
+    const cancellationObserver = binding.createEngine();
+    await waitFor(() => {
+      const runtime = cancellationObserver.runtimeStats();
+      const delivery = binding.deliveryDiagnostics();
+      return runtime.active === false
+        && runtime.inotifyInstances === 0
+        && runtime.workerThreads === 0
+        && runtime.nativeWatches === 0
+        && runtime.deferredInterests === 0
+        && runtime.subscriptions === 0
+        && delivery.dispatcherEnvironments === 0
+        && delivery.dispatcherThreads === 0
+        && delivery.registrations === 0
+        && delivery.outstandingCallbacks === 0
+        && delivery.cleanupCoordinatorThreads === 0
+        && delivery.cleanupRequests === 0
+        && delivery.activeThreadsafeFunctions === 0;
+    }, "provisional cancellation did not restore the exact native baseline");
+
+    let callbacks = 0;
+    const committedToken = binding.createEstablishmentCancellation();
+    committed = await binding.subscribe(root, { batchWindowMs: 8 }, () => {
+      callbacks += 1;
+    }, committedToken);
+    assert.equal(committedToken.commitPublicSuccess(), true);
+    assert.equal(committedToken.commitPublicSuccess(), true);
+    committedToken.cancel();
+    fs.writeFileSync(path.join(root, "after-public-commit.txt"), "change");
+    await waitFor(
+      () => callbacks > 0,
+      "cancellation after public commit stopped the established subscription",
+    );
+    assert.equal(
+      provisionalCallbacks,
+      0,
+      "a callback entered after provisional cancellation completed",
+    );
+  } finally {
+    await provisional?.dispose();
+    await committed?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("one environment shares one fair delivery dispatcher", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-dispatcher-"));
+  const subscriptions = [];
+  const callbackCounts = Array.from({ length: 12 }, () => 0);
+  try {
+    for (let index = 0; index < callbackCounts.length; index += 1) {
+      subscriptions.push(await binding.subscribe(
+        root,
+        { batchWindowMs: 8, outputQueueCapacity: 2 },
+        () => {
+          callbackCounts[index] += 1;
+        },
+      ));
+    }
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherThreads === 1
+        && diagnostics.dispatcherEnvironments === 1
+        && diagnostics.registrations === callbackCounts.length;
+    }, "same-environment subscriptions did not converge on one dispatcher");
+
+    fs.writeFileSync(path.join(root, "shared-change.txt"), "change");
+    await waitFor(
+      () => callbackCounts.every((count) => count > 0),
+      "the shared dispatcher skipped a live peer",
+    );
+
+    const retired = subscriptions.splice(0, 6);
+    await Promise.all(retired.map((subscription) => subscription.dispose()));
+    assert.equal(
+      binding.deliveryDiagnostics().activeThreadsafeFunctions,
+      subscriptions.length,
+      "joined disposal resolved before retired callback bridges finalized",
+    );
+    const retiredCounts = callbackCounts.slice(0, 6);
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherThreads === 1
+        && diagnostics.registrations === subscriptions.length
+        && diagnostics.cleanupCoordinatorThreads === 0
+        && diagnostics.activeThreadsafeFunctions === subscriptions.length;
+    }, "retiring a subset disturbed the shared environment services");
+
+    for (let wave = 0; wave < 2; wave += 1) {
+      const waveCounts = Array.from({ length: 4 }, () => 0);
+      const waveSubscriptions = [];
+      for (let index = 0; index < waveCounts.length; index += 1) {
+        waveSubscriptions.push(await binding.subscribe(
+          root,
+          { batchWindowMs: 8, outputQueueCapacity: 2 },
+          () => {
+            waveCounts[index] += 1;
+          },
+        ));
+      }
+      await waitFor(() => {
+        const diagnostics = binding.deliveryDiagnostics();
+        return diagnostics.dispatcherThreads === 1
+          && diagnostics.registrations === subscriptions.length + waveSubscriptions.length
+          && diagnostics.cleanupCoordinatorThreads === 0
+          && diagnostics.activeThreadsafeFunctions
+            === subscriptions.length + waveSubscriptions.length;
+      }, `churn wave ${wave} grew per-subscription environment services`);
+
+      const stableBefore = callbackCounts.slice(6);
+      fs.writeFileSync(path.join(root, `churn-${wave}.txt`), "change");
+      await waitFor(
+        () => waveCounts.every((count) => count > 0)
+          && callbackCounts.slice(6).every((count, index) => count > stableBefore[index]),
+        `churn wave ${wave} starved an old or newly admitted subscription`,
+      );
+      assert.deepEqual(
+        callbackCounts.slice(0, 6),
+        retiredCounts,
+        `retired subscriptions received churn wave ${wave}`,
+      );
+
+      await Promise.all(waveSubscriptions.map((subscription) => subscription.dispose()));
+      assert.equal(
+        binding.deliveryDiagnostics().activeThreadsafeFunctions,
+        subscriptions.length,
+        `joined churn disposal ${wave} resolved before callback bridges finalized`,
+      );
+      await waitFor(() => {
+        const diagnostics = binding.deliveryDiagnostics();
+        return diagnostics.dispatcherThreads === 1
+          && diagnostics.registrations === subscriptions.length
+          && diagnostics.cleanupCoordinatorThreads === 0
+          && diagnostics.activeThreadsafeFunctions === subscriptions.length;
+      }, `disposing churn wave ${wave} disturbed stable peers`);
+    }
+  } finally {
+    await Promise.all(subscriptions.map((subscription) => subscription.dispose()));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  await waitFor(() => {
+    const diagnostics = binding.deliveryDiagnostics();
+    return diagnostics.dispatcherThreads === 0
+      && diagnostics.dispatcherEnvironments === 0
+      && diagnostics.registrations === 0
+      && diagnostics.outstandingCallbacks === 0
+      && diagnostics.cleanupCoordinatorThreads === 0
+      && diagnostics.cleanupRequests === 0
+      && diagnostics.activeThreadsafeFunctions === 0;
+  }, "joined disposal did not restore the Node delivery baseline");
+});
+
+test("queued cancellation needs no second libuv worker", { timeout: 15_000 }, async () => {
+  await execFileAsync(
+    process.execPath,
+    [path.join(__dirname, "fixtures", "uv-threadpool-cancellation.cjs")],
+    {
+      env: {
+        ...process.env,
+        UV_THREADPOOL_SIZE: "1",
+      },
+      timeout: 10_000,
+    },
+  );
+});
+
+test("last-active disposal does not wait behind a pending establishment", { timeout: 15_000 }, async () => {
+  await execFileAsync(
+    process.execPath,
+    [path.join(__dirname, "fixtures", "uv-threadpool-dispose-with-pending.cjs")],
+    {
+      env: {
+        ...process.env,
+        UV_THREADPOOL_SIZE: "1",
+      },
+      timeout: 10_000,
+    },
+  );
+});
 
 test("native bridge catches callback exceptions and remains usable", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-error-"));
@@ -354,14 +618,21 @@ test("native engine validation and capability metadata are machine-readable", ()
   assert.equal(binding.createEngine().nativeWatchBudget ?? null, null);
   const metadata = binding.bindingMetadata();
   assert.equal(metadata.schemaVersion, 1);
-  assert.equal(metadata.bindingApiVersion, 1);
+  assert.equal(metadata.bindingApiVersion, 2);
   assert.equal(metadata.nativeVersion, metadata.engineVersion);
   assert.equal(metadata.nodeApiVersion, 6);
   assert.match(metadata.targetTriple, /linux/);
   assert.equal(metadata.buildProfile, "release");
 
   const capabilities = binding.capabilities();
-  assert.equal(capabilities.schemaVersion, 1);
+  assert.equal(capabilities.schemaVersion, 2);
+  assert.equal(capabilities.cancellableEstablishment, true);
+  assert.equal(capabilities.sharedNodeDelivery, true);
+  assert.equal(capabilities.nativeCallbackQueueCapacity, 1);
+  assert.equal(capabilities.deliveryDispatcherScope, "node-environment");
+  assert.equal(capabilities.deliveryAdmission, "single-credit");
+  assert.equal(capabilities.deliveryDispatcherWorkQuantum, 64);
+  assert.equal(capabilities.deliveryDispatcherPollMilliseconds, 5);
   assert.equal(capabilities.processNativeWatchBudget, true);
   assert.equal(capabilities.sharedNativeWatches, true);
   assert.deepEqual({
@@ -413,6 +684,7 @@ test("native binding rejects non-positive, fractional, and overflowing options",
 test("native binding reports unavailable roots without collapsing the system cause", async () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-missing-root-"));
   const missing = path.join(parent, "missing");
+  const deliveryBeforeFailure = binding.deliveryDiagnostics();
   try {
     await assert.rejects(
       binding.subscribe(missing, {}, () => {}),
@@ -426,6 +698,11 @@ test("native binding reports unavailable roots without collapsing the system cau
         assert.equal(typeof error.systemCause?.message, "string");
         return true;
       },
+    );
+    assert.deepEqual(
+      liveDeliveryResources(binding.deliveryDiagnostics()),
+      liveDeliveryResources(deliveryBeforeFailure),
+      "ordinary establishment failure resolved before its Node delivery resources were joined",
     );
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });

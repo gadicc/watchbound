@@ -13,11 +13,14 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use crate::EstablishmentCancellation;
 use crate::{
-    ChangeBatch, Coverage, ErrorCode, Operation, PartialReason, ReconciliationResult,
-    Result as WatchboundResult, RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence,
-    RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryResult, RootState, RuntimeStats,
-    SharedStats, SubscriptionOptions, UncertainReason, WatchboundError,
+    ChangeBatch, Coverage, ErrorCode, EstablishmentCancellationState, Operation, PartialReason,
+    ReconciliationResult, Result as WatchboundResult, RootAttachment, RootIdentity,
+    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
+    RootRecoveryResult, RootState, RuntimeStats, SharedStats, SubscriptionOptions, UncertainReason,
+    WatchboundError, operation_cancelled_error,
 };
 
 const WATCH_MASK: u32 = libc::IN_ATTRIB
@@ -34,11 +37,17 @@ const WATCH_MASK: u32 = libc::IN_ATTRIB
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const ROOT_IDENTITY_CHECK_INTERVAL: Duration = Duration::from_millis(250);
-const MAX_COMMANDS_PER_TURN: usize = 16;
+const CONTROL_COMMAND_QUEUE_CAPACITY: usize = 64;
+const WORK_COMMAND_QUEUE_CAPACITY: usize = 64;
+const MAX_CONTROL_COMMANDS_PER_TURN: usize = 16;
+const MAX_WORK_COMMANDS_PER_TURN: usize = 16;
+const COMMAND_ADMISSION_POLL: Duration = Duration::from_millis(5);
 const MAX_NATIVE_READS_PER_TURN: usize = 2;
 const MAX_NATIVE_EVENTS_PER_TURN: usize = 64;
 const MAX_TOPOLOGY_DIRECTORIES_PER_TURN: usize = 64;
 const MAX_TOPOLOGY_ENTRIES_PER_TURN: usize = 256;
+const MAX_ESTABLISHMENT_TEARDOWN_ITEMS_PER_TURN: usize = 64;
+const MAX_DISPOSAL_ITEMS_PER_TURN: usize = 64;
 const MAX_ALLOCATOR_SUBSCRIPTIONS_PER_TURN: usize = 16;
 const MAX_DEFERRED_CANDIDATES_PER_TURN: usize = 64;
 
@@ -58,6 +67,20 @@ enum RootRecoveryBarrier {
 
 #[cfg(test)]
 type RootRecoveryBarrierHook = Arc<dyn Fn(RootRecoveryBarrier, &Path) + Send + Sync>;
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EstablishmentBarrier {
+    SharingExistingWatch,
+    AfterAddWatch,
+    DuringTraversal,
+    BeforeFinalValidation,
+    BeforeFinalCommit,
+    TeardownQuantumCompleted,
+}
+
+#[cfg(test)]
+type EstablishmentBarrierHook = Arc<dyn Fn(EstablishmentBarrier, &Path) + Send + Sync>;
 
 #[derive(Debug)]
 enum RootCaptureError {
@@ -143,8 +166,42 @@ pub(crate) struct EstablishedSubscription {
     pub(crate) root_state: Arc<Mutex<RootState>>,
 }
 
+pub(crate) struct PendingEstablishedSubscription {
+    acknowledged: Receiver<CommandAcknowledgement<WatchboundResult<Established>>>,
+    receiver: Option<Receiver<ChangeBatch>>,
+}
+
+impl PendingEstablishedSubscription {
+    pub(crate) fn wait(mut self) -> WatchboundResult<EstablishedSubscription> {
+        let acknowledged = self.acknowledged.recv().map_err(|_| {
+            internal_error(
+                Operation::Subscribe,
+                "shared runtime stopped during subscription",
+            )
+        })?;
+        if acknowledged.generation != 0 {
+            return Err(internal_error(
+                Operation::Subscribe,
+                "shared runtime acknowledged the wrong generation",
+            ));
+        }
+        let established = acknowledged.value?;
+        Ok(EstablishedSubscription {
+            id: established.id,
+            initial_coverage: established.coverage,
+            initial_root_state: established.initial_root_state,
+            receiver: self
+                .receiver
+                .take()
+                .expect("pending subscription receiver may only be consumed once"),
+            root_state: established.root_state,
+        })
+    }
+}
+
 pub(crate) struct Runtime {
-    commands: mpsc::Sender<CommandEnvelope>,
+    control_commands: SyncSender<CommandEnvelope>,
+    work_commands: SyncSender<CommandEnvelope>,
     wakeup: Arc<OwnedFd>,
     worker: Mutex<Option<JoinHandle<()>>>,
     counters: Arc<RuntimeCounters>,
@@ -155,7 +212,7 @@ pub(crate) struct Runtime {
 
 impl Runtime {
     pub(crate) fn start(native_watch_budget: Option<usize>) -> WatchboundResult<Arc<Self>> {
-        Self::start_inner(native_watch_budget, None)
+        Self::start_inner(native_watch_budget, None, None)
     }
 
     #[cfg(test)]
@@ -163,13 +220,23 @@ impl Runtime {
         native_watch_budget: Option<usize>,
         hook: RootRecoveryBarrierHook,
     ) -> WatchboundResult<Arc<Self>> {
-        Self::start_inner(native_watch_budget, Some(hook))
+        Self::start_inner(native_watch_budget, Some(hook), None)
+    }
+
+    #[cfg(test)]
+    fn start_with_establishment_barrier_hook(
+        native_watch_budget: Option<usize>,
+        hook: EstablishmentBarrierHook,
+    ) -> WatchboundResult<Arc<Self>> {
+        Self::start_inner(native_watch_budget, None, Some(hook))
     }
 
     fn start_inner(
         native_watch_budget: Option<usize>,
         #[cfg(test)] root_recovery_barrier_hook: Option<RootRecoveryBarrierHook>,
+        #[cfg(test)] establishment_barrier_hook: Option<EstablishmentBarrierHook>,
         #[cfg(not(test))] _root_recovery_barrier_hook: Option<()>,
+        #[cfg(not(test))] _establishment_barrier_hook: Option<()>,
     ) -> WatchboundResult<Arc<Self>> {
         let inotify = create_inotify().map_err(|error| {
             WatchboundError::from_io(
@@ -187,7 +254,10 @@ impl Runtime {
                 &error,
             )
         })?);
-        let (commands, command_receiver) = mpsc::channel();
+        let (control_commands, control_command_receiver) =
+            mpsc::sync_channel(CONTROL_COMMAND_QUEUE_CAPACITY);
+        let (work_commands, work_command_receiver) =
+            mpsc::sync_channel(WORK_COMMAND_QUEUE_CAPACITY);
         let counters = Arc::new(RuntimeCounters::default());
         let worker_wakeup = Arc::clone(&wakeup);
         let worker_counters = Arc::clone(&counters);
@@ -197,7 +267,8 @@ impl Runtime {
                 let worker = Worker::new(
                     inotify,
                     worker_wakeup,
-                    command_receiver,
+                    control_command_receiver,
+                    work_command_receiver,
                     worker_counters,
                     native_watch_budget,
                 );
@@ -205,6 +276,7 @@ impl Runtime {
                 let worker = {
                     let mut worker = worker;
                     worker.root_recovery_barrier_hook = root_recovery_barrier_hook;
+                    worker.establishment_barrier_hook = establishment_barrier_hook;
                     worker
                 };
                 worker.run();
@@ -220,7 +292,8 @@ impl Runtime {
         counters.inotify_instances.store(1, Ordering::Release);
         counters.worker_threads.store(1, Ordering::Release);
         Ok(Arc::new(Self {
-            commands,
+            control_commands,
+            work_commands,
             wakeup,
             worker: Mutex::new(Some(worker)),
             counters,
@@ -257,52 +330,89 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn subscribe(
+    #[cfg(test)]
+    fn subscribe(
         &self,
         root: PathBuf,
         options: SubscriptionOptions,
         stats: Arc<SharedStats>,
     ) -> WatchboundResult<EstablishedSubscription> {
+        let cancellation = EstablishmentCancellation::new()?;
+        cancellation.shared.bind()?;
+        self.begin_subscribe(root, options, stats, cancellation.shared())?
+            .wait()
+    }
+
+    pub(crate) fn begin_subscribe(
+        &self,
+        root: PathBuf,
+        options: SubscriptionOptions,
+        stats: Arc<SharedStats>,
+        cancellation: Arc<EstablishmentCancellationState>,
+    ) -> WatchboundResult<PendingEstablishedSubscription> {
         let (output, receiver) = mpsc::sync_channel(options.output_queue_capacity);
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(
-            CommandEnvelope {
-                generation: 0,
-                command: Command::Subscribe {
-                    root,
-                    options,
-                    stats,
-                    output,
-                    acknowledgement,
-                },
+        let mut envelope = CommandEnvelope {
+            generation: 0,
+            command: Command::Subscribe {
+                root,
+                options,
+                stats,
+                output,
+                acknowledgement,
+                cancellation: Arc::clone(&cancellation),
             },
-            Operation::Subscribe,
-        )?;
-        let established = acknowledged.recv().map_err(|_| {
-            internal_error(
-                Operation::Subscribe,
-                "shared runtime stopped during subscription",
-            )
-        })?;
-        if established.generation != 0 {
-            return Err(internal_error(
-                Operation::Subscribe,
-                "shared runtime acknowledged the wrong generation",
-            ));
+        };
+        loop {
+            if cancellation.cancellation_requested() {
+                cancellation.finish_cancelled();
+                return Err(operation_cancelled_error());
+            }
+            match self.work_commands.try_send(envelope) {
+                Ok(()) => {
+                    self.wake();
+                    break;
+                }
+                Err(TrySendError::Full(returned)) => {
+                    envelope = returned;
+                    #[cfg(test)]
+                    cancellation.observe_command_admission_full();
+                    std::thread::park_timeout(COMMAND_ADMISSION_POLL);
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    let error = internal_error(
+                        Operation::Subscribe,
+                        "shared runtime work command channel is closed",
+                    );
+                    return Err(if cancellation.try_commit_failure() {
+                        error
+                    } else {
+                        cancellation.finish_cancelled();
+                        operation_cancelled_error()
+                    });
+                }
+            }
         }
-        let established = established.value?;
-        Ok(EstablishedSubscription {
-            id: established.id,
-            initial_coverage: established.coverage,
-            initial_root_state: established.initial_root_state,
-            receiver,
-            root_state: established.root_state,
+        Ok(PendingEstablishedSubscription {
+            acknowledged,
+            receiver: Some(receiver),
         })
+    }
+
+    pub(crate) fn wake(&self) {
+        let value = 1_u64.to_ne_bytes();
+        // SAFETY: wakeup is a live eventfd and value points to exactly eight
+        // initialized bytes, as required by eventfd writes.
+        let written =
+            unsafe { libc::write(self.wakeup.as_raw_fd(), value.as_ptr().cast(), value.len()) };
+        // The worker polls both bounded command channels at a bounded interval
+        // even if this best-effort latency wakeup is interrupted or saturated.
+        let _ = written;
     }
 
     pub(crate) fn dispose(&self, id: SubscriptionId) -> WatchboundResult<()> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(
+        self.send_control(
             CommandEnvelope {
                 generation: 0,
                 command: Command::Dispose {
@@ -312,10 +422,10 @@ impl Runtime {
             },
             Operation::Dispose,
         )?;
-        let acknowledged = acknowledged.recv().map_err(|_| {
+        let established = acknowledged.recv().map_err(|_| {
             internal_error(Operation::Dispose, "shared runtime stopped during disposal")
         })?;
-        if acknowledged.generation != 0 {
+        if established.generation != 0 {
             return Err(internal_error(
                 Operation::Dispose,
                 "shared runtime acknowledged the wrong generation",
@@ -331,7 +441,7 @@ impl Runtime {
         prefixes: Vec<PathBuf>,
     ) -> WatchboundResult<PendingExclusionAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(
+        self.send_control(
             CommandEnvelope {
                 generation,
                 command: Command::ReplaceExclusions {
@@ -353,7 +463,7 @@ impl Runtime {
         id: SubscriptionId,
     ) -> WatchboundResult<PendingReconciliationAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(
+        self.send_control(
             CommandEnvelope {
                 generation: 0,
                 command: Command::Reconcile {
@@ -372,7 +482,7 @@ impl Runtime {
         identity_policy: RootIdentityPolicy,
     ) -> WatchboundResult<PendingRootRecoveryAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        self.send(
+        self.send_control(
             CommandEnvelope {
                 generation: 0,
                 command: Command::RecoverRoot {
@@ -393,18 +503,14 @@ impl Runtime {
         }
     }
 
-    fn send(&self, command: CommandEnvelope, operation: Operation) -> WatchboundResult<()> {
-        self.commands
-            .send(command)
-            .map_err(|_| internal_error(operation, "shared runtime command channel is closed"))?;
-        let value = 1_u64.to_ne_bytes();
-        // SAFETY: wakeup is a live eventfd and value points to exactly eight
-        // initialized bytes, as required by eventfd writes.
-        let written =
-            unsafe { libc::write(self.wakeup.as_raw_fd(), value.as_ptr().cast(), value.len()) };
-        // The worker polls the command channel at a bounded interval even if
-        // this best-effort latency wakeup is interrupted or saturated.
-        let _ = written;
+    fn send_control(&self, command: CommandEnvelope, operation: Operation) -> WatchboundResult<()> {
+        self.control_commands.send(command).map_err(|_| {
+            internal_error(
+                operation,
+                "shared runtime control command channel is closed",
+            )
+        })?;
+        self.wake();
         Ok(())
     }
 }
@@ -479,7 +585,7 @@ impl PendingReconciliationAcknowledgement {
 impl Runtime {
     pub(crate) fn shutdown_and_join(&self) -> WatchboundResult<()> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
-        let mut result = self.send(
+        let mut result = self.send_control(
             CommandEnvelope {
                 generation: 0,
                 command: Command::Shutdown { acknowledgement },
@@ -511,14 +617,16 @@ impl Runtime {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
-        if let Some(worker) = worker
-            && worker.join().is_err()
-            && result.is_ok()
-        {
-            result = Err(internal_error(
-                Operation::Dispose,
-                "shared runtime worker panicked",
-            ));
+        if let Some(worker) = worker {
+            let panicked = worker.join().is_err();
+            self.counters.inotify_instances.store(0, Ordering::Release);
+            self.counters.worker_threads.store(0, Ordering::Release);
+            if panicked && result.is_ok() {
+                result = Err(internal_error(
+                    Operation::Dispose,
+                    "shared runtime worker panicked",
+                ));
+            }
         }
         result
     }
@@ -557,9 +665,27 @@ struct CommandEnvelope {
     command: Command,
 }
 
+#[derive(Clone, Copy)]
+enum CommandLane {
+    Control,
+    Work,
+}
+
 struct CommandAcknowledgement<T> {
     generation: u64,
     value: T,
+}
+
+fn commit_establishment_failure(
+    cancellation: &EstablishmentCancellationState,
+    error: WatchboundError,
+) -> WatchboundError {
+    if cancellation.try_commit_failure() {
+        error
+    } else {
+        cancellation.finish_cancelled();
+        operation_cancelled_error()
+    }
 }
 
 enum Command {
@@ -569,6 +695,7 @@ enum Command {
         stats: Arc<SharedStats>,
         output: SyncSender<ChangeBatch>,
         acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Established>>>,
+        cancellation: Arc<EstablishmentCancellationState>,
     },
     Dispose {
         subscription_id: SubscriptionId,
@@ -670,12 +797,76 @@ struct SubscriptionState {
     topology_jobs: VecDeque<TopologyJob>,
     topology_barriers: usize,
     establishment: Option<PendingEstablishment>,
+    establishment_teardown: Option<PendingEstablishmentTeardown>,
+    disposal: Option<PendingDisposal>,
+    published_deferred_directories: usize,
     uncertainty_epoch: u64,
 }
 
 struct PendingEstablishment {
     generation: u64,
     acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Established>>>,
+    cancellation: Arc<EstablishmentCancellationState>,
+}
+
+struct PendingEstablishmentTeardown {
+    generation: u64,
+    acknowledgement: Option<SyncSender<CommandAcknowledgement<WatchboundResult<Established>>>>,
+    cancellation: Arc<EstablishmentCancellationState>,
+    terminal_error: Option<WatchboundError>,
+    phase: EstablishmentTeardownPhase,
+}
+
+struct CompletedEstablishmentTeardown {
+    generation: u64,
+    acknowledgement: Option<SyncSender<CommandAcknowledgement<WatchboundResult<Established>>>>,
+    cancellation: Arc<EstablishmentCancellationState>,
+    terminal_error: Option<WatchboundError>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EstablishmentTeardownPhase {
+    PendingPaths,
+    WatchedInterests,
+    DeferredMap,
+    DeferredOrder,
+    Promotions,
+    TopologyJobs,
+    Complete,
+}
+
+struct PendingDisposal {
+    acknowledgement: Option<DisposalAcknowledgement>,
+    interrupted_establishment: Option<CompletedEstablishmentTeardown>,
+    cleanup_path_sets: VecDeque<BTreeSet<PathBuf>>,
+    cleanup_path_queues: VecDeque<VecDeque<PathBuf>>,
+    cleanup_path_vectors: VecDeque<Vec<PathBuf>>,
+    phase: DisposalPhase,
+}
+
+struct CompletedDisposal {
+    acknowledgement: Option<DisposalAcknowledgement>,
+    interrupted_establishment: Option<CompletedEstablishmentTeardown>,
+}
+
+struct DisposalAcknowledgement {
+    generation: u64,
+    sender: SyncSender<CommandAcknowledgement<()>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DisposalPhase {
+    PendingPaths,
+    WatchedInterests,
+    DeferredMap,
+    DeferredOrder,
+    Promotions,
+    TopologyJobs,
+    Exclusions,
+    CleanupPathSets,
+    CleanupPathQueues,
+    CleanupPathVectors,
+    Complete,
 }
 
 struct PendingExclusionUpdate {
@@ -779,8 +970,21 @@ impl SubscriptionState {
             topology_jobs: VecDeque::from([TopologyJob::new(root, true)]),
             topology_barriers: 1,
             establishment: Some(establishment),
+            establishment_teardown: None,
+            disposal: None,
+            published_deferred_directories: 0,
             uncertainty_epoch: 0,
         }
+    }
+
+    fn establishment_cancel_requested(&self) -> bool {
+        self.establishment
+            .as_ref()
+            .is_some_and(|establishment| establishment.cancellation.cancellation_requested())
+    }
+
+    fn disposal_in_progress(&self) -> bool {
+        self.disposal.is_some()
     }
 
     fn coverage(&self) -> Coverage {
@@ -1109,58 +1313,107 @@ enum InterestAllocation {
     RuntimeBudgetExhausted,
 }
 
+#[derive(Default)]
+struct FairIdQueue {
+    current_round: BTreeSet<SubscriptionId>,
+    next_round: BTreeSet<SubscriptionId>,
+}
+
+impl FairIdQueue {
+    fn schedule(&mut self, id: SubscriptionId) -> bool {
+        if self.current_round.contains(&id) || self.next_round.contains(&id) {
+            return false;
+        }
+        self.next_round.insert(id)
+    }
+
+    fn pop_next(&mut self) -> Option<SubscriptionId> {
+        if self.current_round.is_empty() {
+            std::mem::swap(&mut self.current_round, &mut self.next_round);
+        }
+        self.current_round.pop_first()
+    }
+
+    fn remove(&mut self, id: &SubscriptionId) -> bool {
+        self.current_round.remove(id) | self.next_round.remove(id)
+    }
+
+    #[cfg(test)]
+    fn contains(&self, id: &SubscriptionId) -> bool {
+        self.current_round.contains(id) || self.next_round.contains(id)
+    }
+
+    fn ready_len(&mut self) -> usize {
+        if self.current_round.is_empty() {
+            std::mem::swap(&mut self.current_round, &mut self.next_round);
+        }
+        self.current_round.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.current_round.is_empty() && self.next_round.is_empty()
+    }
+}
+
 struct Worker {
     inotify: OwnedFd,
     wakeup: Arc<OwnedFd>,
-    commands: mpsc::Receiver<CommandEnvelope>,
+    control_commands: Receiver<CommandEnvelope>,
+    work_commands: Receiver<CommandEnvelope>,
     counters: Arc<RuntimeCounters>,
     native_watch_budget: Option<usize>,
     subscriptions: HashMap<SubscriptionId, SubscriptionState>,
     watches: HashMap<i32, NativeWatch>,
     watch_identities: HashMap<RootIdentity, i32>,
-    retired_ignored_lifetimes: HashMap<i32, ExpectedIgnoredLifetimes>,
+    retired_ignored_lifetimes: BTreeMap<i32, ExpectedIgnoredLifetimes>,
     exhausted_watch_descriptors: BTreeSet<i32>,
-    topology_runnable: VecDeque<SubscriptionId>,
-    topology_scheduled: BTreeSet<SubscriptionId>,
-    allocator_order: VecDeque<SubscriptionId>,
+    topology_runnable: FairIdQueue,
+    allocator_order: FairIdQueue,
     next_subscription_id: SubscriptionId,
     read_buffer: Vec<u8>,
     pending_native: Vec<u8>,
     pending_native_offset: usize,
     shutting_down: bool,
+    shutdown_acknowledgement: Option<DisposalAcknowledgement>,
     #[cfg(test)]
     root_recovery_barrier_hook: Option<RootRecoveryBarrierHook>,
+    #[cfg(test)]
+    establishment_barrier_hook: Option<EstablishmentBarrierHook>,
 }
 
 impl Worker {
     fn new(
         inotify: OwnedFd,
         wakeup: Arc<OwnedFd>,
-        commands: mpsc::Receiver<CommandEnvelope>,
+        control_commands: Receiver<CommandEnvelope>,
+        work_commands: Receiver<CommandEnvelope>,
         counters: Arc<RuntimeCounters>,
         native_watch_budget: Option<usize>,
     ) -> Self {
         Self {
             inotify,
             wakeup,
-            commands,
+            control_commands,
+            work_commands,
             counters,
             native_watch_budget,
             subscriptions: HashMap::new(),
             watches: HashMap::new(),
             watch_identities: HashMap::new(),
-            retired_ignored_lifetimes: HashMap::new(),
+            retired_ignored_lifetimes: BTreeMap::new(),
             exhausted_watch_descriptors: BTreeSet::new(),
-            topology_runnable: VecDeque::new(),
-            topology_scheduled: BTreeSet::new(),
-            allocator_order: VecDeque::new(),
+            topology_runnable: FairIdQueue::default(),
+            allocator_order: FairIdQueue::default(),
             next_subscription_id: 1,
             read_buffer: vec![0; READ_BUFFER_BYTES],
             pending_native: Vec::new(),
             pending_native_offset: 0,
             shutting_down: false,
+            shutdown_acknowledgement: None,
             #[cfg(test)]
             root_recovery_barrier_hook: None,
+            #[cfg(test)]
+            establishment_barrier_hook: None,
         }
     }
 
@@ -1171,17 +1424,34 @@ impl Worker {
         }
     }
 
+    #[cfg(test)]
+    fn inject_establishment_barrier(&self, barrier: EstablishmentBarrier, path: &Path) {
+        if let Some(hook) = &self.establishment_barrier_hook {
+            hook(barrier, path);
+        }
+    }
+
     fn run(mut self) {
-        while !self.shutting_down {
-            let commands = self.process_command_turn();
+        loop {
+            if self.shutting_down {
+                if self.process_shutdown_turn() {
+                    continue;
+                }
+                break;
+            }
+            let control_commands =
+                self.process_command_turn(CommandLane::Control, MAX_CONTROL_COMMANDS_PER_TURN);
+            if self.shutting_down {
+                continue;
+            }
+            let work_commands =
+                self.process_command_turn(CommandLane::Work, MAX_WORK_COMMANDS_PER_TURN);
             let native = self.process_native_turn();
             let promotion = self.process_promotion_turn();
             let topology = self.process_topology_turn();
             self.run_maintenance();
-            if self.shutting_down {
-                break;
-            }
-            let immediate = commands == MAX_COMMANDS_PER_TURN
+            let immediate = control_commands == MAX_CONTROL_COMMANDS_PER_TURN
+                || work_commands == MAX_WORK_COMMANDS_PER_TURN
                 || native
                 || promotion
                 || topology
@@ -1193,22 +1463,23 @@ impl Worker {
                 self.poll_timeout()
             });
         }
-        self.shutdown_all_subscriptions();
-        self.watches.clear();
-        self.watch_identities.clear();
-        self.retired_ignored_lifetimes.clear();
-        self.exhausted_watch_descriptors.clear();
-        self.allocator_order.clear();
-        self.counters.native_watches.store(0, Ordering::Release);
-        self.counters.deferred_interests.store(0, Ordering::Release);
-        self.counters.inotify_instances.store(0, Ordering::Release);
-        self.counters.worker_threads.store(0, Ordering::Release);
+        assert!(self.subscriptions.is_empty());
+        assert!(self.watches.is_empty());
+        assert!(self.watch_identities.is_empty());
+        assert!(self.retired_ignored_lifetimes.is_empty());
+        assert!(self.exhausted_watch_descriptors.is_empty());
+        assert!(self.topology_runnable.is_empty());
+        assert!(self.allocator_order.is_empty());
     }
 
-    fn process_command_turn(&mut self) -> usize {
+    fn process_command_turn(&mut self, lane: CommandLane, limit: usize) -> usize {
         let mut processed = 0;
-        while processed < MAX_COMMANDS_PER_TURN {
-            let envelope = match self.commands.try_recv() {
+        while processed < limit {
+            let received = match lane {
+                CommandLane::Control => self.control_commands.try_recv(),
+                CommandLane::Work => self.work_commands.try_recv(),
+            };
+            let envelope = match received {
                 Ok(command) => command,
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             };
@@ -1221,22 +1492,53 @@ impl Worker {
                     stats,
                     output,
                     acknowledgement,
+                    cancellation,
                 } => {
+                    if cancellation.cancellation_requested() {
+                        cancellation.finish_cancelled();
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(operation_cancelled_error()),
+                        });
+                        continue;
+                    }
                     let root_identity = match RootIdentity::capture(&root) {
                         Ok(identity) => identity,
                         Err(error) => {
+                            let error = error.into_watchbound(
+                                Operation::Subscribe,
+                                "watch root changed while establishing the subscription",
+                            );
                             let _ = acknowledgement.send(CommandAcknowledgement {
                                 generation,
-                                value: Err(error.into_watchbound(
-                                    Operation::Subscribe,
-                                    "watch root changed while establishing the subscription",
-                                )),
+                                value: Err(commit_establishment_failure(&cancellation, error)),
                             });
                             continue;
                         }
                     };
+                    if cancellation.cancellation_requested() {
+                        cancellation.finish_cancelled();
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(operation_cancelled_error()),
+                        });
+                        continue;
+                    }
                     let id = self.next_subscription_id;
-                    self.next_subscription_id = self.next_subscription_id.saturating_add(1);
+                    let Some(next_subscription_id) = self.next_subscription_id.checked_add(1)
+                    else {
+                        let error = WatchboundError::new(
+                            ErrorCode::Internal,
+                            Operation::Subscribe,
+                            "subscription IDs are exhausted",
+                        );
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(commit_establishment_failure(&cancellation, error)),
+                        });
+                        continue;
+                    };
+                    self.next_subscription_id = next_subscription_id;
                     let state = SubscriptionState::new(
                         id,
                         root,
@@ -1247,10 +1549,12 @@ impl Worker {
                         PendingEstablishment {
                             generation,
                             acknowledgement,
+                            cancellation,
                         },
                     );
-                    self.subscriptions.insert(id, state);
-                    self.allocator_order.push_back(id);
+                    let replaced = self.subscriptions.insert(id, state);
+                    debug_assert!(replaced.is_none(), "subscription IDs must be unique");
+                    self.allocator_order.schedule(id);
                     self.counters
                         .subscriptions
                         .store(self.subscriptions.len(), Ordering::Release);
@@ -1260,11 +1564,16 @@ impl Worker {
                     subscription_id,
                     acknowledgement,
                 } => {
-                    self.remove_subscription(subscription_id);
-                    let _ = acknowledgement.send(CommandAcknowledgement {
-                        generation,
-                        value: (),
-                    });
+                    let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: (),
+                        });
+                        continue;
+                    };
+                    self.begin_subscription_disposal(&mut state, generation, Some(acknowledgement));
+                    self.subscriptions.insert(subscription_id, state);
+                    self.schedule_topology(subscription_id);
                 }
                 Command::ReplaceExclusions {
                     subscription_id,
@@ -1282,7 +1591,13 @@ impl Worker {
                         });
                         continue;
                     };
-                    let validation = if generation <= state.exclusion_generation {
+                    let validation = if state.disposal_in_progress() {
+                        Err(WatchboundError::new(
+                            ErrorCode::SubscriptionClosed,
+                            Operation::ReplaceExclusions,
+                            "subscription is disposing",
+                        ))
+                    } else if generation <= state.exclusion_generation {
                         Err(WatchboundError::new(
                             ErrorCode::InvalidArgument,
                             Operation::ReplaceExclusions,
@@ -1367,7 +1682,16 @@ impl Worker {
                         });
                         continue;
                     };
-                    if state.exclusion_update.is_some()
+                    if state.disposal_in_progress() {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::SubscriptionClosed,
+                                Operation::Reconcile,
+                                "subscription is disposing",
+                            )),
+                        });
+                    } else if state.exclusion_update.is_some()
                         || state.reconciliation.is_some()
                         || state.root_recovery.is_some()
                     {
@@ -1423,7 +1747,16 @@ impl Worker {
                         });
                         continue;
                     };
-                    if state.exclusion_update.is_some()
+                    if state.disposal_in_progress() {
+                        let _ = acknowledgement.send(CommandAcknowledgement {
+                            generation,
+                            value: Err(WatchboundError::new(
+                                ErrorCode::SubscriptionClosed,
+                                Operation::RecoverRoot,
+                                "subscription is disposing",
+                            )),
+                        });
+                    } else if state.exclusion_update.is_some()
                         || state.reconciliation.is_some()
                         || state.root_recovery.is_some()
                     {
@@ -1502,11 +1835,14 @@ impl Worker {
                     }
                 }
                 Command::Shutdown { acknowledgement } => {
+                    debug_assert!(
+                        !self.shutting_down && self.shutdown_acknowledgement.is_none(),
+                        "the runtime must issue exactly one shutdown command"
+                    );
                     self.shutting_down = true;
-                    self.shutdown_all_subscriptions();
-                    let _ = acknowledgement.send(CommandAcknowledgement {
+                    self.shutdown_acknowledgement = Some(DisposalAcknowledgement {
                         generation,
-                        value: (),
+                        sender: acknowledgement,
                     });
                     break;
                 }
@@ -1628,6 +1964,9 @@ impl Worker {
     fn handle_native_event(&mut self, event: ParsedEvent) {
         if event.mask & libc::IN_Q_OVERFLOW != 0 {
             for state in self.subscriptions.values_mut() {
+                if state.disposal_in_progress() {
+                    continue;
+                }
                 state.stats.raw_events.fetch_add(1, Ordering::Relaxed);
                 state.stats.overflow_events.fetch_add(1, Ordering::Relaxed);
                 state.mark_uncertain(UncertainReason::EventOverflow, state.root.clone());
@@ -1647,6 +1986,10 @@ impl Worker {
             let Some(mut state) = self.subscriptions.remove(&interest.subscription_id) else {
                 continue;
             };
+            if state.disposal_in_progress() {
+                self.subscriptions.insert(state.id, state);
+                continue;
+            }
             state.stats.raw_events.fetch_add(1, Ordering::Relaxed);
             self.handle_interest_event(
                 &mut state,
@@ -1668,6 +2011,12 @@ impl Worker {
         directory: &Path,
         name: Option<&std::ffi::OsStr>,
     ) {
+        if state.disposal_in_progress()
+            || state.establishment_teardown.is_some()
+            || state.establishment_cancel_requested()
+        {
+            return;
+        }
         let event_path = name.map_or_else(|| directory.to_path_buf(), |name| directory.join(name));
         if state.is_excluded(&event_path) {
             return;
@@ -1871,6 +2220,9 @@ impl Worker {
         let mut schedule = Vec::new();
         for interest in watch.interests {
             if let Some(state) = self.subscriptions.get_mut(&interest.subscription_id) {
+                if state.disposal_in_progress() {
+                    continue;
+                }
                 state.watched_paths.remove(&interest.path);
                 if interest.path == state.root {
                     state.mark_root_lost(RootLossEvidence::RootWatchLoss);
@@ -1902,20 +2254,24 @@ impl Worker {
     fn process_promotion_turn(&mut self) -> bool {
         let candidates = self
             .allocator_order
-            .len()
+            .ready_len()
             .min(MAX_ALLOCATOR_SUBSCRIPTIONS_PER_TURN);
         for _ in 0..candidates {
-            let Some(id) = self.allocator_order.pop_front() else {
+            let Some(id) = self.allocator_order.pop_next() else {
                 return false;
             };
-            self.allocator_order.push_back(id);
             let Some(mut state) = self.subscriptions.remove(&id) else {
+                debug_assert!(false, "allocator membership must name a live subscription");
                 continue;
             };
+            self.allocator_order.schedule(id);
             if state.root_lost
                 || state.exclusion_update.is_some()
                 || state.reconciliation.is_some()
                 || state.root_recovery.is_some()
+                || state.disposal_in_progress()
+                || state.establishment_teardown.is_some()
+                || state.establishment_cancel_requested()
             {
                 self.subscriptions.insert(id, state);
                 continue;
@@ -2002,13 +2358,28 @@ impl Worker {
     }
 
     fn process_topology_turn(&mut self) -> bool {
-        let Some(id) = self.topology_runnable.pop_front() else {
+        let Some(id) = self.topology_runnable.pop_next() else {
             return false;
         };
-        self.topology_scheduled.remove(&id);
         let Some(mut state) = self.subscriptions.remove(&id) else {
             return true;
         };
+        if self.shutting_down && !state.disposal_in_progress() {
+            self.begin_subscription_disposal(&mut state, 0, None);
+        }
+        if state.disposal_in_progress() {
+            self.process_subscription_disposal_turn(state);
+            return true;
+        }
+        if state.establishment_teardown.is_some() {
+            self.process_establishment_teardown_turn(state);
+            return true;
+        }
+        if state.establishment_cancel_requested() {
+            self.begin_cancelled_establishment_teardown(&mut state);
+            self.process_establishment_teardown_turn(state);
+            return true;
+        }
         if state
             .root_recovery
             .as_ref()
@@ -2033,22 +2404,27 @@ impl Worker {
         let mut directories = 0;
         let mut entries = 0;
         let mut native_allocations = 0;
-        let mut establishment_failed = false;
-        while directories < MAX_TOPOLOGY_DIRECTORIES_PER_TURN
+        let mut establishment_teardown_started = false;
+        'topology: while directories < MAX_TOPOLOGY_DIRECTORIES_PER_TURN
             && entries < MAX_TOPOLOGY_ENTRIES_PER_TURN
             && (self.native_watch_budget.is_none() || native_allocations == 0)
         {
+            if state.establishment_cancel_requested() {
+                self.begin_cancelled_establishment_teardown(&mut state);
+                establishment_teardown_started = true;
+                break;
+            }
             let Some(mut job) = state.topology_jobs.pop_front() else {
                 break;
             };
             if job.active.is_none() {
                 let Some(directory) = job.directories.pop_front() else {
-                    establishment_failed = self.finish_topology_job(
+                    establishment_teardown_started = self.finish_topology_job(
                         &mut state,
                         job.establishment,
                         job.promotion_root.as_deref(),
                     );
-                    if establishment_failed {
+                    if establishment_teardown_started {
                         break;
                     }
                     continue;
@@ -2072,6 +2448,12 @@ impl Worker {
                     }
                 }
             }
+            if state.establishment_cancel_requested() {
+                state.topology_jobs.push_front(job);
+                self.begin_cancelled_establishment_teardown(&mut state);
+                establishment_teardown_started = true;
+                break;
+            }
             #[cfg(test)]
             let root_recovery_traversal = state
                 .root_recovery
@@ -2080,10 +2462,22 @@ impl Worker {
                 .then(|| state.root.clone());
             let active = job.active.as_mut().expect("active topology directory");
             let mut finished = false;
+            let mut cancellation_observed = false;
             while entries < MAX_TOPOLOGY_ENTRIES_PER_TURN {
+                if state.establishment_cancel_requested() {
+                    cancellation_observed = true;
+                    break;
+                }
                 #[cfg(test)]
                 if let Some(root) = &root_recovery_traversal {
                     self.inject_root_recovery_barrier(RootRecoveryBarrier::DuringTraversal, root);
+                }
+                #[cfg(test)]
+                if state.establishment.is_some() {
+                    self.inject_establishment_barrier(
+                        EstablishmentBarrier::DuringTraversal,
+                        &active.path,
+                    );
                 }
                 match active.entries.next() {
                     Some(Ok(entry)) => {
@@ -2111,15 +2505,21 @@ impl Worker {
                     }
                 }
             }
+            if cancellation_observed {
+                state.topology_jobs.push_front(job);
+                self.begin_cancelled_establishment_teardown(&mut state);
+                establishment_teardown_started = true;
+                break 'topology;
+            }
             if finished {
                 job.active = None;
                 if job.directories.is_empty() {
-                    establishment_failed = self.finish_topology_job(
+                    establishment_teardown_started = self.finish_topology_job(
                         &mut state,
                         job.establishment,
                         job.promotion_root.as_deref(),
                     );
-                    if establishment_failed {
+                    if establishment_teardown_started {
                         break;
                     }
                     if self.native_watch_budget.is_some() && native_allocations > 0 {
@@ -2135,8 +2535,13 @@ impl Worker {
                 break;
             }
         }
-        if establishment_failed {
-            self.discard_unestablished(state);
+        if establishment_teardown_started || state.establishment_teardown.is_some() {
+            self.process_establishment_teardown_turn(state);
+            return true;
+        }
+        if state.establishment_cancel_requested() {
+            self.begin_cancelled_establishment_teardown(&mut state);
+            self.process_establishment_teardown_turn(state);
             return true;
         }
         self.progress_exclusion_update(&mut state);
@@ -2968,6 +3373,20 @@ impl Worker {
         if !establishment {
             return false;
         }
+        if state.establishment_cancel_requested() {
+            self.begin_cancelled_establishment_teardown(state);
+            return true;
+        }
+        #[cfg(test)]
+        self.inject_establishment_barrier(EstablishmentBarrier::BeforeFinalValidation, &state.root);
+        if state.establishment_cancel_requested() {
+            self.begin_cancelled_establishment_teardown(state);
+            return true;
+        }
+        let establishment = state
+            .establishment
+            .take()
+            .expect("an establishment topology job must own its acknowledgement");
         let result = if !state.watched_paths.contains_key(&state.root)
             && !state.deferred_directories.contains_key(&state.root)
         {
@@ -3000,22 +3419,243 @@ impl Worker {
                 )),
             }
         };
-        let failed = result.is_err();
-        if !failed {
-            state.next_root_identity_check = Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
+        #[cfg(test)]
+        self.inject_establishment_barrier(EstablishmentBarrier::BeforeFinalCommit, &state.root);
+        match result {
+            Ok(established) => {
+                if !establishment.cancellation.try_commit_success() {
+                    self.begin_establishment_teardown(
+                        state,
+                        establishment,
+                        Some(operation_cancelled_error()),
+                    );
+                    return true;
+                }
+                state.next_root_identity_check =
+                    Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
+                // The establishment acknowledgement is the public visibility
+                // boundary: publish both subscription-local and runtime
+                // allocator gauges before the subscribing thread can observe
+                // the returned handle.
+                state.publish_resource_counts();
+                self.publish_deferred_interest_count_with(state);
+                if establishment
+                    .acknowledgement
+                    .send(CommandAcknowledgement {
+                        generation: establishment.generation,
+                        value: Ok(established),
+                    })
+                    .is_err()
+                {
+                    self.begin_orphaned_establishment_teardown(state, establishment);
+                    return true;
+                }
+                false
+            }
+            Err(error) => {
+                let terminal_error = if establishment.cancellation.try_commit_failure() {
+                    error
+                } else {
+                    operation_cancelled_error()
+                };
+                self.begin_establishment_teardown(state, establishment, Some(terminal_error));
+                true
+            }
         }
-        // The establishment acknowledgement is the public visibility boundary:
-        // publish both subscription-local and runtime allocator gauges before
-        // the subscribing thread can observe the returned handle.
-        state.publish_resource_counts();
-        self.publish_deferred_interest_count_with(state);
-        if let Some(establishment) = state.establishment.take() {
-            let _ = establishment.acknowledgement.send(CommandAcknowledgement {
-                generation: establishment.generation,
-                value: result,
+    }
+
+    fn begin_cancelled_establishment_teardown(&mut self, state: &mut SubscriptionState) {
+        let establishment = state
+            .establishment
+            .take()
+            .expect("a cancellable establishment must own its acknowledgement");
+        self.begin_establishment_teardown(state, establishment, Some(operation_cancelled_error()));
+    }
+
+    fn begin_establishment_teardown(
+        &mut self,
+        state: &mut SubscriptionState,
+        establishment: PendingEstablishment,
+        terminal_error: Option<WatchboundError>,
+    ) {
+        debug_assert!(state.establishment_teardown.is_none());
+        state.topology_barriers = 0;
+        state.pending_started = None;
+        state.pending_generation = None;
+        state.establishment_teardown = Some(PendingEstablishmentTeardown {
+            generation: establishment.generation,
+            acknowledgement: Some(establishment.acknowledgement),
+            cancellation: establishment.cancellation,
+            terminal_error,
+            phase: EstablishmentTeardownPhase::PendingPaths,
+        });
+    }
+
+    fn begin_orphaned_establishment_teardown(
+        &mut self,
+        state: &mut SubscriptionState,
+        establishment: PendingEstablishment,
+    ) {
+        debug_assert!(state.establishment_teardown.is_none());
+        state.topology_barriers = 0;
+        state.pending_started = None;
+        state.pending_generation = None;
+        state.establishment_teardown = Some(PendingEstablishmentTeardown {
+            generation: establishment.generation,
+            acknowledgement: None,
+            cancellation: establishment.cancellation,
+            terminal_error: None,
+            phase: EstablishmentTeardownPhase::PendingPaths,
+        });
+    }
+
+    fn process_establishment_teardown_turn(&mut self, mut state: SubscriptionState) {
+        let id = state.id;
+        if let Some(completed) = self.progress_establishment_teardown(&mut state) {
+            debug_assert!(
+                !self.topology_runnable.remove(&id),
+                "the running teardown must be the subscription's only topology turn"
+            );
+            debug_assert!(
+                self.allocator_order.remove(&id),
+                "an admitted subscription must own allocator membership"
+            );
+            state.stats.watched_directories.store(0, Ordering::Release);
+            let published_deferred = state.published_deferred_directories;
+            state.published_deferred_directories = 0;
+            state.stats.deferred_directories.store(0, Ordering::Release);
+            state.stats.disposed.store(true, Ordering::Release);
+            self.counters
+                .subscriptions
+                .store(self.subscriptions.len(), Ordering::Release);
+            self.remove_published_deferred_interest_count(published_deferred);
+            drop(state);
+            self.finish_establishment_teardown(completed);
+            return;
+        }
+        #[cfg(test)]
+        self.inject_establishment_barrier(
+            EstablishmentBarrier::TeardownQuantumCompleted,
+            &state.root,
+        );
+        self.subscriptions.insert(id, state);
+        self.schedule_topology(id);
+    }
+
+    fn progress_establishment_teardown(
+        &mut self,
+        state: &mut SubscriptionState,
+    ) -> Option<CompletedEstablishmentTeardown> {
+        let mut removed = 0;
+        while removed < MAX_ESTABLISHMENT_TEARDOWN_ITEMS_PER_TURN {
+            let phase = state
+                .establishment_teardown
+                .as_ref()
+                .expect("establishment teardown must exist")
+                .phase;
+            match phase {
+                EstablishmentTeardownPhase::PendingPaths => {
+                    if state.pending_paths.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state
+                            .establishment_teardown
+                            .as_mut()
+                            .expect("establishment teardown must exist")
+                            .phase = EstablishmentTeardownPhase::WatchedInterests;
+                    }
+                }
+                EstablishmentTeardownPhase::WatchedInterests => {
+                    if let Some((path, descriptor)) = state.watched_paths.pop_first() {
+                        self.remove_interest(state.id, &path, descriptor);
+                        removed += 1;
+                    } else {
+                        state
+                            .establishment_teardown
+                            .as_mut()
+                            .expect("establishment teardown must exist")
+                            .phase = EstablishmentTeardownPhase::DeferredMap;
+                    }
+                }
+                EstablishmentTeardownPhase::DeferredMap => {
+                    if state.deferred_directories.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state
+                            .establishment_teardown
+                            .as_mut()
+                            .expect("establishment teardown must exist")
+                            .phase = EstablishmentTeardownPhase::DeferredOrder;
+                    }
+                }
+                EstablishmentTeardownPhase::DeferredOrder => {
+                    if state.deferred_order.pop_front().is_some() {
+                        removed += 1;
+                    } else {
+                        state
+                            .establishment_teardown
+                            .as_mut()
+                            .expect("establishment teardown must exist")
+                            .phase = EstablishmentTeardownPhase::Promotions;
+                    }
+                }
+                EstablishmentTeardownPhase::Promotions => {
+                    if state.pending_promotions.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state
+                            .establishment_teardown
+                            .as_mut()
+                            .expect("establishment teardown must exist")
+                            .phase = EstablishmentTeardownPhase::TopologyJobs;
+                    }
+                }
+                EstablishmentTeardownPhase::TopologyJobs => {
+                    let Some(job) = state.topology_jobs.front_mut() else {
+                        state
+                            .establishment_teardown
+                            .as_mut()
+                            .expect("establishment teardown must exist")
+                            .phase = EstablishmentTeardownPhase::Complete;
+                        continue;
+                    };
+                    if job.active.take().is_some() || job.directories.pop_front().is_some() {
+                        removed += 1;
+                    } else {
+                        state.topology_jobs.pop_front();
+                        removed += 1;
+                    }
+                }
+                EstablishmentTeardownPhase::Complete => {
+                    let teardown = state
+                        .establishment_teardown
+                        .take()
+                        .expect("completed establishment teardown must exist");
+                    return Some(CompletedEstablishmentTeardown {
+                        generation: teardown.generation,
+                        acknowledgement: teardown.acknowledgement,
+                        cancellation: teardown.cancellation,
+                        terminal_error: teardown.terminal_error,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    fn finish_establishment_teardown(&mut self, completed: CompletedEstablishmentTeardown) {
+        // This also detaches failure/success tokens from their best-effort
+        // runtime wake handle; the state transition itself is a no-op unless
+        // cancellation won.
+        completed.cancellation.finish_cancelled();
+        if let (Some(acknowledgement), Some(error)) =
+            (completed.acknowledgement, completed.terminal_error)
+        {
+            let _ = acknowledgement.send(CommandAcknowledgement {
+                generation: completed.generation,
+                value: Err(error),
             });
         }
-        failed
     }
 
     fn add_interest(
@@ -3043,6 +3683,10 @@ impl Worker {
             }
             self.mark_reused_descriptor_uncertain(state, descriptor);
             self.insert_interest(state, path, descriptor);
+            #[cfg(test)]
+            if state.establishment.is_some() {
+                self.inject_establishment_barrier(EstablishmentBarrier::SharingExistingWatch, path);
+            }
             return Ok(InterestAllocation::Added {
                 created_native_watch: false,
             });
@@ -3131,6 +3775,10 @@ impl Worker {
         watch.identity.get_or_insert(identity);
         self.watch_identities.insert(identity, descriptor);
         self.insert_interest(state, path, descriptor);
+        #[cfg(test)]
+        if state.establishment.is_some() {
+            self.inject_establishment_barrier(EstablishmentBarrier::AfterAddWatch, path);
+        }
         self.publish_native_watch_count();
         Ok(InterestAllocation::Added {
             created_native_watch,
@@ -3182,53 +3830,97 @@ impl Worker {
                 .watches
                 .remove(&descriptor)
                 .expect("the final logical interest must own a native watch");
-            self.watch_identities
-                .retain(|_, candidate| *candidate != descriptor);
+            if let Some(identity) = watch.identity {
+                self.watch_identities.remove(&identity);
+            }
             self.remove_native_watch_lifetime(descriptor, watch.lifetime);
             self.publish_native_watch_count();
         }
     }
 
-    fn remove_subscription(&mut self, id: SubscriptionId) {
-        self.topology_scheduled.remove(&id);
-        self.topology_runnable.retain(|candidate| *candidate != id);
-        self.allocator_order.retain(|candidate| *candidate != id);
-        let Some(mut state) = self.subscriptions.remove(&id) else {
+    fn begin_subscription_disposal(
+        &mut self,
+        state: &mut SubscriptionState,
+        generation: u64,
+        acknowledgement: Option<SyncSender<CommandAcknowledgement<()>>>,
+    ) {
+        if state.disposal.is_some() {
+            assert!(
+                acknowledgement.is_none(),
+                "the public lifecycle must coalesce duplicate disposal commands"
+            );
             return;
-        };
-        let interests: Vec<_> = std::mem::take(&mut state.watched_paths)
-            .into_iter()
-            .collect();
-        for (path, descriptor) in interests {
-            self.remove_interest(id, &path, descriptor);
         }
-        state.pending_paths.clear();
+
+        self.topology_runnable.remove(&state.id);
+        self.allocator_order.remove(&state.id);
+        state.topology_barriers = 0;
         state.pending_started = None;
-        state.stats.watched_directories.store(0, Ordering::Release);
-        state.stats.deferred_directories.store(0, Ordering::Release);
-        state.stats.disposed.store(true, Ordering::Release);
-        if let Some(establishment) = state.establishment.take() {
-            let _ = establishment.acknowledgement.send(CommandAcknowledgement {
-                generation: establishment.generation,
-                value: Err(WatchboundError::new(
+        state.pending_generation = None;
+        state.next_root_identity_check = None;
+
+        let interrupted_establishment = if let Some(establishment) = state.establishment.take() {
+            let terminal_error = if establishment.cancellation.try_commit_failure() {
+                WatchboundError::new(
                     ErrorCode::OperationInterrupted,
                     Operation::Subscribe,
                     "subscription disposed during establishment",
-                )),
-            });
-        }
+                )
+            } else {
+                operation_cancelled_error()
+            };
+            Some(CompletedEstablishmentTeardown {
+                generation: establishment.generation,
+                acknowledgement: Some(establishment.acknowledgement),
+                cancellation: establishment.cancellation,
+                terminal_error: Some(terminal_error),
+            })
+        } else {
+            state
+                .establishment_teardown
+                .take()
+                .map(|teardown| CompletedEstablishmentTeardown {
+                    generation: teardown.generation,
+                    acknowledgement: teardown.acknowledgement,
+                    cancellation: teardown.cancellation,
+                    terminal_error: teardown.terminal_error,
+                })
+        };
+
+        let mut cleanup_path_sets = VecDeque::new();
+        let mut cleanup_path_queues = VecDeque::new();
+        let mut cleanup_path_vectors = VecDeque::new();
         if let Some(update) = state.exclusion_update.take() {
-            let _ = update.acknowledgement.send(CommandAcknowledgement {
-                generation: update.generation,
+            let PendingExclusionUpdate {
+                generation,
+                exclusions,
+                previous_exclusions,
+                newly_excluded,
+                newly_included,
+                acknowledgement,
+                ..
+            } = update;
+            let _ = acknowledgement.send(CommandAcknowledgement {
+                generation,
                 value: Err(WatchboundError::new(
                     ErrorCode::OperationInterrupted,
                     Operation::ReplaceExclusions,
                     "subscription disposed during exclusion update",
                 )),
             });
+            cleanup_path_sets.push_back(exclusions);
+            cleanup_path_sets.push_back(previous_exclusions);
+            cleanup_path_queues.push_back(newly_excluded);
+            cleanup_path_vectors.push_back(newly_included);
         }
         if let Some(reconciliation) = state.reconciliation.take() {
-            let _ = reconciliation.acknowledgement.send(CommandAcknowledgement {
+            let PendingReconciliation {
+                acknowledgement,
+                encountered,
+                rebuilt_deferred_order,
+                ..
+            } = reconciliation;
+            let _ = acknowledgement.send(CommandAcknowledgement {
                 generation: 0,
                 value: Err(WatchboundError::new(
                     ErrorCode::OperationInterrupted,
@@ -3236,6 +3928,8 @@ impl Worker {
                     "subscription disposed during reconciliation",
                 )),
             });
+            cleanup_path_sets.push_back(encountered);
+            cleanup_path_queues.push_back(rebuilt_deferred_order);
         }
         if let Some(recovery) = state.root_recovery.take() {
             let _ = recovery.acknowledgement.send(CommandAcknowledgement {
@@ -3247,49 +3941,264 @@ impl Worker {
                 )),
             });
         }
+
+        state.disposal = Some(PendingDisposal {
+            acknowledgement: acknowledgement
+                .map(|sender| DisposalAcknowledgement { generation, sender }),
+            interrupted_establishment,
+            cleanup_path_sets,
+            cleanup_path_queues,
+            cleanup_path_vectors,
+            phase: DisposalPhase::PendingPaths,
+        });
+    }
+
+    fn process_subscription_disposal_turn(&mut self, mut state: SubscriptionState) {
+        let id = state.id;
+        if let Some(completed) = self.progress_subscription_disposal(&mut state) {
+            self.complete_subscription_disposal(state, completed);
+            return;
+        }
+        self.subscriptions.insert(id, state);
+        self.schedule_topology(id);
+    }
+
+    fn progress_subscription_disposal(
+        &mut self,
+        state: &mut SubscriptionState,
+    ) -> Option<CompletedDisposal> {
+        let mut removed = 0;
+        while removed < MAX_DISPOSAL_ITEMS_PER_TURN {
+            let phase = state
+                .disposal
+                .as_ref()
+                .expect("disposing subscription must own disposal state")
+                .phase;
+            match phase {
+                DisposalPhase::PendingPaths => {
+                    if state.pending_paths.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::WatchedInterests;
+                    }
+                }
+                DisposalPhase::WatchedInterests => {
+                    if let Some((path, descriptor)) = state.watched_paths.pop_first() {
+                        self.remove_interest(state.id, &path, descriptor);
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::DeferredMap;
+                    }
+                }
+                DisposalPhase::DeferredMap => {
+                    if state.deferred_directories.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::DeferredOrder;
+                    }
+                }
+                DisposalPhase::DeferredOrder => {
+                    if state.deferred_order.pop_front().is_some() {
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::Promotions;
+                    }
+                }
+                DisposalPhase::Promotions => {
+                    if state.pending_promotions.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::TopologyJobs;
+                    }
+                }
+                DisposalPhase::TopologyJobs => {
+                    let Some(job) = state.topology_jobs.front_mut() else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::Exclusions;
+                        continue;
+                    };
+                    if job.active.take().is_some() || job.directories.pop_front().is_some() {
+                        removed += 1;
+                    } else {
+                        state.topology_jobs.pop_front();
+                        removed += 1;
+                    }
+                }
+                DisposalPhase::Exclusions => {
+                    if state.exclusions.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::CleanupPathSets;
+                    }
+                }
+                DisposalPhase::CleanupPathSets => {
+                    let disposal = state.disposal.as_mut().unwrap();
+                    let Some(paths) = disposal.cleanup_path_sets.front_mut() else {
+                        disposal.phase = DisposalPhase::CleanupPathQueues;
+                        continue;
+                    };
+                    if paths.pop_first().is_some() {
+                        removed += 1;
+                    } else {
+                        disposal.cleanup_path_sets.pop_front();
+                        removed += 1;
+                    }
+                }
+                DisposalPhase::CleanupPathQueues => {
+                    let disposal = state.disposal.as_mut().unwrap();
+                    let Some(paths) = disposal.cleanup_path_queues.front_mut() else {
+                        disposal.phase = DisposalPhase::CleanupPathVectors;
+                        continue;
+                    };
+                    if paths.pop_front().is_some() {
+                        removed += 1;
+                    } else {
+                        disposal.cleanup_path_queues.pop_front();
+                        removed += 1;
+                    }
+                }
+                DisposalPhase::CleanupPathVectors => {
+                    let disposal = state.disposal.as_mut().unwrap();
+                    let Some(paths) = disposal.cleanup_path_vectors.front_mut() else {
+                        disposal.phase = DisposalPhase::Complete;
+                        continue;
+                    };
+                    if paths.pop().is_some() {
+                        removed += 1;
+                    } else {
+                        disposal.cleanup_path_vectors.pop_front();
+                        removed += 1;
+                    }
+                }
+                DisposalPhase::Complete => {
+                    let disposal = state
+                        .disposal
+                        .take()
+                        .expect("completed subscription disposal must exist");
+                    return Some(CompletedDisposal {
+                        acknowledgement: disposal.acknowledgement,
+                        interrupted_establishment: disposal.interrupted_establishment,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    fn complete_subscription_disposal(
+        &mut self,
+        state: SubscriptionState,
+        completed: CompletedDisposal,
+    ) {
+        let id = state.id;
+        self.topology_runnable.remove(&id);
+        self.allocator_order.remove(&id);
+        let published_deferred = state.published_deferred_directories;
+        let stats = Arc::clone(&state.stats);
+        let publish_disposed = completed.acknowledgement.is_none();
+        drop(state);
+        stats.watched_directories.store(0, Ordering::Release);
+        stats.deferred_directories.store(0, Ordering::Release);
+        if publish_disposed {
+            stats.disposed.store(true, Ordering::Release);
+        }
         self.counters
             .subscriptions
             .store(self.subscriptions.len(), Ordering::Release);
-        self.publish_deferred_interest_count();
+        self.remove_published_deferred_interest_count(published_deferred);
+        if let Some(establishment) = completed.interrupted_establishment {
+            self.finish_establishment_teardown(establishment);
+        }
+        if let Some(acknowledgement) = completed.acknowledgement {
+            let _ = acknowledgement.sender.send(CommandAcknowledgement {
+                generation: acknowledgement.generation,
+                value: (),
+            });
+        }
     }
 
-    fn discard_unestablished(&mut self, mut state: SubscriptionState) {
-        self.topology_scheduled.remove(&state.id);
-        self.topology_runnable
-            .retain(|candidate| *candidate != state.id);
-        self.allocator_order
-            .retain(|candidate| *candidate != state.id);
-        let interests: Vec<_> = std::mem::take(&mut state.watched_paths)
-            .into_iter()
-            .collect();
-        for (path, descriptor) in interests {
-            self.remove_interest(state.id, &path, descriptor);
+    #[cfg(test)]
+    fn remove_subscription(&mut self, id: SubscriptionId) {
+        let Some(mut state) = self.subscriptions.remove(&id) else {
+            return;
+        };
+        if state.disposal.is_none() {
+            self.begin_subscription_disposal(&mut state, 0, None);
         }
-        state.stats.watched_directories.store(0, Ordering::Release);
-        state.stats.deferred_directories.store(0, Ordering::Release);
-        self.counters
-            .subscriptions
-            .store(self.subscriptions.len(), Ordering::Release);
-        self.publish_deferred_interest_count();
+        loop {
+            if let Some(completed) = self.progress_subscription_disposal(&mut state) {
+                self.complete_subscription_disposal(state, completed);
+                break;
+            }
+        }
     }
 
-    fn shutdown_all_subscriptions(&mut self) {
-        let ids: Vec<_> = self.subscriptions.keys().copied().collect();
-        for id in ids {
-            self.remove_subscription(id);
+    fn process_shutdown_turn(&mut self) -> bool {
+        if let Some(id) = self.allocator_order.pop_next() {
+            let mut state = self
+                .subscriptions
+                .remove(&id)
+                .expect("allocator membership must name a live subscription");
+            self.begin_subscription_disposal(&mut state, 0, None);
+            self.subscriptions.insert(id, state);
+            self.schedule_topology(id);
         }
+
+        if self.process_topology_turn() {
+            return true;
+        }
+        if !self.subscriptions.is_empty() {
+            panic!(
+                "every live subscription must own allocator or topology membership during shutdown"
+            );
+        }
+
+        let mut removed = 0;
+        while removed < MAX_DISPOSAL_ITEMS_PER_TURN {
+            if self.retired_ignored_lifetimes.pop_first().is_some() {
+                removed += 1;
+                continue;
+            }
+            if self.exhausted_watch_descriptors.pop_first().is_some() {
+                removed += 1;
+                continue;
+            }
+            break;
+        }
+        if !self.retired_ignored_lifetimes.is_empty()
+            || !self.exhausted_watch_descriptors.is_empty()
+        {
+            return true;
+        }
+
+        assert!(
+            self.watches.is_empty() && self.watch_identities.is_empty(),
+            "joined subscription disposal must remove every live native watch"
+        );
+        self.counters.native_watches.store(0, Ordering::Release);
+        self.counters.deferred_interests.store(0, Ordering::Release);
+        if let Some(acknowledgement) = self.shutdown_acknowledgement.take() {
+            let _ = acknowledgement.sender.send(CommandAcknowledgement {
+                generation: acknowledgement.generation,
+                value: (),
+            });
+        }
+        false
     }
 
     fn schedule_topology(&mut self, id: SubscriptionId) {
-        if self.topology_scheduled.insert(id) {
-            self.topology_runnable.push_back(id);
-        }
+        self.topology_runnable.schedule(id);
     }
 
     fn run_maintenance(&mut self) {
         let now = Instant::now();
         let mut schedule = Vec::new();
         for state in self.subscriptions.values_mut() {
+            if state.disposal_in_progress()
+                || state.establishment_teardown.is_some()
+                || state.establishment_cancel_requested()
+            {
+                continue;
+            }
             if state.next_root_identity_check.is_some_and(|due| now >= due) {
                 match RootIdentity::capture(&state.root) {
                     Ok(identity) if identity == state.root_identity => {
@@ -3381,6 +4290,9 @@ impl Worker {
 
     fn mark_all_uncertain(&mut self, reason: UncertainReason) {
         for state in self.subscriptions.values_mut() {
+            if state.disposal_in_progress() || state.establishment_teardown.is_some() {
+                continue;
+            }
             state.mark_uncertain(reason, state.root.clone());
         }
     }
@@ -3391,25 +4303,45 @@ impl Worker {
             .store(self.watches.len(), Ordering::Release);
     }
 
-    fn publish_deferred_interest_count(&self) {
-        self.counters.deferred_interests.store(
-            self.subscriptions
-                .values()
-                .map(|state| state.stats.deferred_directories.load(Ordering::Acquire))
-                .sum(),
-            Ordering::Release,
-        );
+    fn publish_deferred_interest_count(&mut self) {
+        let mut total = 0;
+        for state in self.subscriptions.values_mut() {
+            let contribution = state.stats.deferred_directories.load(Ordering::Acquire);
+            state.published_deferred_directories = contribution;
+            total += contribution;
+        }
+        self.counters
+            .deferred_interests
+            .store(total, Ordering::Release);
     }
 
-    fn publish_deferred_interest_count_with(&self, detached: &SubscriptionState) {
-        self.counters.deferred_interests.store(
-            self.subscriptions
-                .values()
-                .map(|state| state.stats.deferred_directories.load(Ordering::Acquire))
-                .sum::<usize>()
-                + detached.stats.deferred_directories.load(Ordering::Acquire),
-            Ordering::Release,
+    fn remove_published_deferred_interest_count(&mut self, removed: usize) {
+        if removed == 0 {
+            return;
+        }
+        let updated = self.counters.deferred_interests.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |current| current.checked_sub(removed),
         );
+        if updated.is_err() {
+            debug_assert!(false, "deferred-interest counter contribution must exist");
+            self.publish_deferred_interest_count();
+        }
+    }
+
+    fn publish_deferred_interest_count_with(&mut self, detached: &mut SubscriptionState) {
+        let mut total = 0;
+        for state in self.subscriptions.values_mut() {
+            let contribution = state.stats.deferred_directories.load(Ordering::Acquire);
+            state.published_deferred_directories = contribution;
+            total += contribution;
+        }
+        let detached_contribution = detached.stats.deferred_directories.load(Ordering::Acquire);
+        detached.published_deferred_directories = detached_contribution;
+        self.counters
+            .deferred_interests
+            .store(total + detached_contribution, Ordering::Release);
     }
 }
 
@@ -3616,6 +4548,8 @@ mod tests {
         let stats = Arc::new(SharedStats::new());
         let (output, receiver) = mpsc::sync_channel(options.output_queue_capacity);
         let (acknowledgement, _acknowledged) = mpsc::sync_channel(1);
+        let cancellation = EstablishmentCancellation::new().unwrap();
+        cancellation.shared.bind().unwrap();
         let mut state = SubscriptionState::new(
             1,
             root.to_path_buf(),
@@ -3626,6 +4560,7 @@ mod tests {
             PendingEstablishment {
                 generation: 0,
                 acknowledgement,
+                cancellation: cancellation.shared(),
             },
         );
         state.topology_jobs.clear();
@@ -3638,11 +4573,13 @@ mod tests {
     fn native_overflow_marks_every_subscription_uncertain() {
         let root = TestRoot::new("overflow");
         let (state, _receiver) = state(&root.0, SubscriptionOptions::default());
-        let (_commands, command_receiver) = mpsc::channel();
+        let (_control_commands, control_command_receiver) = mpsc::channel();
+        let (_work_commands, work_command_receiver) = mpsc::channel();
         let mut worker = Worker::new(
             create_inotify().unwrap(),
             Arc::new(create_eventfd().unwrap()),
-            command_receiver,
+            control_command_receiver,
+            work_command_receiver,
             Arc::new(RuntimeCounters::default()),
             None,
         );
@@ -3747,14 +4684,1037 @@ mod tests {
     }
 
     fn worker() -> Worker {
-        let (_commands, command_receiver) = mpsc::channel();
+        let (_control_commands, control_command_receiver) = mpsc::channel();
+        let (_work_commands, work_command_receiver) = mpsc::channel();
         Worker::new(
             create_inotify().unwrap(),
             Arc::new(create_eventfd().unwrap()),
-            command_receiver,
+            control_command_receiver,
+            work_command_receiver,
             Arc::new(RuntimeCounters::default()),
             None,
         )
+    }
+
+    fn bound_cancellation() -> EstablishmentCancellation {
+        let cancellation = EstablishmentCancellation::new().unwrap();
+        cancellation.shared.bind().unwrap();
+        cancellation
+    }
+
+    fn cancellation_at_establishment_barrier(barrier: EstablishmentBarrier, shared_peer: bool) {
+        let root = TestRoot::new("establishment-cancellation-barrier");
+        let cancellation = bound_cancellation();
+        let armed = Arc::new(AtomicBool::new(!shared_peer));
+        let fired = Arc::new(AtomicBool::new(false));
+        let hook_cancellation = cancellation.clone();
+        let hook_armed = Arc::clone(&armed);
+        let hook_fired = Arc::clone(&fired);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, _path| {
+            if observed == barrier
+                && hook_armed.load(Ordering::Acquire)
+                && !hook_fired.swap(true, Ordering::AcqRel)
+            {
+                hook_cancellation.cancel();
+            }
+        });
+        let runtime = Runtime::start_with_establishment_barrier_hook(None, hook).unwrap();
+
+        let peer = shared_peer.then(|| {
+            runtime
+                .subscribe(
+                    root.0.clone(),
+                    SubscriptionOptions::default(),
+                    Arc::new(SharedStats::new()),
+                )
+                .unwrap()
+        });
+        armed.store(true, Ordering::Release);
+
+        let pending = runtime
+            .begin_subscribe(
+                root.0.clone(),
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                cancellation.shared(),
+            )
+            .unwrap();
+        let error = match pending.wait() {
+            Ok(_) => panic!("barrier cancellation unexpectedly established a subscription"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::OperationCancelled);
+        assert!(
+            fired.load(Ordering::Acquire),
+            "establishment barrier hook was not reached"
+        );
+
+        if let Some(peer) = peer {
+            assert_eq!(runtime.stats().subscriptions, 1);
+            assert_eq!(runtime.stats().native_watches, 1);
+            let sentinel = root.0.join("peer-remains-live");
+            fs::write(&sentinel, b"peer").unwrap();
+            wait_for_batch_path(&peer.receiver, &sentinel);
+            runtime.dispose(peer.id).unwrap();
+        } else {
+            assert_eq!(runtime.stats().subscriptions, 0);
+            assert_eq!(runtime.stats().native_watches, 0);
+        }
+        runtime.shutdown_and_join().unwrap();
+        assert_eq!(runtime.stats(), RuntimeStats::default());
+    }
+
+    #[test]
+    fn cancellation_after_unique_watch_allocation_rolls_back_before_acknowledgement() {
+        cancellation_at_establishment_barrier(EstablishmentBarrier::AfterAddWatch, false);
+    }
+
+    #[test]
+    fn cancellation_after_shared_interest_preserves_the_established_peer() {
+        cancellation_at_establishment_barrier(EstablishmentBarrier::SharingExistingWatch, true);
+    }
+
+    #[test]
+    fn cancellation_at_the_final_commit_boundary_rolls_back_before_acknowledgement() {
+        cancellation_at_establishment_barrier(EstablishmentBarrier::BeforeFinalCommit, false);
+    }
+
+    #[test]
+    fn cancellation_during_a_traversal_entry_rolls_back_before_acknowledgement() {
+        cancellation_at_establishment_barrier(EstablishmentBarrier::DuringTraversal, false);
+    }
+
+    #[test]
+    fn cancellation_after_several_traversed_directories_rolls_back_incrementally() {
+        let root = TestRoot::new("later-traversal-cancellation");
+        for index in 0..4 {
+            fs::create_dir(root.0.join(format!("child-{index}"))).unwrap();
+        }
+        let cancellation = bound_cancellation();
+        let added_watches = Arc::new(AtomicUsize::new(0));
+        let traversed_directories = Arc::new(Mutex::new(BTreeSet::new()));
+        let fired = Arc::new(AtomicBool::new(false));
+        let hook_cancellation = cancellation.clone();
+        let hook_added_watches = Arc::clone(&added_watches);
+        let hook_traversed_directories = Arc::clone(&traversed_directories);
+        let hook_fired = Arc::clone(&fired);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, path| {
+            if observed == EstablishmentBarrier::AfterAddWatch {
+                hook_added_watches.fetch_add(1, Ordering::AcqRel);
+                return;
+            }
+            if observed != EstablishmentBarrier::DuringTraversal {
+                return;
+            }
+            let distinct = {
+                let mut traversed = hook_traversed_directories
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                traversed.insert(path.to_path_buf());
+                traversed.len()
+            };
+            if distinct >= 3 && !hook_fired.swap(true, Ordering::AcqRel) {
+                assert!(
+                    hook_added_watches.load(Ordering::Acquire) >= 3,
+                    "later traversal cancellation fired before several watches were allocated"
+                );
+                hook_cancellation.cancel();
+            }
+        });
+        let runtime = Runtime::start_with_establishment_barrier_hook(None, hook).unwrap();
+        let pending = runtime
+            .begin_subscribe(
+                root.0.clone(),
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                cancellation.shared(),
+            )
+            .unwrap();
+
+        let error = match pending.wait() {
+            Ok(_) => panic!("later traversal cancellation unexpectedly established"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::OperationCancelled);
+        assert!(fired.load(Ordering::Acquire));
+        assert!(
+            traversed_directories
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len()
+                >= 3
+        );
+        assert_eq!(runtime.stats().subscriptions, 0);
+        assert_eq!(runtime.stats().native_watches, 0);
+        assert_eq!(runtime.stats().deferred_interests, 0);
+        runtime.shutdown_and_join().unwrap();
+        assert_eq!(runtime.stats(), RuntimeStats::default());
+    }
+
+    fn cancellation_at_partial_final_commit(
+        native_watch_budget: Option<usize>,
+        options: SubscriptionOptions,
+    ) {
+        let root = TestRoot::new("partial-final-cancellation");
+        fs::create_dir(root.0.join("deferred-child")).unwrap();
+        let cancellation = bound_cancellation();
+        let hook_cancellation = cancellation.clone();
+        let fired = Arc::new(AtomicBool::new(false));
+        let hook_fired = Arc::clone(&fired);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, _path| {
+            if observed == EstablishmentBarrier::BeforeFinalCommit
+                && !hook_fired.swap(true, Ordering::AcqRel)
+            {
+                hook_cancellation.cancel();
+            }
+        });
+        let runtime =
+            Runtime::start_with_establishment_barrier_hook(native_watch_budget, hook).unwrap();
+        let pending = runtime
+            .begin_subscribe(
+                root.0.clone(),
+                options,
+                Arc::new(SharedStats::new()),
+                cancellation.shared(),
+            )
+            .unwrap();
+
+        let error = match pending.wait() {
+            Ok(_) => panic!("partial establishment unexpectedly committed after cancellation"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::OperationCancelled);
+        assert!(fired.load(Ordering::Acquire));
+        assert_eq!(runtime.stats().subscriptions, 0);
+        assert_eq!(runtime.stats().native_watches, 0);
+        assert_eq!(runtime.stats().deferred_interests, 0);
+        runtime.shutdown_and_join().unwrap();
+    }
+
+    #[test]
+    fn cancellation_rolls_back_watch_limit_partial_state() {
+        cancellation_at_partial_final_commit(
+            None,
+            SubscriptionOptions {
+                watch_limit: Some(1),
+                ..SubscriptionOptions::default()
+            },
+        );
+    }
+
+    #[test]
+    fn cancellation_rolls_back_runtime_budget_partial_state() {
+        cancellation_at_partial_final_commit(Some(1), SubscriptionOptions::default());
+    }
+
+    fn root_change_terminal_race(cancel_before_failure_commit: bool) -> WatchboundError {
+        let parent = TestRoot::new("root-change-terminal-race");
+        let root = parent.0.join("root");
+        let moved = parent.0.join("moved");
+        fs::create_dir(&root).unwrap();
+        let cancellation = bound_cancellation();
+        let hook_cancellation = cancellation.clone();
+        let hook_root = root.clone();
+        let hook_moved = moved.clone();
+        let renamed = Arc::new(AtomicBool::new(false));
+        let hook_renamed = Arc::clone(&renamed);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, path| {
+            if observed == EstablishmentBarrier::BeforeFinalValidation
+                && path == hook_root
+                && !hook_renamed.swap(true, Ordering::AcqRel)
+            {
+                fs::rename(&hook_root, &hook_moved).unwrap();
+            }
+            if cancel_before_failure_commit && observed == EstablishmentBarrier::BeforeFinalCommit {
+                hook_cancellation.cancel();
+            }
+        });
+        let runtime = Runtime::start_with_establishment_barrier_hook(None, hook).unwrap();
+        let pending = runtime
+            .begin_subscribe(
+                root,
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                cancellation.shared(),
+            )
+            .unwrap();
+        let error = match pending.wait() {
+            Ok(_) => panic!("changed root unexpectedly established"),
+            Err(error) => error,
+        };
+        assert!(renamed.load(Ordering::Acquire));
+        if !cancel_before_failure_commit {
+            cancellation.cancel();
+            assert!(!cancellation.is_cancelled());
+        }
+        assert_eq!(runtime.stats().subscriptions, 0);
+        assert_eq!(runtime.stats().native_watches, 0);
+        runtime.shutdown_and_join().unwrap();
+        error
+    }
+
+    #[test]
+    fn cancellation_wins_before_a_root_change_failure_commits() {
+        assert_eq!(
+            root_change_terminal_race(true).code(),
+            ErrorCode::OperationCancelled
+        );
+    }
+
+    #[test]
+    fn root_change_failure_wins_before_late_cancellation() {
+        assert_eq!(
+            root_change_terminal_race(false).code(),
+            ErrorCode::RootUnavailable
+        );
+    }
+
+    #[test]
+    fn cancellation_escapes_a_full_work_admission_lane() {
+        let root = TestRoot::new("full-work-admission");
+        let first_cancellation = bound_cancellation();
+        let (reached, barrier_reached) = mpsc::sync_channel(1);
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let hook_gate = Arc::clone(&gate);
+        let fired = Arc::new(AtomicBool::new(false));
+        let hook_fired = Arc::clone(&fired);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, _path| {
+            if observed != EstablishmentBarrier::AfterAddWatch
+                || hook_fired.swap(true, Ordering::AcqRel)
+            {
+                return;
+            }
+            reached.send(()).unwrap();
+            let (released, wake) = &*hook_gate;
+            let released = released
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (released, _) = wake
+                .wait_timeout_while(released, Duration::from_secs(5), |released| !*released)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(*released, "timed out waiting to release add-watch hook");
+        });
+        let runtime = Runtime::start_with_establishment_barrier_hook(None, hook).unwrap();
+        let first = runtime
+            .begin_subscribe(
+                root.0.clone(),
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                first_cancellation.shared(),
+            )
+            .unwrap();
+        barrier_reached
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker did not reach add-watch barrier");
+
+        let mut queued = Vec::with_capacity(WORK_COMMAND_QUEUE_CAPACITY);
+        for _ in 0..WORK_COMMAND_QUEUE_CAPACITY {
+            let cancellation = bound_cancellation();
+            let pending = runtime
+                .begin_subscribe(
+                    root.0.clone(),
+                    SubscriptionOptions::default(),
+                    Arc::new(SharedStats::new()),
+                    cancellation.shared(),
+                )
+                .unwrap();
+            queued.push((cancellation, pending));
+        }
+
+        let waiting_cancellation = bound_cancellation();
+        let waiting_control = waiting_cancellation.clone();
+        let waiting_runtime = Arc::clone(&runtime);
+        let waiting_root = root.0.clone();
+        let (completed, completion) = mpsc::sync_channel(1);
+        let waiter = std::thread::spawn(move || {
+            let result = waiting_runtime.begin_subscribe(
+                waiting_root,
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                waiting_control.shared(),
+            );
+            completed.send(result).unwrap();
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while waiting_cancellation
+            .shared
+            .command_admission_full_observations()
+            == 0
+        {
+            assert!(
+                Instant::now() < deadline,
+                "subscribe did not observe the full work lane"
+            );
+            std::thread::yield_now();
+        }
+        waiting_cancellation.cancel();
+        let waiting_result = completion
+            .recv_timeout(Duration::from_secs(1))
+            .expect("full-lane cancellation did not release the caller");
+        let waiting_error = match waiting_result {
+            Ok(_) => panic!("a cancelled full-lane attempt must not be admitted"),
+            Err(error) => error,
+        };
+        assert_eq!(waiting_error.code(), ErrorCode::OperationCancelled);
+        waiter.join().unwrap();
+
+        first_cancellation.cancel();
+        for (cancellation, _) in &queued {
+            cancellation.cancel();
+        }
+        let (released, wake) = &*gate;
+        *released
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+        wake.notify_all();
+
+        let first_error = match first.wait() {
+            Ok(_) => panic!("blocked first establishment unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(first_error.code(), ErrorCode::OperationCancelled);
+        for (_, pending) in queued {
+            let error = match pending.wait() {
+                Ok(_) => panic!("cancelled queued establishment unexpectedly succeeded"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), ErrorCode::OperationCancelled);
+        }
+        assert_eq!(runtime.stats().subscriptions, 0);
+        assert_eq!(runtime.stats().native_watches, 0);
+        runtime.shutdown_and_join().unwrap();
+    }
+
+    #[test]
+    fn dropped_establishment_acknowledgement_rolls_back_committed_resources() {
+        let root = TestRoot::new("dropped-establishment-ack");
+        let cancellation = bound_cancellation();
+        let (reached, barrier_reached) = mpsc::sync_channel(1);
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let hook_gate = Arc::clone(&gate);
+        let fired = Arc::new(AtomicBool::new(false));
+        let hook_fired = Arc::clone(&fired);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, _path| {
+            if observed != EstablishmentBarrier::BeforeFinalCommit
+                || hook_fired.swap(true, Ordering::AcqRel)
+            {
+                return;
+            }
+            reached.send(()).unwrap();
+            let (released, wake) = &*hook_gate;
+            let released = released
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (released, timeout) = wake
+                .wait_timeout_while(released, Duration::from_secs(5), |released| !*released)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(*released, "timed out waiting to release final-commit hook");
+            assert!(!timeout.timed_out());
+        });
+        let runtime = Runtime::start_with_establishment_barrier_hook(None, hook).unwrap();
+        let pending = runtime
+            .begin_subscribe(
+                root.0.clone(),
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                cancellation.shared(),
+            )
+            .unwrap();
+
+        barrier_reached
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker did not reach final establishment commit");
+        drop(pending);
+        let (released, wake) = &*gate;
+        *released
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+        wake.notify_all();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while runtime.stats().subscriptions != 0 || runtime.stats().native_watches != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "orphaned establishment resources were not rolled back"
+            );
+            std::thread::yield_now();
+        }
+        runtime.shutdown_and_join().unwrap();
+        assert_eq!(runtime.stats(), RuntimeStats::default());
+    }
+
+    #[test]
+    fn frozen_scheduler_rounds_do_not_starve_requeued_low_ids_under_churn() {
+        let mut runnable = FairIdQueue::default();
+        runnable.schedule(1);
+        assert_eq!(runnable.pop_next(), Some(1));
+        runnable.schedule(1);
+
+        for higher_id in 2..=1_024 {
+            runnable.schedule(higher_id);
+        }
+
+        assert_eq!(
+            runnable.pop_next(),
+            Some(1),
+            "newer higher IDs must not extend the round ahead of requeued work"
+        );
+    }
+
+    #[test]
+    fn terminal_teardown_removes_the_last_published_deferred_contribution() {
+        let cancelled_root = TestRoot::new("published-counter-cancelled");
+        let peer_root = TestRoot::new("published-counter-peer");
+        let cancellation = bound_cancellation();
+        cancellation.cancel();
+        let (mut cancelled, _cancelled_batches) =
+            state(&cancelled_root.0, SubscriptionOptions::default());
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        cancelled.establishment = Some(PendingEstablishment {
+            generation: 0,
+            acknowledgement,
+            cancellation: cancellation.shared(),
+        });
+        cancelled
+            .stats
+            .deferred_directories
+            .store(5, Ordering::Release);
+        cancelled.published_deferred_directories = 10;
+
+        let (mut peer, _peer_batches) = state(&peer_root.0, SubscriptionOptions::default());
+        peer.id = 2;
+        peer.stats.deferred_directories.store(4, Ordering::Release);
+        peer.published_deferred_directories = 4;
+
+        let mut worker = worker();
+        worker.begin_cancelled_establishment_teardown(&mut cancelled);
+        cancelled.establishment_teardown.as_mut().unwrap().phase =
+            EstablishmentTeardownPhase::Complete;
+        worker.subscriptions.insert(peer.id, peer);
+        worker.allocator_order.schedule(cancelled.id);
+        worker
+            .counters
+            .deferred_interests
+            .store(14, Ordering::Release);
+
+        worker.process_establishment_teardown_turn(cancelled);
+
+        let result = acknowledged
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .value;
+        let error = match result {
+            Ok(_) => panic!("cancelled teardown unexpectedly established"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::OperationCancelled);
+        assert_eq!(
+            worker.counters.deferred_interests.load(Ordering::Acquire),
+            4
+        );
+        worker.remove_subscription(2);
+    }
+
+    #[test]
+    fn bounded_teardown_yields_to_a_peer_and_clears_scheduler_membership() {
+        let cancelled_root = TestRoot::new("bounded-teardown-cancelled");
+        let peer_root = TestRoot::new("bounded-teardown-peer");
+        let cancellation = bound_cancellation();
+        cancellation.cancel();
+        let (mut cancelled, _cancelled_batches) =
+            state(&cancelled_root.0, SubscriptionOptions::default());
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        cancelled.establishment = Some(PendingEstablishment {
+            generation: 0,
+            acknowledgement,
+            cancellation: cancellation.shared(),
+        });
+        cancelled.pending_paths = (0..(MAX_ESTABLISHMENT_TEARDOWN_ITEMS_PER_TURN * 2 + 1))
+            .map(|index| cancelled_root.0.join(format!("pending-{index}")))
+            .collect();
+        cancelled
+            .stats
+            .deferred_directories
+            .store(7, Ordering::Release);
+        cancelled.published_deferred_directories = 7;
+
+        let (mut peer, peer_batches) = state(
+            &peer_root.0,
+            SubscriptionOptions {
+                batch_window: Duration::from_nanos(1),
+                ..SubscriptionOptions::default()
+            },
+        );
+        peer.id = 2;
+        peer.topology_jobs
+            .push_back(TopologyJob::new(peer_root.0.clone(), false));
+        peer.topology_barriers = 1;
+
+        let mut worker = worker();
+        worker
+            .counters
+            .deferred_interests
+            .store(7, Ordering::Release);
+        worker.begin_cancelled_establishment_teardown(&mut cancelled);
+        worker.subscriptions.insert(cancelled.id, cancelled);
+        worker.subscriptions.insert(peer.id, peer);
+        worker.allocator_order.schedule(1);
+        worker.allocator_order.schedule(2);
+        worker.topology_runnable.schedule(1);
+        worker.topology_runnable.schedule(2);
+
+        assert!(worker.process_topology_turn());
+        assert_eq!(
+            worker.subscriptions[&1].pending_paths.len(),
+            MAX_ESTABLISHMENT_TEARDOWN_ITEMS_PER_TURN + 1
+        );
+        assert!(worker.topology_runnable.contains(&1));
+        assert!(worker.allocator_order.contains(&1));
+
+        assert!(worker.process_topology_turn());
+        assert!(
+            worker.subscriptions[&2]
+                .watched_paths
+                .contains_key(&peer_root.0),
+            "peer topology did not progress between teardown quanta"
+        );
+
+        let peer_sentinel = peer_root.0.join("delivered-between-quanta");
+        let delivery_fired = Arc::new(AtomicBool::new(false));
+        let hook_delivery_fired = Arc::clone(&delivery_fired);
+        let hook_peer_sentinel = peer_sentinel.clone();
+        worker.establishment_barrier_hook = Some(Arc::new(move |observed, _path| {
+            if observed == EstablishmentBarrier::TeardownQuantumCompleted
+                && !hook_delivery_fired.swap(true, Ordering::AcqRel)
+            {
+                fs::write(&hook_peer_sentinel, b"peer").unwrap();
+            }
+        }));
+        assert!(worker.process_topology_turn());
+        assert!(delivery_fired.load(Ordering::Acquire));
+        assert!(worker.subscriptions.contains_key(&1));
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+        assert!(worker.process_native_turn());
+        worker.run_maintenance();
+        wait_for_batch_path(&peer_batches, &peer_sentinel);
+
+        let pending_before_churn = worker.subscriptions[&1].pending_paths.len();
+        for higher_id in 3..=8 {
+            worker.topology_runnable.schedule(higher_id);
+            assert!(worker.process_topology_turn());
+        }
+        assert!(
+            worker
+                .subscriptions
+                .get(&1)
+                .is_none_or(|state| state.pending_paths.len() < pending_before_churn),
+            "continuous higher-ID admissions starved the requeued teardown"
+        );
+
+        for _ in 0..16 {
+            if !worker.subscriptions.contains_key(&1) {
+                break;
+            }
+            assert!(worker.process_topology_turn());
+        }
+        let result = acknowledged
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .value;
+        let error = match result {
+            Ok(_) => panic!("cancelled teardown unexpectedly established a subscription"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::OperationCancelled);
+        assert!(!worker.subscriptions.contains_key(&1));
+        assert!(!worker.topology_runnable.contains(&1));
+        assert!(!worker.allocator_order.contains(&1));
+        assert_eq!(
+            worker.counters.deferred_interests.load(Ordering::Acquire),
+            0
+        );
+        for higher_id in 3..=8 {
+            worker.topology_runnable.remove(&higher_id);
+        }
+        worker.remove_subscription(2);
+        assert!(worker.topology_runnable.is_empty());
+        assert!(worker.allocator_order.is_empty());
+    }
+
+    #[test]
+    fn exhausted_subscription_ids_reject_without_aliasing_live_state() {
+        let root = TestRoot::new("subscription-id-exhaustion");
+        let cancellation = bound_cancellation();
+        let stats = Arc::new(SharedStats::new());
+        let (output, _batches) =
+            mpsc::sync_channel(SubscriptionOptions::default().output_queue_capacity);
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        let (_control_commands, control_command_receiver) = mpsc::channel();
+        let (work_commands, work_command_receiver) = mpsc::channel();
+        let mut worker = Worker::new(
+            create_inotify().unwrap(),
+            Arc::new(create_eventfd().unwrap()),
+            control_command_receiver,
+            work_command_receiver,
+            Arc::new(RuntimeCounters::default()),
+            None,
+        );
+        worker.next_subscription_id = SubscriptionId::MAX;
+        work_commands
+            .send(CommandEnvelope {
+                generation: 0,
+                command: Command::Subscribe {
+                    root: root.0.clone(),
+                    options: SubscriptionOptions::default(),
+                    stats,
+                    output,
+                    acknowledgement,
+                    cancellation: cancellation.shared(),
+                },
+            })
+            .unwrap();
+
+        assert_eq!(
+            worker.process_command_turn(CommandLane::Work, MAX_WORK_COMMANDS_PER_TURN),
+            1
+        );
+        let result = acknowledged
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .value;
+        let error = match result {
+            Ok(_) => panic!("exhausted subscription IDs must not establish"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::Internal);
+        assert!(worker.subscriptions.is_empty());
+        assert!(worker.topology_runnable.is_empty());
+        assert!(worker.allocator_order.is_empty());
+        assert_eq!(worker.next_subscription_id, SubscriptionId::MAX);
+    }
+
+    #[test]
+    fn established_disposal_is_quantized_and_yields_to_peer_delivery() {
+        let disposing_root = TestRoot::new("quantized-established-disposal");
+        let directory_count = MAX_DISPOSAL_ITEMS_PER_TURN * 2 + 1;
+        let mut directories = Vec::with_capacity(directory_count);
+        for index in 0..directory_count {
+            let path = disposing_root.0.join(format!("watched-{index}"));
+            fs::create_dir(&path).unwrap();
+            directories.push(path);
+        }
+        let shared_directory = directories
+            .iter()
+            .max()
+            .expect("the disposal test must create watched directories")
+            .clone();
+
+        let (mut disposing, _disposing_batches) =
+            state(&disposing_root.0, SubscriptionOptions::default());
+        let disposing_stats = Arc::clone(&disposing.stats);
+        let (mut peer, peer_batches) = state(
+            &shared_directory,
+            SubscriptionOptions {
+                batch_window: Duration::from_nanos(1),
+                ..SubscriptionOptions::default()
+            },
+        );
+        peer.id = 2;
+
+        let (control_commands, control_command_receiver) = mpsc::channel();
+        let (_work_commands, work_command_receiver) = mpsc::channel();
+        let mut worker = Worker::new(
+            create_inotify().unwrap(),
+            Arc::new(create_eventfd().unwrap()),
+            control_command_receiver,
+            work_command_receiver,
+            Arc::new(RuntimeCounters::default()),
+            None,
+        );
+        for directory in &directories {
+            assert_eq!(
+                worker
+                    .add_interest(&mut disposing, directory, true)
+                    .unwrap(),
+                InterestAllocation::Added {
+                    created_native_watch: true,
+                }
+            );
+        }
+        assert_eq!(
+            worker
+                .add_interest(&mut peer, &shared_directory, true)
+                .unwrap(),
+            InterestAllocation::Added {
+                created_native_watch: false,
+            }
+        );
+        let peer_descriptor = peer.watched_paths[&shared_directory];
+        for index in 0..3 {
+            disposing.defer(
+                disposing_root.0.join(format!("deferred-{index}")),
+                PartialReason::ResourceLimit,
+                DeferredCause::SubscriptionLimit,
+            );
+        }
+        disposing.publish_resource_counts();
+        peer.publish_resource_counts();
+        worker.subscriptions.insert(disposing.id, disposing);
+        worker.subscriptions.insert(peer.id, peer);
+        worker.allocator_order.schedule(1);
+        worker.allocator_order.schedule(2);
+        worker.counters.subscriptions.store(2, Ordering::Release);
+        worker.publish_deferred_interest_count();
+        assert_eq!(
+            worker.counters.deferred_interests.load(Ordering::Acquire),
+            3
+        );
+
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        control_commands
+            .send(CommandEnvelope {
+                generation: 0,
+                command: Command::Dispose {
+                    subscription_id: 1,
+                    acknowledgement,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            worker.process_command_turn(CommandLane::Control, MAX_CONTROL_COMMANDS_PER_TURN),
+            1
+        );
+        assert!(worker.subscriptions.contains_key(&1));
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+
+        assert!(worker.process_topology_turn());
+        assert!(worker.subscriptions.contains_key(&1));
+        assert!(
+            worker.subscriptions[&1].watched_paths.len()
+                <= directory_count - MAX_DISPOSAL_ITEMS_PER_TURN
+        );
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+
+        let sentinel = shared_directory.join("delivered-during-disposal");
+        worker.handle_native_event(ParsedEvent {
+            descriptor: peer_descriptor,
+            mask: libc::IN_CREATE,
+            name: sentinel.file_name().map(std::ffi::OsStr::to_os_string),
+        });
+        worker.run_maintenance();
+        wait_for_batch_path(&peer_batches, &sentinel);
+        assert!(worker.subscriptions.contains_key(&1));
+        assert_eq!(disposing_stats.raw_events.load(Ordering::Acquire), 0);
+
+        for _ in 0..16 {
+            if !worker.subscriptions.contains_key(&1) {
+                break;
+            }
+            assert!(worker.process_topology_turn());
+        }
+        acknowledged
+            .recv_timeout(Duration::from_secs(1))
+            .expect("dispose acknowledgement did not follow joined cleanup");
+        assert!(!worker.subscriptions.contains_key(&1));
+        assert!(!worker.topology_runnable.contains(&1));
+        assert!(!worker.allocator_order.contains(&1));
+        assert_eq!(worker.counters.subscriptions.load(Ordering::Acquire), 1);
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 1);
+        assert_eq!(
+            worker.counters.deferred_interests.load(Ordering::Acquire),
+            0
+        );
+        assert_eq!(
+            disposing_stats.watched_directories.load(Ordering::Acquire),
+            0
+        );
+        assert_eq!(
+            disposing_stats.deferred_directories.load(Ordering::Acquire),
+            0
+        );
+        assert!(!disposing_stats.disposed.load(Ordering::Acquire));
+        assert!(
+            worker.subscriptions[&2]
+                .watched_paths
+                .contains_key(&shared_directory)
+        );
+
+        worker.remove_subscription(2);
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn shutdown_joins_established_disposal_through_bounded_turns() {
+        let root = TestRoot::new("quantized-shutdown-disposal");
+        let directory_count = MAX_DISPOSAL_ITEMS_PER_TURN * 2 + 1;
+        let mut directories = Vec::with_capacity(directory_count);
+        for index in 0..directory_count {
+            let path = root.0.join(format!("watched-{index}"));
+            fs::create_dir(&path).unwrap();
+            directories.push(path);
+        }
+
+        let (mut state, _batches) = state(&root.0, SubscriptionOptions::default());
+        let stats = Arc::clone(&state.stats);
+        let (control_commands, control_command_receiver) = mpsc::channel();
+        let (_work_commands, work_command_receiver) = mpsc::channel();
+        let mut worker = Worker::new(
+            create_inotify().unwrap(),
+            Arc::new(create_eventfd().unwrap()),
+            control_command_receiver,
+            work_command_receiver,
+            Arc::new(RuntimeCounters::default()),
+            None,
+        );
+        for directory in &directories {
+            assert_eq!(
+                worker.add_interest(&mut state, directory, true).unwrap(),
+                InterestAllocation::Added {
+                    created_native_watch: true,
+                }
+            );
+        }
+        state.publish_resource_counts();
+        worker.subscriptions.insert(state.id, state);
+        worker.allocator_order.schedule(1);
+        worker.counters.subscriptions.store(1, Ordering::Release);
+
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        control_commands
+            .send(CommandEnvelope {
+                generation: 7,
+                command: Command::Shutdown { acknowledgement },
+            })
+            .unwrap();
+        assert_eq!(
+            worker.process_command_turn(CommandLane::Control, MAX_CONTROL_COMMANDS_PER_TURN),
+            1
+        );
+        assert!(worker.shutting_down);
+        assert!(worker.subscriptions.contains_key(&1));
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+
+        assert!(worker.process_shutdown_turn());
+        assert!(worker.subscriptions.contains_key(&1));
+        assert!(
+            worker.subscriptions[&1].watched_paths.len()
+                <= directory_count - MAX_DISPOSAL_ITEMS_PER_TURN
+        );
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+
+        let mut turns = 1;
+        while !worker.subscriptions.is_empty() {
+            assert!(worker.process_shutdown_turn());
+            turns += 1;
+            assert!(
+                turns < 16,
+                "shutdown subscription disposal did not converge"
+            );
+            assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+        }
+        assert!(turns >= 3);
+        let retired_before = worker.retired_ignored_lifetimes.len();
+        assert!(retired_before > MAX_DISPOSAL_ITEMS_PER_TURN);
+        assert!(worker.process_shutdown_turn());
+        assert_eq!(
+            worker.retired_ignored_lifetimes.len(),
+            retired_before - MAX_DISPOSAL_ITEMS_PER_TURN
+        );
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+        while worker.process_shutdown_turn() {}
+        let acknowledged = acknowledged
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown acknowledgement did not follow joined cleanup");
+        assert_eq!(acknowledged.generation, 7);
+        assert!(worker.subscriptions.is_empty());
+        assert!(worker.topology_runnable.is_empty());
+        assert!(worker.allocator_order.is_empty());
+        assert_eq!(worker.counters.subscriptions.load(Ordering::Acquire), 0);
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+        assert_eq!(stats.watched_directories.load(Ordering::Acquire), 0);
+        assert!(stats.disposed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn disposal_interrupts_transactions_before_bounded_scratch_cleanup() {
+        let root = TestRoot::new("quantized-transaction-disposal");
+        let (mut state, _batches) = state(&root.0, SubscriptionOptions::default());
+        let stats = Arc::clone(&state.stats);
+        let path_count = MAX_DISPOSAL_ITEMS_PER_TURN * 2 + 1;
+        let paths = (0..path_count)
+            .map(|index| root.0.join(format!("candidate-{index}")))
+            .collect::<Vec<_>>();
+        let (transaction_acknowledgement, transaction_acknowledged) = mpsc::sync_channel(1);
+        state.exclusion_update = Some(PendingExclusionUpdate {
+            generation: 1,
+            exclusions: paths.iter().cloned().collect(),
+            previous_exclusions: paths.iter().map(|path| path.join("previous")).collect(),
+            newly_excluded: paths.iter().cloned().collect(),
+            newly_included: paths.iter().map(|path| path.join("included")).collect(),
+            acknowledgement: transaction_acknowledgement,
+            phase: ExclusionUpdatePhase::WaitingForTopology,
+        });
+
+        let (control_commands, control_command_receiver) = mpsc::channel();
+        let (_work_commands, work_command_receiver) = mpsc::channel();
+        let mut worker = Worker::new(
+            create_inotify().unwrap(),
+            Arc::new(create_eventfd().unwrap()),
+            control_command_receiver,
+            work_command_receiver,
+            Arc::new(RuntimeCounters::default()),
+            None,
+        );
+        worker.subscriptions.insert(state.id, state);
+        worker.allocator_order.schedule(1);
+        worker.counters.subscriptions.store(1, Ordering::Release);
+
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        control_commands
+            .send(CommandEnvelope {
+                generation: 0,
+                command: Command::Dispose {
+                    subscription_id: 1,
+                    acknowledgement,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            worker.process_command_turn(CommandLane::Control, MAX_CONTROL_COMMANDS_PER_TURN),
+            1
+        );
+        let interrupted = transaction_acknowledged
+            .recv_timeout(Duration::from_secs(1))
+            .expect("disposal must promptly interrupt the active transaction")
+            .value
+            .expect_err("the active transaction must not commit during disposal");
+        assert_eq!(interrupted.code(), ErrorCode::OperationInterrupted);
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+
+        assert!(worker.process_topology_turn());
+        let disposal = worker.subscriptions[&1]
+            .disposal
+            .as_ref()
+            .expect("scratch cleanup must remain pending after one quantum");
+        assert_eq!(
+            disposal.cleanup_path_sets.front().unwrap().len(),
+            path_count - MAX_DISPOSAL_ITEMS_PER_TURN
+        );
+        assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));
+
+        drop(acknowledged);
+        for _ in 0..16 {
+            if !worker.subscriptions.contains_key(&1) {
+                break;
+            }
+            assert!(worker.process_topology_turn());
+        }
+        assert!(!worker.subscriptions.contains_key(&1));
+        assert!(!worker.topology_runnable.contains(&1));
+        assert!(!worker.allocator_order.contains(&1));
+        assert_eq!(worker.counters.subscriptions.load(Ordering::Acquire), 0);
+        assert!(!stats.disposed.load(Ordering::Acquire));
     }
 
     fn wait_for_root_attachment(state: &Arc<Mutex<RootState>>, attachment: RootAttachment) {

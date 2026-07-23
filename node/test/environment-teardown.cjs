@@ -1,14 +1,17 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const test = require("node:test");
-const { isDeepStrictEqual } = require("node:util");
+const { isDeepStrictEqual, promisify } = require("node:util");
 const { Worker } = require("node:worker_threads");
 const binding = require("../index.js");
+
+const execFileAsync = promisify(execFile);
 
 const ZERO_RUNTIME_STATS = {
   active: false,
@@ -115,6 +118,12 @@ test("destroying a Node environment releases its live native subscription", { ti
     assert.equal(active.workerThreads, 1);
     assert.ok(active.nativeWatches >= 1);
     assert.equal(active.subscriptions, 1);
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherEnvironments === 1
+        && diagnostics.dispatcherThreads === 1
+        && diagnostics.registrations === 1;
+    }, "worker subscription did not own exactly one environment dispatcher");
 
     const workerObserved = waitForWorkerMessage(worker, "change-observed");
     fs.writeFileSync(workerChange, "worker");
@@ -128,6 +137,15 @@ test("destroying a Node environment releases its live native subscription", { ti
       () => isDeepStrictEqual(normalizedRuntimeStats(observer), ZERO_RUNTIME_STATS),
       () => `worker teardown left process runtime resources active: ${JSON.stringify(normalizedRuntimeStats(observer))}`,
     );
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherEnvironments === 0
+        && diagnostics.dispatcherThreads === 0
+        && diagnostics.registrations === 0
+        && diagnostics.cleanupCoordinatorThreads === 0
+        && diagnostics.cleanupRequests === 0
+        && diagnostics.activeThreadsafeFunctions === 0;
+    }, "worker teardown left Node delivery resources active");
 
     const freshBatches = [];
     const freshEngine = binding.createEngine();
@@ -147,9 +165,125 @@ test("destroying a Node environment releases its live native subscription", { ti
       () => isDeepStrictEqual(normalizedRuntimeStats(freshEngine), ZERO_RUNTIME_STATS),
       () => `fresh joined disposal left process runtime resources active: ${JSON.stringify(normalizedRuntimeStats(freshEngine))}`,
     );
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherThreads === 0
+        && diagnostics.registrations === 0
+        && diagnostics.outstandingCallbacks === 0
+        && diagnostics.activeThreadsafeFunctions === 0;
+    }, "fresh joined disposal left Node delivery resources active");
   } finally {
     await freshSubscription?.dispose();
     if (worker) await terminateWorker(worker).catch(() => {});
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("independent Worker environments isolate blocked callbacks and teardown", { timeout: 20_000 }, async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-worker-isolation-"));
+  const rootA = path.join(parent, "a");
+  const rootB = path.join(parent, "b");
+  fs.mkdirSync(rootA);
+  fs.mkdirSync(rootB);
+  const blockBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const blockControl = new Int32Array(blockBuffer);
+  const fixture = path.join(__dirname, "fixtures", "delivery-worker.cjs");
+  let workerA;
+  let workerB;
+
+  try {
+    workerA = new Worker(fixture, {
+      workerData: {
+        root: rootA,
+        label: "a",
+        blockControl: blockBuffer,
+      },
+    });
+    workerB = new Worker(fixture, {
+      workerData: {
+        root: rootB,
+        label: "b",
+      },
+    });
+    await Promise.all([
+      waitForWorkerMessage(workerA, "ready"),
+      waitForWorkerMessage(workerB, "ready"),
+    ]);
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherEnvironments === 2
+        && diagnostics.dispatcherThreads === 2
+        && diagnostics.registrations === 2
+        && diagnostics.activeThreadsafeFunctions === 2;
+    }, "two Worker environments did not receive isolated dispatchers");
+
+    const callbackEntered = waitForWorkerMessage(workerA, "callback-entered");
+    const observedA = waitForWorkerMessage(workerA, "observed");
+    fs.writeFileSync(path.join(rootA, "block.txt"), "a");
+    await callbackEntered;
+    assert.equal(Atomics.load(blockControl, 0), 0, "Worker A was not held in its callback");
+
+    const observedB = waitForWorkerMessage(workerB, "observed");
+    fs.writeFileSync(path.join(rootB, "while-a-blocked.txt"), "b");
+    await observedB;
+    assert.equal(
+      Atomics.load(blockControl, 0),
+      0,
+      "Worker A unblocked before Worker B independently delivered",
+    );
+
+    Atomics.store(blockControl, 0, 1);
+    Atomics.notify(blockControl, 0);
+    await observedA;
+
+    await terminateWorker(workerA);
+    workerA = undefined;
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherEnvironments === 1
+        && diagnostics.dispatcherThreads === 1
+        && diagnostics.registrations === 1
+        && diagnostics.activeThreadsafeFunctions === 1;
+    }, "tearing down Worker A disturbed Worker B's delivery environment");
+
+    const observedBAfterTeardown = waitForWorkerMessage(workerB, "observed");
+    fs.writeFileSync(path.join(rootB, "after-a-teardown.txt"), "b2");
+    await observedBAfterTeardown;
+
+    const disposedB = waitForWorkerMessage(workerB, "disposed");
+    workerB.postMessage({ type: "dispose" });
+    await disposedB;
+    await terminateWorker(workerB);
+    workerB = undefined;
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherEnvironments === 0
+        && diagnostics.dispatcherThreads === 0
+        && diagnostics.registrations === 0
+        && diagnostics.outstandingCallbacks === 0
+        && diagnostics.cleanupCoordinatorThreads === 0
+        && diagnostics.cleanupRequests === 0
+        && diagnostics.activeThreadsafeFunctions === 0;
+    }, "Worker isolation test did not restore the Node delivery baseline");
+  } finally {
+    Atomics.store(blockControl, 0, 1);
+    Atomics.notify(blockControl, 0);
+    if (workerA) await terminateWorker(workerA).catch(() => {});
+    if (workerB) await terminateWorker(workerB).catch(() => {});
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("tearing down a Worker cancels queued establishment and permits a fresh subscription", { timeout: 20_000 }, async () => {
+  await execFileAsync(
+    process.execPath,
+    [path.join(__dirname, "fixtures", "uv-threadpool-worker-teardown.cjs")],
+    {
+      env: {
+        ...process.env,
+        UV_THREADPOOL_SIZE: "1",
+      },
+      timeout: 15_000,
+    },
+  );
 });

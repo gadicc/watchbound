@@ -107,7 +107,7 @@ const nativeManifest = {
 };
 
 const wrapperManifest = {
-  name: "@gadicc/watchbound",
+  name: "watchbound",
   ...commonMetadata,
   description:
     "Conservative, resource-aware recursive directory watching for Linux",
@@ -155,6 +155,10 @@ writeJson(path.join(nativeRoot, "package.json"), nativeManifest);
 writeJson(path.join(wrapperRoot, "package.json"), wrapperManifest);
 
 fs.cpSync(wrapperRoot, jsrRoot, { recursive: true });
+writeJson(path.join(jsrRoot, "package.json"), {
+  ...wrapperManifest,
+  name: "@gadicc/watchbound",
+});
 writeJson(path.join(jsrRoot, "jsr.json"), {
   name: "@gadicc/watchbound",
   version,

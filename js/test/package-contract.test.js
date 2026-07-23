@@ -19,6 +19,8 @@ test("private package manifests match the narrow maintained source-build target"
   const native = readJson("node/package.json");
   const { version } = root;
 
+  assert.equal(wrapper.name, "watchbound");
+  assert.equal(native.name, "@gadicc/watchbound-node");
   for (const manifest of [root, wrapper, native]) {
     assert.equal(manifest.private, true);
     assert.equal(manifest.version, version);

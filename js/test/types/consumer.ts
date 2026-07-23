@@ -21,7 +21,7 @@ import {
   type WatchboundOperation,
   type WatchboundRetryAfter as WatchboundRetryAfterType,
   type WatchboundSystemCause,
-} from "@gadicc/watchbound";
+} from "watchbound";
 
 function assertNever(value: never): never {
   throw new Error(`unexpected value: ${String(value)}`);

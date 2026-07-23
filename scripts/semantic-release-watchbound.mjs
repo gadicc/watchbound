@@ -20,7 +20,7 @@ export function publish(_pluginConfig, { nextRelease }) {
   const { version } = nextRelease;
   const distTag = nextRelease.channel ?? "latest";
   const nativePackage = `@gadicc/watchbound-node@${version}`;
-  const wrapperPackage = `@gadicc/watchbound@${version}`;
+  const wrapperPackage = `watchbound@${version}`;
   const jsrPackage = `jsr:@gadicc/watchbound@${version}`;
 
   const nativeExists = packageExists("npm", nativePackage);
@@ -42,15 +42,15 @@ export function publish(_pluginConfig, { nextRelease }) {
   }
 
   return {
-    name: "@gadicc/watchbound",
-    url: `https://www.npmjs.com/package/@gadicc/watchbound/v/${version}`,
+    name: "watchbound",
+    url: `https://www.npmjs.com/package/watchbound/v/${version}`,
   };
 }
 
 function publishNpm(kind, version, distTag) {
   const filename = kind === "node"
     ? `gadicc-watchbound-node-${version}.tgz`
-    : `gadicc-watchbound-${version}.tgz`;
+    : `watchbound-${version}.tgz`;
   run("npm", [
     "publish",
     path.join("dist", "tarballs", filename),

@@ -22,7 +22,7 @@ const tarballRoot = path.join(workspaceRoot, "dist", "tarballs");
 const evidenceRoot = path.join(workspaceRoot, "dist", "evidence");
 const expectedTarballs = [
   `gadicc-watchbound-node-${version}.tgz`,
-  `gadicc-watchbound-${version}.tgz`,
+  `watchbound-${version}.tgz`,
 ].map((filename) => path.join(tarballRoot, filename));
 
 assert.ok(fs.existsSync(binaryPath), `missing native artifact: ${binaryPath}`);
@@ -105,7 +105,7 @@ const tools = {
 
 writeJson(path.join(evidenceRoot, "release-metadata.json"), {
   schemaVersion: 1,
-  package: "@gadicc/watchbound",
+  package: "watchbound",
   version,
   commit,
   target: "x86_64-unknown-linux-gnu",
@@ -150,7 +150,7 @@ function createCycloneDx(cargoMetadata, tools, artifacts) {
     cargoMetadata.packages.map((pkg) => [pkg.id, cargoPurl(pkg)]),
   );
   const nativeRef = `pkg:npm/%40gadicc/watchbound-node@${version}`;
-  const wrapperRef = `pkg:npm/%40gadicc/watchbound@${version}`;
+  const wrapperRef = `pkg:npm/watchbound@${version}`;
   const nativeCargo = cargoMetadata.packages.find(
     (pkg) => pkg.name === "watchbound-node" && pkg.version === version,
   );
@@ -177,7 +177,6 @@ function createCycloneDx(cargoMetadata, tools, artifacts) {
       component: {
         type: "library",
         "bom-ref": wrapperRef,
-        group: "@gadicc",
         name: "watchbound",
         version,
         purl: wrapperRef,

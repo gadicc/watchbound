@@ -13,8 +13,9 @@ trees; source JavaScript packages remain private and both Rust crates remain
 
 ## Entry points and exports
 
-The public package is `@gadicc/watchbound` and has one ESM `.` entry point with
-`js/index.js` implementation and `js/index.d.ts` declarations. Its runtime
+The public npm package is `watchbound`; JSR uses `@gadicc/watchbound`. The
+wrapper has one ESM `.` entry point with `js/index.js` implementation and
+`js/index.d.ts` declarations. Its runtime
 exports are `capabilities`, `createEngine`, `subscribe`, `WatchboundError`,
 `WatchboundErrorCode`, `WatchboundRetryAfter`, `isWatchboundError`, and
 `normalizeWatchboundError`. The declaration file additionally names the types

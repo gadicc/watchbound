@@ -20,7 +20,7 @@ They build from source, test, check, run bounded maintenance gates, and run
 ordinary strict conformance serially. The floor lane additionally:
 
 1. generates controlled public npm trees from the private workspace manifests;
-2. packs `@gadicc/watchbound-node` and `@gadicc/watchbound`;
+2. packs `@gadicc/watchbound-node` and `watchbound`;
 3. checks the exact files in both tarballs;
 4. installs both tarballs offline into an empty project and imports the wrapper;
 5. runs a JSR publish dry run over the generated wrapper tree;
@@ -96,7 +96,7 @@ npm publish dist/tarballs/gadicc-watchbound-node-0.0.1.tgz \
   --access public \
   --provenance=false \
   --tag bootstrap
-npm publish dist/tarballs/gadicc-watchbound-0.0.1.tgz \
+npm publish dist/tarballs/watchbound-0.0.1.tgz \
   --access public \
   --provenance=false \
   --tag bootstrap
@@ -129,7 +129,7 @@ npm trust github @gadicc/watchbound-node \
   --file release.yml \
   --allow-publish \
   --yes
-npm trust github @gadicc/watchbound \
+npm trust github watchbound \
   --repo gadicc/watchbound \
   --file release.yml \
   --allow-publish \

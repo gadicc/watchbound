@@ -66,7 +66,7 @@ try {
       "--eval",
       [
         "import assert from 'node:assert/strict';",
-        "import { capabilities } from '@gadicc/watchbound';",
+        "import { capabilities } from 'watchbound';",
         `assert.equal(capabilities.versions.wrapper, ${JSON.stringify(version)});`,
         "assert.equal(capabilities.support.operatingSystem.family, 'linux');",
         "assert.equal(capabilities.build.delivery, 'bundled-native-package');",

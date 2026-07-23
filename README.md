@@ -1,6 +1,6 @@
 # Watchbound
 
-[![npm](https://img.shields.io/npm/v/@gadicc/watchbound)](https://www.npmjs.com/package/@gadicc/watchbound)
+[![npm](https://img.shields.io/npm/v/watchbound)](https://www.npmjs.com/package/watchbound)
 [![JSR](https://jsr.io/badges/@gadicc/watchbound)](https://jsr.io/@gadicc/watchbound)
 [![JSR score](https://jsr.io/badges/@gadicc/watchbound/score)](https://jsr.io/@gadicc/watchbound)
 [![CI](https://github.com/gadicc/watchbound/actions/workflows/ci.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/ci.yml)

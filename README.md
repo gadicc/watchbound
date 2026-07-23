@@ -27,6 +27,77 @@ stable `WATCHBOUND_*` codes under the versioned
 [structured error contract](docs/error-contract.md); human messages are
 diagnostic rather than a policy surface.
 
+## Threading and workload fit
+
+The native addon is a shared library loaded into the Node or Electron process,
+not a helper process. Ordinary native exports would run on and block the
+JavaScript thread. Watchbound explicitly runs subscription establishment,
+reconciliation, root recovery, exclusion replacement, and joined disposal as
+napi-rs asynchronous tasks. Those tasks occupy Node's shared libuv worker pool
+while the filesystem state machine runs on one process-wide
+`watchbound-linux-runtime` Rust thread.
+
+Every established subscription currently adds one
+`watchbound-node-bridge` thread. It receives bounded native batches and crosses
+back through a one-entry Node-API thread-safe-function queue; the JavaScript
+callback itself still runs on the JavaScript thread. A slow callback can
+therefore cause UI latency, but bounded pressure degrades that subscription to
+explicit uncertain coverage rather than creating an unbounded callback stream.
+The detailed lifecycle and ownership rules are in
+[`docs/node-binding.md`](docs/node-binding.md) and
+[`docs/api-lifecycle.md`](docs/api-lifecycle.md).
+
+Watchbound fits consumers that can treat paths as conservative invalidations,
+recompute derived state after a root invalidation, and act on explicit partial
+or uncertain coverage. It is a poor fit for exact filesystem journals,
+short-lived enormous roots without cancellable establishment, unsupported
+platforms/filesystems, or applications that cannot own a native source-build
+and joined-disposal lifecycle.
+
+## Watchbound and `@parcel/watcher`
+
+Parcel remains the default alternative when its public contract is sufficient:
+it is mature, published, cross-platform, prebuilt, natively batched, and exposes
+typed file events plus historical snapshot queries. This repository compares
+Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
+inotify backend.
+
+| Capability | Watchbound private `0.1.0` | `@parcel/watcher` 2.5.6 |
+| --- | --- | --- |
+| Delivery and targets | Controlled source build; qualified only for the narrow Linux x64/glibc target below | Published prebuilds across Linux, macOS, Windows, and FreeBSD targets |
+| Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
+| Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
+| Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
+| Historical snapshot query | No | `writeSnapshot()` and `getEventsSince()` |
+| Initial static ignores | No glob or Git policy in the engine | Subscribe-time path and glob ignores |
+| Active exclusion replacement | Generation-based, exact-byte directory prefixes; atomic per subscription | No public active-subscription update |
+| Public watch limits and accounting | Per-subscription logical limit, process native-watch budget, and statistics | No public limit or active-watch accounting |
+| Explicit coverage and loss | `complete`, reasoned `partial`, or reasoned `uncertain` | No public coverage state |
+| Linux queue overflow | Typed `event-overflow`, root invalidation, and bounded reconciliation | No public loss result; 2.5.6's inotify backend skips `IN_Q_OVERFLOW` |
+| Populated moved-in subtree | Recursively discovered before the transition becomes observable | Incoming directory is watched, but existing descendants were not discovered in reproduced 2.5.6 trials |
+| Watched-root replacement | Typed loss plus explicit policy-gated recovery | No public recovery; replacement was not watched in reproduced 2.5.6 trials |
+| Consumer backpressure | Bounded and subscription-local, with typed uncertainty | No public backpressure state |
+| Post-loss reconciliation | Explicit and opt-in bounded automatic reconciliation | No public reconciliation operation |
+| Cancel pending establishment | Not currently exposed | Not exposed by the public `subscribe()` API |
+| Native delivery thread scaling | One shared runtime plus one bridge thread per subscription | Shared backend and debounce threads; no bridge thread per subscription |
+| Node callback admission | One-entry queue plus bounded engine output | Thread-safe-function queue is explicitly unlimited |
+| Disposal contract | Idempotent, joined, and no callback may start after resolution | Async `unsubscribe()`; no equivalent public joined/no-later-callback guarantee |
+
+Parcel already has the thread-scaling property sought by a future shared
+Watchbound delivery bridge, but not its required bounded callback admission or
+typed consumer-backpressure contract. Neither package currently exposes
+cancellation for already-started subscription establishment.
+
+The first final tmpfs series measured Watchbound recursive startup at median
+32.31–36.59 ms for 10,001 directories, versus 47.42–49.11 ms for Parcel and
+239.37–273.05 ms for the exact Codex Linux JavaScript helper. These are
+historical feasibility results, not a universal multiplier or evidence for a
+251,811-call repository: adapters, callback policies, filesystem, tree shape,
+and measurement commits differ. See
+[`docs/benchmark-results.md`](docs/benchmark-results.md) for ranges and caveats,
+and [`docs/conformance-findings.md`](docs/conformance-findings.md) for the
+reproduced capability gaps and tagged-source links.
+
 ## Build and test
 
 The manifests intentionally admit only Node `>=24.18.0 <25`, Linux x64, and

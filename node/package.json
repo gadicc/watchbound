@@ -3,6 +3,23 @@
   "version": "0.2.0",
   "private": true,
   "description": "Maintained unpublished Node-API binding for Watchbound",
+  "author": "Gadi Cohen <dragon@wastelands.net>",
+  "homepage": "https://github.com/gadicc/watchbound#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gadicc/watchbound.git",
+    "directory": "node"
+  },
+  "bugs": {
+    "url": "https://github.com/gadicc/watchbound/issues"
+  },
+  "keywords": [
+    "filesystem",
+    "inotify",
+    "linux",
+    "napi",
+    "watcher"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=24.18.0 <25"
@@ -16,6 +33,9 @@
   "libc": [
     "glibc"
   ],
+  "watchbound": {
+    "delivery": "controlled-source-build"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {

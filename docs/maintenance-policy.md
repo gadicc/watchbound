@@ -3,7 +3,10 @@
 Status: approved on 2026-07-21 for the maintained-unpublished phase.
 
 This policy does not authorize publication, a package-visibility change,
-prebuilt native artifacts, artifact upload, or consumer integration.
+artifact upload, or consumer integration. Release-package validation and
+OIDC/provenance workflow scaffolding are present, but exercising the publish
+job still requires a separately approved GitHub Release and completion of the
+distribution gates below.
 
 ## Ownership
 
@@ -80,11 +83,19 @@ automatic per-commit test and requires fresh quiet-host confirmation.
 
 ## Release and distribution gates
 
-Maintained-unpublished status does not authorize a release. Before any future
-publication or prebuild proposal, separately review package visibility,
-versioning, target-specific artifact names, checksums, provenance, SBOM,
-signing or attestation, reproducibility, loader fallback, and native/wrapper
-version matching.
+Maintained-unpublished status does not authorize a release. The prepared
+one-target bundled-native proposal now includes target-specific naming,
+checksums, provenance, CycloneDX SBOM, binary inspection, version/delivery
+lockstep, same-runner reproducibility, fail-closed loading, and an incident
+runbook. Before publication, separately review package visibility and
+versioning, the exact release commit, remaining production blockers, the
+narrow support statement, and the generated evidence.
 
 Publishing, distributing prebuilds, uploading artifacts, or integrating a
 consumer always requires fresh explicit approval.
+
+The checked-in release workflow is preparation, not that approval. Ordinary
+branch and manual-dispatch runs cannot publish. Only a matching GitHub Release
+may reach the protected `release` environment. A stable release additionally
+requires independent-builder reproducibility evidence and a clean install from
+the published registry artifacts.

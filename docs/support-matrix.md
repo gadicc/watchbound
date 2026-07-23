@@ -2,9 +2,9 @@
 
 Status: supported maintained-unpublished target on 2026-07-21, based on the
 exact-commit clean-CI evidence recorded below for `0.1.0`. The `0.2.0`
-private-minor candidate retains this intended target but reports
-`target-pending-clean-ci` until its own exact commit is qualified. This does not authorize
-publication, prebuilds, artifacts, releases, or consumer integration.
+candidate retains this intended target but reports `target-pending-clean-ci`
+until its own exact commit is qualified. A future registry package will bundle
+only the exact native target below; it does not broaden this matrix.
 
 ## Supported target
 
@@ -37,15 +37,21 @@ a nonmatch does not broaden the table. Only clean target evidence and a
 deliberate document/schema update backed by target-specific clean evidence can
 change support status or scope.
 
-The package remains Linux-only and source-built. No prebuilt native artifact
-is produced or distributed in this phase.
+The qualified model remains Linux-only. Workspace capabilities describe a
+controlled source build. Generated registry packages truthfully describe a
+bundled native package for this same single target, while still reporting
+`target-pending-clean-ci` until the release commit is qualified. No other
+distribution, libc, architecture, Node major, or operating system is implied.
 
 The checked-in CI definition has a floor lane for Node 24.18.0 and Rust 1.88.0
 and a moving lane for the latest Node 24 and stable Rust, both on GitHub's x64
 Ubuntu 24.04 runner. Each lane asserts the target host, performs the controlled
 source build, and runs TypeScript, tests, repository checks, bounded soak/root
-recovery stress, and strict ordinary conformance. It deliberately has no
-artifact upload, cache, publishing, or prebuild step.
+recovery stress, and strict ordinary conformance. The floor lane additionally
+packs and inspects the proposed npm and JSR payloads, installs the two npm
+tarballs offline, imports the wrapper, performs a JSR dry run, and emits
+checksums, release metadata, and an SBOM. Those ignored local artifacts are not
+uploaded or published and do not by themselves qualify a release commit.
 
 ## Qualification evidence
 
@@ -82,8 +88,8 @@ The maintained-unpublished claim does not cover:
 - WSL, containers with unusual inotify or mount behavior, network filesystems,
   FUSE, overlay filesystems, or other non-ordinary mounts unless separately
   qualified;
-- prebuilt installation, cross-compilation, or an install-time compiler
-  fallback;
+- a bundled native artifact built for any target other than the exact target
+  above, cross-compilation, or an install-time compiler fallback;
 - hostile or adversarially mutated roots described as out of scope in
   `security-threat-model.md`.
 

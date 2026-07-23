@@ -268,8 +268,13 @@ surface when disposal joins it.
 
 ## Still gated
 
-- whether a separately approved later milestone should design or produce a
-  prebuilt platform/libc matrix;
-- package signing, provenance, SBOM, attestation, reproducibility, and release
-  automation;
+- qualification of the exact release commit for the one proposed Ubuntu 24.04
+  x64/glibc 2.39 bundled native package;
+- independent-builder reproducibility evidence and production-blocker review
+  before a stable release;
 - any package publication or consumer integration.
+
+Checksums, CycloneDX SBOM generation, binary inspection, same-runner
+reproducibility, npm/JSR provenance, and protected release automation are
+implemented in the release-package boundary. They do not widen the loader's
+single exact target.

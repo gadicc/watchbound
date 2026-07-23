@@ -1,0 +1,180 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchbound-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Test release source
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  package:
+    name: Build and inspect release packages
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+
+      - name: Enable the pinned pnpm release
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(pnpm --version)" = 10.33.2
+
+      - name: Install from the lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned npm packaging release
+        run: npm install --global npm@11.18.0
+
+      - name: Set up Deno for JSR validation
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.6.7
+
+      - name: Validate release identity
+        if: github.event_name == 'release'
+        run: pnpm check:release-tag "${{ github.event.release.tag_name }}"
+
+      - name: Build and validate exact release artifacts
+        env:
+          WATCHBOUND_REPRODUCIBLE_BUILD: "1"
+        run: pnpm check:reproducible && pnpm test:packages
+
+      - name: Upload the inspected release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-release-${{ github.sha }}
+          path: |
+            dist/tarballs
+            dist/evidence
+            dist/jsr
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish npm and JSR packages
+    if: github.event_name == 'release'
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install npm with trusted-publishing support
+        run: npm install --global npm@11.18.0
+
+      - name: Set up Deno for JSR publishing
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.6.7
+
+      - name: Download the inspected release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: watchbound-release-${{ github.sha }}
+          path: dist
+
+      - name: Verify downloaded package checksums
+        working-directory: dist/tarballs
+        run: sha256sum --check ../evidence/SHA256SUMS
+
+      - name: Attach exact packages and evidence to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "${{ github.event.release.tag_name }}"
+          --repo "${{ github.repository }}"
+          dist/tarballs/*.tgz
+          dist/evidence/SHA256SUMS
+          dist/evidence/release-metadata.json
+          dist/evidence/*.cdx.json
+
+      - name: Publish native npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          dist_tag=latest
+          if test "${{ github.event.release.prerelease }}" = true; then
+            dist_tag=next
+          fi
+          npm publish \
+            "dist/tarballs/gadicc-watchbound-node-${version}.tgz" \
+            --access public \
+            --provenance \
+            --tag "$dist_tag"
+
+      - name: Publish wrapper npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          dist_tag=latest
+          if test "${{ github.event.release.prerelease }}" = true; then
+            dist_tag=next
+          fi
+          npm publish \
+            "dist/tarballs/gadicc-watchbound-${version}.tgz" \
+            --access public \
+            --provenance \
+            --tag "$dist_tag"
+
+      - name: Publish wrapper JSR package
+        working-directory: dist/jsr
+        # Deno publishes with OIDC provenance by default in GitHub Actions.
+        # Fast public-API checks still run; full checking cannot load a native
+        # npm dependency's Node declarations in Deno's publishing environment.
+        run: deno publish --no-check

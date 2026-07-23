@@ -1,13 +1,14 @@
 # Native delivery contract
 
-Status: controlled source build selected for the maintained-unpublished
-package. No prebuilt artifact, publication, upload, or install-time fallback
-is authorized.
+Status: source checkouts remain controlled builds. The proposed registry
+artifact is an explicit one-target bundled native package; it is not yet
+published or qualified as a stable release.
 
 ## Current decision
 
-Watchbound is built from the checked-in Rust workspace in a controlled checkout
-after a frozen pnpm install. The only loadable native basename is:
+Watchbound development is built from the checked-in Rust workspace in a
+controlled checkout after a frozen pnpm install. The only loadable native
+basename is:
 
 ```text
 watchbound.linux-x64-gnu.node
@@ -24,6 +25,19 @@ runtime loader does not compile, download, search optional packages, honor a
 native-library environment override, or fall back to WASI. A missing local
 addon is an actionable `WATCHBOUND_NATIVE_NOT_BUILT` failure rather than an
 implicit network or toolchain operation.
+
+Release-package validation copies that exact locally built addon into
+`@gadicc/watchbound-node` and smoke-tests the wrapper against it. The package
+manifest is the source of truth for delivery:
+
+- workspace/source manifests use `controlled-source-build`, and capabilities
+  report `prebuilt: false`;
+- generated npm and JSR manifests use `bundled-native-package`, and
+  capabilities report `prebuilt: true`.
+
+The wrapper and native package require matching versions and matching delivery
+identities before loading. This closes the earlier capability-reporting
+mismatch without implying support for another target or an install-time build.
 
 ## Load and identity checks
 
@@ -67,35 +81,35 @@ The recorded qualification runs in `support-matrix.md` completed this source-
 build gate. A workflow file or a successful build on a different host cannot
 widen the supported target.
 
-## Requirements before any future prebuild proposal
+## Bundled native release controls
 
-Prebuild work requires fresh approval before configuration or artifact
-production. A reviewed proposal must define, for every target:
+Public bundled-native delivery still requires explicit release approval. For
+the sole proposed target, the implementation now provides:
 
-- an explicit OS/distribution, architecture, libc, kernel, Node range, and
-  Node-API matrix backed by clean tests;
-- an unambiguous artifact name derived from package version and target identity,
-  with no fallback to a nearby target;
-- lockstep wrapper, native package, engine, binding API, metadata schema, and
-  artifact version validation;
-- a SHA-256 checksum manifest whose own identity and retention policy are
-  recorded;
-- build provenance tying source commit, lockfiles, Rust toolchain, target,
-  compiler/linker, runner image, and build command to each artifact;
-- an SPDX or CycloneDX SBOM covering Rust, JavaScript build tooling, and the
-  native binary;
-- signing or verifiable attestation, trust-root ownership, rotation, expiry,
-  revocation, and offline verification policy;
-- reproducibility checks from at least two clean builders, with documented and
-  reviewed explanations for any unavoidable byte differences;
-- binary inspection, exported-symbol/Node-API checks, size limits, malware
-  scanning, and target-specific load/teardown tests;
-- a loader decision for checksum or signature failure that fails closed and
-  never silently compiles, downloads another target, or selects an older
-  artifact;
-- staging, retention, rollback, incident response, and release-approval
-  ownership.
+- exact target basename and package `os`, `cpu`, `libc`, and Node constraints;
+- lockstep wrapper/native/engine/binding metadata and delivery validation;
+- a SHA-256 checksum manifest and deterministic release metadata;
+- a CycloneDX 1.6 SBOM covering the npm boundary and Rust dependency graph;
+- npm and JSR OIDC provenance, with npm token-plus-provenance only for the
+  one-time bootstrap;
+- two clean same-runner builds whose native bytes must match;
+- ELF class/architecture, dynamic-library allowlist, RPATH/RUNPATH absence,
+  stripped-symbol status, Node-API export, maximum-size, tarball allowlist,
+  load, and teardown checks;
+- a protected release environment, non-publishing rehearsal, immutable
+  release identity check, and incident-response runbook.
 
-No item in this section authorizes implementing that machinery, producing an
-artifact, uploading it, changing package visibility, publishing, or integrating
-a consumer.
+The following requirements remain stable-release gates:
+
+- exact-commit green evidence on both supported CI lanes;
+- byte comparison from at least two independent clean builders rather than
+  only two clean builds on one runner;
+- review of any unavoidable reproducibility difference;
+- maintainer acceptance that the single Ubuntu 24.04 x64/glibc 2.39 artifact is
+  the entire public support promise;
+- production-blocker resolution and registry-install smoke evidence.
+
+There is no runtime checksum/signature lookup because the addon is already
+inside the immutable npm package whose registry provenance and tarball digest
+are verified before installation. The loader fails closed: it never downloads,
+compiles, selects a nearby target, or falls back to an older artifact.

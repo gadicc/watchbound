@@ -36,6 +36,10 @@ export type WatchboundOperation =
   | "dispose"
   | "deliver-batch";
 
+export type WatchboundPackageDelivery =
+  | "controlled-source-build"
+  | "bundled-native-package";
+
 export interface WatchboundSystemCause {
   readonly domain: "os" | "node-api";
   readonly code?: string | number;
@@ -274,8 +278,8 @@ export interface Capabilities {
     readonly bindingApi: number;
   };
   readonly build: {
-    readonly delivery: "controlled-source-build";
-    readonly prebuilt: false;
+    readonly delivery: WatchboundPackageDelivery;
+    readonly prebuilt: boolean;
     readonly profile: string;
     readonly targetTriple: string;
     readonly nodeApi: number;
@@ -307,7 +311,7 @@ export interface Capabilities {
     readonly nodeRange: ">=24.18.0 <25";
     readonly rustMinimum: "1.88";
     readonly packageManager: "pnpm@10.33.2";
-    readonly delivery: "controlled-source-build";
+    readonly delivery: WatchboundPackageDelivery;
     readonly rootThreatModel: "trusted-stable-local-roots";
   };
   readonly features: {

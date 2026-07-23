@@ -13,3 +13,6 @@ libc = "0.2.183"
 napi = { version = "3.10.5", features = ["napi6"] }
 napi-derive = "3.5.10"
 napi-build = "2.3.2"
+
+[profile.release]
+strip = "symbols"

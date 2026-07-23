@@ -3,6 +3,23 @@
   "version": "0.2.0",
   "private": true,
   "description": "Maintained unpublished JavaScript wrapper for Watchbound",
+  "author": "Gadi Cohen <dragon@wastelands.net>",
+  "homepage": "https://github.com/gadicc/watchbound#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gadicc/watchbound.git",
+    "directory": "js"
+  },
+  "bugs": {
+    "url": "https://github.com/gadicc/watchbound/issues"
+  },
+  "keywords": [
+    "filesystem",
+    "inotify",
+    "linux",
+    "recursive",
+    "watcher"
+  ],
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -17,6 +34,9 @@
   "libc": [
     "glibc"
   ],
+  "watchbound": {
+    "delivery": "controlled-source-build"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {

@@ -3,9 +3,22 @@
   "version": "0.2.0",
   "private": true,
   "description": "Private workspace for the Watchbound resource-aware Linux directory watcher",
+  "author": "Gadi Cohen <dragon@wastelands.net>",
+  "homepage": "https://github.com/gadicc/watchbound#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gadicc/watchbound.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gadicc/watchbound/issues"
+  },
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.33.2",
+  "workspaces": [
+    "js",
+    "node"
+  ],
   "engines": {
     "node": ">=24.18.0 <25"
   },
@@ -13,6 +26,11 @@
     "build": "cargo build --workspace",
     "build:node": "node scripts/build-node.mjs",
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-js.mjs && pnpm typecheck",
+    "check:reproducible": "node scripts/check-reproducible-build.mjs",
+    "check:release-tag": "node scripts/check-release-tag.mjs",
+    "package:prepare": "node scripts/prepare-packages.mjs",
+    "package:check": "node scripts/check-packages.mjs",
+    "test:packages": "pnpm package:prepare && pnpm package:check",
     "typecheck": "tsc -p js/test/types/tsconfig.json",
     "test": "cargo test --workspace && pnpm --dir node test && node --test js/test/*.test.js benches/test/*.test.mjs",
     "test:soak": "node scripts/maintenance-soak.mjs",

@@ -3,7 +3,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const packageVersion = require("./package.json").version;
+const packageManifest = require("./package.json");
+const packageVersion = packageManifest.version;
+const packageDelivery = packageManifest.watchbound?.delivery;
 
 const NATIVE_BASENAME = "watchbound.linux-x64-gnu.node";
 const REQUIRED_NODE_API_VERSION = 6;
@@ -159,11 +161,19 @@ function apiMismatch(message, cause) {
   );
 }
 
-function assertWrapperVersion(version) {
-  if (typeof version !== "string" || version !== packageVersion) {
+function assertWrapperVersion(version, delivery) {
+  if (
+    typeof version !== "string" ||
+    version !== packageVersion ||
+    delivery !== packageDelivery ||
+    (
+      delivery !== "controlled-source-build" &&
+      delivery !== "bundled-native-package"
+    )
+  ) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.NATIVE_VERSION_MISMATCH,
-      "Watchbound wrapper and native package versions do not match",
+      "Watchbound wrapper and native package versions or delivery modes do not match",
     );
   }
 }

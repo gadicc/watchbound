@@ -231,8 +231,10 @@ function inspectCapabilities(): void {
   const schemaVersion: 2 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const targetTriple: string = capabilities.build.targetTriple;
-  const sourceBuild: "controlled-source-build" = capabilities.build.delivery;
-  const noPrebuild: false = capabilities.build.prebuilt;
+  const delivery:
+    | "controlled-source-build"
+    | "bundled-native-package" = capabilities.build.delivery;
+  const prebuilt: boolean = capabilities.build.prebuilt;
   const nodeRange: ">=24.18.0 <25" = capabilities.support.nodeRange;
   const supportStatus: "pending" | "ready" = (() => {
     switch (capabilities.support.status) {
@@ -271,8 +273,8 @@ function inspectCapabilities(): void {
   void schemaVersion;
   void bindingApi;
   void targetTriple;
-  void sourceBuild;
-  void noPrebuild;
+  void delivery;
+  void prebuilt;
   void nodeRange;
   void supportStatus;
   void runtimeNode;

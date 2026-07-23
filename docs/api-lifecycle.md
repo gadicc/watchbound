@@ -197,9 +197,9 @@ has these top-level sections:
 | --- | --- |
 | `schemaVersion` | Exactly `2`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
-| `build` | Controlled-source-build delivery, `prebuilt: false`, build profile and target triple, Node-API 6, and Rust 1.88 minimum. |
+| `build` | Manifest-derived delivery: source workspaces report `controlled-source-build` and `prebuilt: false`; generated registry packages report `bundled-native-package` and `prebuilt: true`. Both include build profile, target triple, Node-API 6, and Rust 1.88 minimum. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 controlled-source-build target under trusted stable local roots. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; the unqualified 0.2.0 candidate emits `target-pending-clean-ci`. |
+| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 target under trusted stable local roots, plus the same manifest-derived delivery identity. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; the unqualified 0.2.0 candidate emits `target-pending-clean-ci`. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, and single-credit admission. |

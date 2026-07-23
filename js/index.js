@@ -1,3 +1,5 @@
+/* @ts-self-types="./index.d.ts" */
+
 import nativeBinding from "@gadicc/watchbound-node";
 import path from "node:path";
 import {
@@ -18,6 +20,7 @@ import {
   normalizeWatchboundError,
 } from "./errors.js";
 import {
+  WRAPPER_DELIVERY,
   WRAPPER_VERSION,
   buildCapabilities,
   normalizeRuntimeStats,
@@ -36,7 +39,7 @@ const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const callbackHolders = new WeakMap();
 const MAX_NATIVE_INTEGER_OPTION = 4_294_967_295;
 
-nativeBinding.assertWrapperVersion(WRAPPER_VERSION);
+nativeBinding.assertWrapperVersion(WRAPPER_VERSION, WRAPPER_DELIVERY);
 
 export const capabilities = invokeWatchbound("create-engine", () =>
   buildCapabilities(

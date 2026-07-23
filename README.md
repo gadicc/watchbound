@@ -1,18 +1,35 @@
 # Watchbound
 
-Watchbound is an experimental Linux recursive directory watcher maintained as
-an unpublished private package. It treats filesystem coverage
-as an explicit result rather than an assumption, records one logical interest
-per included directory while overlapping identities can share a native inotify
-watch, batches invalidations, and reports partial or uncertain coverage when it
-cannot safely claim completeness.
+[![npm](https://img.shields.io/npm/v/@gadicc/watchbound)](https://www.npmjs.com/package/@gadicc/watchbound)
+[![JSR](https://jsr.io/badges/@gadicc/watchbound)](https://jsr.io/@gadicc/watchbound)
+[![JSR score](https://jsr.io/badges/@gadicc/watchbound/score)](https://jsr.io/@gadicc/watchbound)
+[![CI](https://github.com/gadicc/watchbound/actions/workflows/ci.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/ci.yml)
+[![release](https://github.com/gadicc/watchbound/actions/workflows/release.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/release.yml)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 
-The packages remain private and unpublished. The first frozen `0.1.0` API has
-recorded clean-CI evidence; the cancellable-establishment and shared-delivery
-`0.2.0` revision reports `target-pending-clean-ci` until its exact commit is
-separately qualified. Private `0.x` does not claim public major-version stability.
-It is intentionally independent of Codex Desktop and does not contain
-Git-ignore or application policy.
+Watchbound is an experimental Linux recursive directory watcher prepared as an
+unpublished release candidate. It treats filesystem coverage as an explicit
+result rather than an assumption, records one logical interest per included
+directory while overlapping identities can share a native inotify watch,
+batches invalidations, and reports partial or uncertain coverage when it cannot
+safely claim completeness.
+
+The checked-in workspace packages remain private as an accidental-publish
+guard, and no registry release has been made. CI validates controlled public
+npm and JSR artifacts, while publishing remains gated by an explicit matching
+GitHub Release and the protected `release` environment. Registry artifacts
+identify themselves as a bundled-native delivery for exactly Ubuntu 24.04
+x64/glibc 2.39; source workspaces continue to identify as controlled builds.
+The first frozen
+`0.1.0` API has recorded clean-CI evidence; the cancellable-establishment and
+shared-delivery `0.2.0` revision reports `target-pending-clean-ci` until its
+exact commit is separately qualified. Private `0.x` does not claim public
+major-version stability. It is intentionally independent of Codex Desktop and
+does not contain Git-ignore or application policy.
+
+JSR is planned as a distribution channel for the same Node-only package
+surface. It does not imply Deno runtime support or widen the qualified
+Ubuntu/Node matrix.
 
 The workspace is divided by ownership:
 
@@ -154,7 +171,7 @@ inotify backend.
 | Capability | Watchbound private `0.2.0` | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source build; `0.2.0` is `target-pending-clean-ci` for the narrow Linux x64/glibc target below | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout or proposed one-target bundled native registry package; `0.2.0` is `target-pending-clean-ci` for the narrow Ubuntu 24.04 x64/glibc 2.39 target below | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -244,13 +261,16 @@ The manifests intentionally admit only Node `>=24.18.0 <25`, Linux x64, and
 glibc. The maintained target is Ubuntu 24.04 with Linux 6.8+, glibc
 2.39, Rust 1.88+, pnpm 10.33.2, `build-essential`, and a working C linker; see
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
-floor, not a broader support claim. Nothing is published.
+floor, not a broader support claim. See the
+[release runbook](docs/releasing.md) for artifact validation, registry
+bootstrap, OIDC, provenance, and the remaining release gates.
 
 ```sh
 pnpm install
 pnpm build:node
 pnpm test
 pnpm check
+pnpm test:packages
 pnpm test:soak
 ```
 

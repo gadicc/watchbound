@@ -11,6 +11,7 @@ const wrapperPackage = JSON.parse(
 );
 
 export const WRAPPER_VERSION = wrapperPackage.version;
+export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
 
 export function buildCapabilities(native, metadata) {
   if (native?.schemaVersion !== 2 || metadata?.schemaVersion !== 1) {
@@ -34,6 +35,7 @@ export function buildCapabilities(native, metadata) {
   const minimum = native.positiveIntegerMinimum;
   const maximum = native.positiveIntegerMaximum;
   const defaults = native.subscriptionDefaults;
+  const prebuilt = WRAPPER_DELIVERY === "bundled-native-package";
 
   return deepFreeze({
     schemaVersion: 2,
@@ -44,8 +46,8 @@ export function buildCapabilities(native, metadata) {
       bindingApi: metadata.bindingApiVersion,
     },
     build: {
-      delivery: "controlled-source-build",
-      prebuilt: false,
+      delivery: WRAPPER_DELIVERY,
+      prebuilt,
       profile: metadata.buildProfile,
       targetTriple: metadata.targetTriple,
       nodeApi: metadata.nodeApiVersion,
@@ -65,7 +67,7 @@ export function buildCapabilities(native, metadata) {
       nodeRange: ">=24.18.0 <25",
       rustMinimum: "1.88",
       packageManager: "pnpm@10.33.2",
-      delivery: "controlled-source-build",
+      delivery: WRAPPER_DELIVERY,
       rootThreatModel: "trusted-stable-local-roots",
     },
     features: {
@@ -167,6 +169,17 @@ export function buildCapabilities(native, metadata) {
         native.deliveryDispatcherPollMilliseconds,
     },
   });
+}
+
+function packageDelivery(manifest) {
+  const delivery = manifest?.watchbound?.delivery;
+  if (
+    delivery !== "controlled-source-build" &&
+    delivery !== "bundled-native-package"
+  ) {
+    throw new Error("wrapper package delivery metadata is invalid");
+  }
+  return delivery;
 }
 
 export function normalizeRuntimeStats(stats) {

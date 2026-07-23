@@ -15,7 +15,9 @@ const {
 } = require("../load-native.cjs");
 
 const nodeRoot = path.resolve(__dirname, "..");
-const packageVersion = require("../package.json").version;
+const packageManifest = require("../package.json");
+const packageVersion = packageManifest.version;
+const packageDelivery = packageManifest.watchbound.delivery;
 const privateDirectory = "/private/watchbound/node";
 const nativeBasename = "watchbound.linux-x64-gnu.node";
 const nativePath = path.join(privateDirectory, nativeBasename);
@@ -236,10 +238,15 @@ test("loader uses exactly one local basename and ignores napi-rs environment ove
   ]);
 });
 
-test("wrapper version assertion uses the native package version", () => {
-  assert.doesNotThrow(() => assertWrapperVersion(packageVersion));
+test("wrapper assertion uses the native package version and delivery mode", () => {
+  assert.doesNotThrow(() =>
+    assertWrapperVersion(packageVersion, packageDelivery));
   expectLoaderError(
-    () => assertWrapperVersion("0.1.1"),
+    () => assertWrapperVersion("0.1.1", packageDelivery),
+    WatchboundLoaderErrorCode.NATIVE_VERSION_MISMATCH,
+  );
+  expectLoaderError(
+    () => assertWrapperVersion(packageVersion, "bundled-native-package"),
     WatchboundLoaderErrorCode.NATIVE_VERSION_MISMATCH,
   );
 });

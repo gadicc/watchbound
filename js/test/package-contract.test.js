@@ -17,10 +17,11 @@ test("private package manifests match the narrow maintained source-build target"
   const root = readJson("package.json");
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
+  const { version } = root;
 
   for (const manifest of [root, wrapper, native]) {
     assert.equal(manifest.private, true);
-    assert.equal(manifest.version, "0.2.0");
+    assert.equal(manifest.version, version);
     assert.equal(manifest.license, "MIT");
     assert.equal(manifest.author, "Gadi Cohen <dragon@wastelands.net>");
     assert.match(manifest.repository.url, /github\.com\/gadicc\/watchbound/u);
@@ -50,7 +51,7 @@ test("private package manifests match the narrow maintained source-build target"
   });
   assert.equal(
     wrapper.dependencies["@gadicc/watchbound-node"],
-    "workspace:0.2.0",
+    `workspace:${version}`,
   );
   assert.equal(root.scripts["build:node"], "node scripts/build-node.mjs");
   assert.deepEqual(root.workspaces, ["js", "node"]);
@@ -58,32 +59,55 @@ test("private package manifests match the narrow maintained source-build target"
     root.scripts["test:packages"],
     "pnpm package:prepare && pnpm package:check",
   );
+  assert.equal(root.scripts.release, "semantic-release");
+  assert.equal(root.devDependencies["semantic-release"], "25.0.8");
   for (const crate of ["engine/Cargo.toml", "node/Cargo.toml"]) {
     const source = fs.readFileSync(path.join(workspaceRoot, crate), "utf8");
     assert.match(source, /^publish = false$/mu);
   }
 });
 
-test("release publishing stays explicit, OIDC-scoped, and tag-locked", () => {
+test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   const release = fs.readFileSync(
     path.join(workspaceRoot, ".github/workflows/release.yml"),
     "utf8",
   );
-  assert.match(release, /^  release:\n    types: \[published\]$/mu);
-  assert.match(release, /^    if: github\.event_name == 'release'$/mu);
-  assert.match(release, /^    environment: release$/mu);
+  const config = fs.readFileSync(
+    path.join(workspaceRoot, "release.config.mjs"),
+    "utf8",
+  );
+  const plugin = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/semantic-release-watchbound.mjs"),
+    "utf8",
+  );
+  assert.match(release, /^  push:\n    branches: \[main\]$/mu);
+  assert.match(
+    release,
+    /^    if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'$/mu,
+  );
+  assert.doesNotMatch(release, /^    environment:/mu);
   assert.match(release, /^      id-token: write$/mu);
-  assert.match(release, /pnpm check:release-tag/u);
-  assert.match(release, /pnpm check:reproducible/u);
-  assert.match(release, /dist\/evidence\/SHA256SUMS/u);
-  assert.match(release, /actions\/upload-artifact@[0-9a-f]{40}/u);
-  assert.match(release, /actions\/download-artifact@[0-9a-f]{40}/u);
-  assert.match(release, /sha256sum --check/u);
-  assert.match(release, /gh release upload/u);
-  assert.match(release, /NPM_BOOTSTRAP_TOKEN/u);
-  assert.match(release, /npm publish/u);
-  assert.match(release, /deno publish/u);
-  assert.doesNotMatch(release, /push:\s*\n\s*branches:/u);
+  assert.match(release, /^          fetch-depth: 0$/mu);
+  assert.match(release, /GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/u);
+  assert.match(release, /run: pnpm release/u);
+  assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
+  assert.match(release, /^  workflow_dispatch:$/mu);
+
+  assert.match(config, /branches: \["main"\]/u);
+  assert.match(config, /@semantic-release\/commit-analyzer/u);
+  assert.match(config, /@semantic-release\/release-notes-generator/u);
+  assert.match(config, /semantic-release-watchbound\.mjs/u);
+  assert.match(config, /@semantic-release\/github/u);
+  assert.match(config, /dist\/evidence\/SHA256SUMS/u);
+
+  assert.match(plugin, /scripts\/set-release-version\.mjs/u);
+  assert.match(plugin, /pnpm", \["check:reproducible"\]/u);
+  assert.match(plugin, /pnpm", \["test:packages"\]/u);
+  assert.match(plugin, /npm", \["view"/u);
+  assert.match(plugin, /deno", \["info"/u);
+  assert.match(plugin, /"publish"/u);
+  assert.match(plugin, /"--provenance"/u);
+  assert.doesNotMatch(plugin, /NPM_TOKEN|NODE_AUTH_TOKEN/u);
 });
 
 test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {

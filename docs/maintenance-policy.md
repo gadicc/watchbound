@@ -4,9 +4,10 @@ Status: approved on 2026-07-21 for the maintained-unpublished phase.
 
 This policy does not authorize publication, a package-visibility change,
 artifact upload, or consumer integration. Release-package validation and
-OIDC/provenance workflow scaffolding are present, but exercising the publish
-job still requires a separately approved GitHub Release and completion of the
-distribution gates below.
+OIDC/provenance workflow scaffolding are present. Semantic-release is wired to
+`main`, but publication still requires an explicit maintainer merge or push,
+a release-worthy Conventional Commit, and completion of the distribution
+gates below.
 
 ## Ownership
 
@@ -94,8 +95,9 @@ narrow support statement, and the generated evidence.
 Publishing, distributing prebuilds, uploading artifacts, or integrating a
 consumer always requires fresh explicit approval.
 
-The checked-in release workflow is preparation, not that approval. Ordinary
-branch and manual-dispatch runs cannot publish. Only a matching GitHub Release
-may reach the protected `release` environment. A stable release additionally
-requires independent-builder reproducibility evidence and a clean install from
-the published registry artifacts.
+The checked-in release workflow is preparation, not blanket approval. Feature
+branches and manual-dispatch runs cannot publish. After CI passes on `main`,
+semantic-release may publish a missing lockstep version when Conventional
+Commits require one. A stable release additionally requires
+independent-builder reproducibility evidence and a clean install from the
+published registry artifacts.

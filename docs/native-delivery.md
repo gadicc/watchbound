@@ -90,14 +90,13 @@ the sole proposed target, the implementation now provides:
 - lockstep wrapper/native/engine/binding metadata and delivery validation;
 - a SHA-256 checksum manifest and deterministic release metadata;
 - a CycloneDX 1.6 SBOM covering the npm boundary and Rust dependency graph;
-- npm and JSR OIDC provenance, with npm token-plus-provenance only for the
-  one-time bootstrap;
+- npm and JSR OIDC provenance after the one-time interactive local bootstrap;
 - two clean same-runner builds whose native bytes must match;
 - ELF class/architecture, dynamic-library allowlist, RPATH/RUNPATH absence,
   stripped-symbol status, Node-API export, maximum-size, tarball allowlist,
   load, and teardown checks;
-- a protected release environment, non-publishing rehearsal, immutable
-  release identity check, and incident-response runbook.
+- a `main`-push semantic-release boundary, non-publishing manual rehearsal,
+  immutable-version registry checks, and an incident-response runbook.
 
 The following requirements remain stable-release gates:
 

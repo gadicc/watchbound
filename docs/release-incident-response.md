@@ -10,12 +10,12 @@ exact source commit before changing public state.
 1. Stop or cancel any remaining release workflow jobs.
 2. Disable the affected npm trusted-publisher relationship if OIDC trust may be
    compromised.
-3. Delete the `NPM_BOOTSTRAP_TOKEN` GitHub environment secret and revoke the
-   underlying granular npm token if it still exists.
+3. If the local bootstrap login may be compromised, revoke active npm sessions
+   or tokens and log the publishing host out.
 4. Do not reuse or move the affected tag, and do not attempt to overwrite a
    registry version.
-5. Record the package names, versions, dist-tags, JSR status, GitHub Release,
-   workflow run, commit, provenance links, checksums, and known impact.
+5. Record the package names, versions, dist-tags, JSR status, workflow run,
+   commit, provenance links, checksums, and known impact.
 
 ## Registry actions
 
@@ -36,13 +36,13 @@ reviewed exact commit or publish a new patch/prerelease version.
 
 ## GitHub and communication
 
-- Mark the GitHub Release and notes with the affected status and remediation.
+- Mark any GitHub release notes with the affected status and remediation.
 - Open a tracking issue unless disclosure would expose an active security
   vulnerability; use a private GitHub security advisory in that case.
 - State the affected versions, supported target, symptoms, recommended action,
   fixed version, and whether credentials or source integrity were involved.
-- Preserve the original release assets. Add corrective evidence under a new
-  version instead of replacing evidence attached to the affected release.
+- Preserve the original workflow evidence. Add corrective evidence under a
+  new version instead of replacing the affected version's record.
 
 ## Recovery
 
@@ -54,8 +54,8 @@ Before restoring publishing:
 3. run the full CI and release rehearsal from the corrected commit;
 4. review the generated tarballs, `SHA256SUMS`, release metadata, CycloneDX
    SBOM, and provenance;
-5. publish a new immutable version through the protected `release`
-   environment;
+5. publish a new immutable version through the reviewed `main`
+   semantic-release OIDC workflow;
 6. perform registry-install smoke tests and update the incident record.
 
 Registry policy references:

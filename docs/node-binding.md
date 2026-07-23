@@ -275,6 +275,6 @@ surface when disposal joins it.
 - any package publication or consumer integration.
 
 Checksums, CycloneDX SBOM generation, binary inspection, same-runner
-reproducibility, npm/JSR provenance, and protected release automation are
+reproducibility, npm/JSR provenance, and `main`-push semantic-release automation are
 implemented in the release-package boundary. They do not widen the loader's
 single exact target.

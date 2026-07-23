@@ -5,6 +5,7 @@
 [![JSR score](https://jsr.io/badges/@gadicc/watchbound/score)](https://jsr.io/@gadicc/watchbound)
 [![CI](https://github.com/gadicc/watchbound/actions/workflows/ci.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/ci.yml)
 [![release](https://github.com/gadicc/watchbound/actions/workflows/release.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/release.yml)
+[![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 
 Watchbound is an experimental Linux recursive directory watcher prepared as an
@@ -16,8 +17,10 @@ safely claim completeness.
 
 The checked-in workspace packages remain private as an accidental-publish
 guard, and no registry release has been made. CI validates controlled public
-npm and JSR artifacts, while publishing remains gated by an explicit matching
-GitHub Release and the protected `release` environment. Registry artifacts
+npm and JSR artifacts. After CI passes on `main`, semantic-release uses
+Conventional Commits to decide whether a release is needed and stamps one
+lockstep version across both npm packages, JSR, Rust, checksums, and the SBOM.
+Manual workflow dispatches run CI but cannot publish. Registry artifacts
 identify themselves as a bundled-native delivery for exactly Ubuntu 24.04
 x64/glibc 2.39; source workspaces continue to identify as controlled builds.
 The first frozen

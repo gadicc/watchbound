@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const workspace = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const roots = ["benches", "js", "node/test", "scripts"];
+const roots = ["benches", "js", "node/test", "scripts", "release.config.mjs"];
 const extensions = new Set([".js", ".mjs", ".cjs"]);
 const files = [];
 

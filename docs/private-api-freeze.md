@@ -1,13 +1,14 @@
 # Private 0.2.0 API revision
 
-Status: private-minor candidate pending exact-commit clean CI. The exact 0.1.0
+Status: private-minor candidate carried by the non-default public `0.0.1`
+bootstrap package and pending exact-commit clean CI. The exact private `0.1.0`
 freeze and its support declaration remain the historical qualified baseline;
-the `0.2.0` capability emits `target-pending-clean-ci` until separately
+the bootstrap capability emits `target-pending-clean-ci` until separately
 qualified.
 
-This revision does not publish a package or crate, create a release or tag,
-produce or distribute a prebuild, upload an artifact, or authorize consumer
-integration. All JavaScript packages remain private and both Rust crates remain
+This revision did not itself authorize publication or consumer integration.
+The separately approved bootstrap publishes only generated JavaScript package
+trees; source JavaScript packages remain private and both Rust crates remain
 `publish = false`.
 
 ## Entry points and exports

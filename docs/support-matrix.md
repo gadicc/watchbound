@@ -1,10 +1,11 @@
 # Initial maintained source-build target
 
-Status: supported maintained-unpublished target on 2026-07-21, based on the
-exact-commit clean-CI evidence recorded below for `0.1.0`. The `0.2.0`
-candidate retains this intended target but reports `target-pending-clean-ci`
-until its own exact commit is qualified. A future registry package will bundle
-only the exact native target below; it does not broaden this matrix.
+Status: narrow target based on the exact-commit clean-CI evidence recorded
+below for the historical private `0.1.0` revision. The private `0.2.0`
+candidate is packaged as the non-default public `0.0.1` bootstrap, retains
+this intended target, and reports `target-pending-clean-ci` until its own exact
+commit is qualified. The registry package bundles only the exact native target
+below; it does not broaden this matrix.
 
 ## Supported target
 
@@ -104,7 +105,7 @@ the native module from its checked-in Rust source, verifies native/wrapper
 contract identity, and then runs the ordinary gate. Runtime installation does
 not silently download, select, or fall back to a prebuild.
 
-All three package manifests remain private at `0.2.0`, declare MIT licensing
+All three source package manifests remain private at `0.0.1`, declare MIT licensing
 and Node `>=24.18.0 <25`, and the wrapper/native manifests declare Linux, x64,
 and glibc. The wrapper depends on the native workspace package by its package
 name rather than reaching across the repository by relative path.

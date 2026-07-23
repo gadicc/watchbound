@@ -18,12 +18,13 @@ triage, and release-gate evidence.
 
 ## Project state
 
-Watchbound remains private and unpublished. Version `0.1.0` is the first frozen
-private API. Version `0.2.0` adds cancellable establishment and shared
-per-environment delivery as a private-minor candidate and reports
-`target-pending-clean-ci` until its exact commit is qualified. The repository
-targets controlled source builds only on the host in `support-matrix.md`; that
-narrow maintained-unpublished status must not imply a public or consumer-ready
+Version `0.1.0` was the first frozen private API. The subsequent `0.2.0`
+development revision added cancellable establishment and shared
+per-environment delivery. The public registry line resets with a non-default
+`0.0.1` bootstrap package containing that revision; later public versions are
+owned by semantic-release. The bootstrap reports `target-pending-clean-ci`
+until its exact commit is qualified. The repository targets the narrow host in
+`support-matrix.md`; bootstrap publication must not imply a consumer-ready
 compatibility promise.
 
 The exact-commit verification and documentation gates supporting recognition

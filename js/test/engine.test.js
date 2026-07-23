@@ -9,6 +9,7 @@ import {
   createEngine,
   subscribe,
 } from "../index.js";
+import wrapperPackage from "../package.json" with { type: "json" };
 
 function assertDeeplyFrozen(value, seen = new Set()) {
   if (value === null || typeof value !== "object" || seen.has(value)) return;
@@ -30,9 +31,9 @@ test("capability schema v2 reports cancellation, shared delivery, target state, 
   ]);
   assert.equal(capabilities.schemaVersion, 2);
   assert.deepEqual(capabilities.versions, {
-    wrapper: "0.2.0",
-    native: "0.2.0",
-    engine: "0.2.0",
+    wrapper: wrapperPackage.version,
+    native: wrapperPackage.version,
+    engine: wrapperPackage.version,
     bindingApi: 2,
   });
   assert.deepEqual(capabilities.build, {

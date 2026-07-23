@@ -8,26 +8,28 @@
 [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 
-Watchbound is an experimental Linux recursive directory watcher prepared as an
-unpublished release candidate. It treats filesystem coverage as an explicit
+Watchbound is an experimental Linux recursive directory watcher. It treats
+filesystem coverage as an explicit
 result rather than an assumption, records one logical interest per included
 directory while overlapping identities can share a native inotify watch,
 batches invalidations, and reports partial or uncertain coverage when it cannot
 safely claim completeness.
 
 The checked-in workspace packages remain private as an accidental-publish
-guard, and no registry release has been made. CI validates controlled public
-npm and JSR artifacts. After CI passes on `main`, semantic-release uses
+guard; registry packages are created only in controlled generated trees. The
+non-default `0.0.1` package is reserved for registry bootstrap. After that, CI
+validates controlled public npm and JSR artifacts and semantic-release uses
 Conventional Commits to decide whether a release is needed and stamps one
 lockstep version across both npm packages, JSR, Rust, checksums, and the SBOM.
 Manual workflow dispatches run CI but cannot publish. Registry artifacts
 identify themselves as a bundled-native delivery for exactly Ubuntu 24.04
 x64/glibc 2.39; source workspaces continue to identify as controlled builds.
-The first frozen
-`0.1.0` API has recorded clean-CI evidence; the cancellable-establishment and
-shared-delivery `0.2.0` revision reports `target-pending-clean-ci` until its
-exact commit is separately qualified. Private `0.x` does not claim public
-major-version stability. It is intentionally independent of Codex Desktop and
+Before the public version line was established, the first frozen private
+`0.1.0` API recorded clean-CI evidence and the cancellable-establishment and
+shared-delivery work was tracked as the private `0.2.0` revision. That
+development revision is packaged as the non-default public `0.0.1` bootstrap
+and still reports `target-pending-clean-ci` until its exact commit is
+separately qualified. It is intentionally independent of Codex Desktop and
 does not contain Git-ignore or application policy.
 
 JSR is planned as a distribution channel for the same Node-only package
@@ -171,7 +173,7 @@ typed file events plus historical snapshot queries. This repository compares
 Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
 inotify backend.
 
-| Capability | Watchbound private `0.2.0` | `@parcel/watcher` 2.5.6 |
+| Capability | Watchbound `0.0.1` bootstrap (private `0.2.0` revision) | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
 | Delivery and targets | Controlled source checkout or proposed one-target bundled native registry package; `0.2.0` is `target-pending-clean-ci` for the narrow Ubuntu 24.04 x64/glibc 2.39 target below | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |

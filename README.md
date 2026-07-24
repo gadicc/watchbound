@@ -30,8 +30,8 @@ until then it is a release candidate, not a qualified release.
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits to decide whether a release is
 needed and verifies the committed lockstep version across both npm packages,
-JSR, Rust, checksums, and the SBOM. Manual workflow dispatches run the same
-qualification, including independent clean builders, but cannot publish.
+JSR, Rust, checksums, and the SBOM. The Release workflow runs only for pushes
+to `main`; pushes to `dev` and other branches run CI but cannot publish.
 Registry artifacts identify themselves as a bundled-native delivery for exactly
 Ubuntu 24.04 x64/glibc 2.39; source workspaces continue to identify as
 controlled builds. Watchbound is intentionally independent of Codex Desktop

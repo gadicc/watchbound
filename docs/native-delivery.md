@@ -100,8 +100,8 @@ target, the implementation now provides:
 - ELF class/architecture, dynamic-library allowlist, RPATH/RUNPATH absence,
   stripped-symbol status, Node-API export, maximum-size, tarball allowlist,
   load, and teardown checks;
-- a `main`-push semantic-release boundary, non-publishing manual rehearsal,
-  immutable-version registry checks, and an incident-response runbook.
+- a `main`-push-only semantic-release boundary, immutable-version registry
+  checks, and an incident-response runbook.
 
 The following requirements are stable-release gates:
 

@@ -3,7 +3,6 @@ name: Release
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -61,12 +60,11 @@ jobs:
         id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WATCHBOUND_PLAN_MODE: ${{ github.event_name == 'push' && 'release' || 'qualification' }}
         shell: bash
         run: |
           set -euo pipefail
           node scripts/plan-release.mjs \
-            --mode "$WATCHBOUND_PLAN_MODE" \
+            --mode release \
             --output "$RUNNER_TEMP/release-plan.json" \
             --github-output "$GITHUB_OUTPUT"
 

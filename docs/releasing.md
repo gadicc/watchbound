@@ -44,12 +44,12 @@ Node-specific declarations instead.
 
 ## Main-branch semantic release
 
-`.github/workflows/release.yml` has a non-publishing manual qualification mode
-and a publishing `main`-push mode. It plans the exact committed version without
-mutating source, reuses the complete CI workflow, builds the addon on two
-isolated clean Ubuntu 24.04 jobs, transfers both exact binaries, and recomputes
-their SHA-256 values in a third job before byte-comparing them. If those gates
-pass, semantic-release analyzes Conventional Commits since the last tag:
+`.github/workflows/release.yml` runs only for a push to `main`. It plans the
+exact committed version without mutating source, reuses the complete CI
+workflow, builds the addon on two isolated clean Ubuntu 24.04 jobs, transfers
+both exact binaries, and recomputes their SHA-256 values in a third job before
+byte-comparing them. If those gates pass, semantic-release analyzes
+Conventional Commits since the last tag:
 
 - `fix` produces a patch;
 - `feat` produces a minor;
@@ -85,14 +85,13 @@ not. The GitHub-hosted publish job has the write permissions semantic-release
 needs for its tag, release, issues, and pull-request notes, plus
 `id-token: write` for registry OIDC. It has no npm or JSR secret.
 
-A manual workflow dispatch runs the complete reusable CI workflow but cannot
-enter semantic-release. Feature branches, pull requests, and `dev` pushes
-cannot publish.
+Feature branches, pull requests, and `dev` pushes run the ordinary CI workflow
+but cannot start the Release workflow or publish.
 
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary
-workflow secret, branch-protection requirement, or separate release-approval
-deployment. Manual dispatch qualifies the selected SHA but cannot publish.
+workflow secret, branch-protection requirement, manual-dispatch prerequisite,
+or separate release-approval deployment.
 
 ## One-time `0.0.1` bootstrap
 
@@ -212,20 +211,20 @@ same qualified SHA is pushed to `main`:
 2. Commit the intended release version in package, Cargo, and lock metadata.
 3. Run `pnpm build:node`, `pnpm test`, `pnpm check`,
    `pnpm check:reproducible`, and `pnpm test:packages`.
-4. Manually dispatch the non-publishing Release workflow for the exact candidate
-   and retain both support lanes and independent-builder comparison evidence.
-5. On a confirmed quiet supported host, run the separately approved manual and
+4. On a confirmed quiet supported host, run the separately approved manual and
    automatic forced-overflow trials against that SHA and native digest.
-6. For the completed one-time bootstrap only, `0.0.1` was published locally in
+5. For the completed one-time bootstrap only, `0.0.1` was published locally in
    native, wrapper, then JSR order, and the registry OIDC relationships were
    configured.
-7. For subsequent releases, intentionally merge or push the exact approved
+6. For subsequent releases, intentionally merge or push the exact approved
    Conventional Commit to `main`; semantic-release validates and publishes its
-   committed version.
-8. Treat the release as published-but-verification-pending until both exact npm
+   committed version after the two CI lanes and independent-builder comparison
+   pass in that same workflow run.
+7. Treat the release as published-but-verification-pending until both exact npm
    and JSR Node-route registry smokes pass.
-9. Verify provenance, npm dist-tags, JSR version state, GitHub evidence, and the
+8. Verify provenance, npm dist-tags, JSR version state, GitHub evidence, and the
    retained smoke results.
 
 Do not merge a release-worthy commit to `main` merely to exercise publishing.
-Use `workflow_dispatch` for a non-publishing full-CI rehearsal.
+Every `main` push crosses the publication-authorization boundary; use an
+ordinary branch push or pull request for non-publishing CI.

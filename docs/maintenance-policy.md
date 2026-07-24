@@ -106,8 +106,9 @@ outside the documented workflow or integrating a consumer remains separately
 authorized work.
 
 The checked-in release workflow is preparation, not blanket approval. Feature
-branches and manual-dispatch runs cannot publish. After CI passes on `main`,
-semantic-release may publish the committed lockstep version when Conventional
-Commits require it and every pre-publication dependency succeeds. A stable
-release is published-but-verification-pending until clean exact-version npm and
-JSR Node-route installs pass on fresh supported runners.
+branches, pull requests, and `dev` pushes cannot publish. A push to `main`
+starts the Release workflow; semantic-release may publish the committed
+lockstep version only after every pre-publication dependency succeeds and
+Conventional Commits require it. A stable release is
+published-but-verification-pending until clean exact-version npm and JSR
+Node-route installs pass on fresh supported runners.

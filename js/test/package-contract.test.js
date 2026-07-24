@@ -79,6 +79,10 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     path.join(workspaceRoot, ".github/workflows/release.yml"),
     "utf8",
   );
+  const ci = fs.readFileSync(
+    path.join(workspaceRoot, ".github/workflows/ci.yml"),
+    "utf8",
+  );
   const config = fs.readFileSync(
     path.join(workspaceRoot, "release.config.mjs"),
     "utf8",
@@ -104,7 +108,9 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(release, /WATCHBOUND_EXPECTED_NATIVE_SHA256/u);
   assert.match(release, /watchbound-approved-native/u);
   assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
-  assert.match(release, /^  workflow_dispatch:$/mu);
+  assert.doesNotMatch(release, /workflow_dispatch/u);
+  assert.doesNotMatch(ci, /workflow_dispatch/u);
+  assert.match(ci, /^  push:\n    branches-ignore: \[main\]$/mu);
 
   assert.match(config, /branches: \["main"\]/u);
   assert.match(config, /@semantic-release\/commit-analyzer/u);

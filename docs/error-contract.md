@@ -1,6 +1,7 @@
 # Structured operation-error contract
 
-Status: schema version 2 for the private `0.2.0` maintained-unpublished
+Status: schema version 2 was introduced by the private `0.2.0` contract carried
+in the public `0.0.1` bootstrap and is retained by the current async callback
 candidate. Schema version 1 remains the frozen `0.1.0` contract.
 
 Watchbound errors describe why an operation could not complete. They are not a

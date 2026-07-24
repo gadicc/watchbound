@@ -121,7 +121,7 @@ test("Watchbound advertises reconciliation only for the complete public operatio
   );
 });
 
-test("Watchbound evidence identifies the controlled unpublished source build", () => {
+test("Watchbound evidence identifies the controlled source-build candidate", () => {
   const metadata = createAdapterMetadata(
     {
       capabilities: {
@@ -138,7 +138,7 @@ test("Watchbound evidence identifies the controlled unpublished source build", (
 
   assert.equal(
     WATCHBOUND_ADAPTER_LABEL,
-    "Watchbound maintained-unpublished source-build package",
+    "Watchbound controlled source-build candidate",
   );
   assert.equal(metadata.label, WATCHBOUND_ADAPTER_LABEL);
   assert.equal(metadata.build.command, WATCHBOUND_BUILD_COMMAND);

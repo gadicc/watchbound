@@ -1,4 +1,4 @@
-# Maintenance and private 0.x policy
+# Maintenance and release policy
 
 Status: `0.0.1` registry bootstrap published on 2026-07-23; production
 readiness remains gated.
@@ -19,13 +19,16 @@ triage, and release-gate evidence.
 
 ## Project state
 
-Version `0.1.0` was the first frozen private API. The subsequent `0.2.0`
+Version `0.1.0` was the first frozen private API. The subsequent private `0.2.0`
 development revision added cancellable establishment and shared
-per-environment delivery. The public registry line resets with a `0.0.1`
-bootstrap package containing that revision; later public versions are
-owned by semantic-release. The bootstrap reports `target-pending-clean-ci`
-until its exact commit is qualified. The repository targets the narrow host in
-`support-matrix.md`; bootstrap publication must not imply a consumer-ready
+per-environment delivery. The public registry line reset with a `0.0.1`
+bootstrap package containing that revision; later public versions are owned by
+semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
+although a later exact commit qualified its implementation baseline. The
+current unpublished source candidate adds promise-aware callbacks, callback
+cancellation context, binding API 3, and capability schema 3, and needs its own
+exact-commit qualification. The repository targets the narrow host in
+`support-matrix.md`; bootstrap publication must not imply a broader
 compatibility promise.
 
 The exact-commit verification and documentation gates supporting recognition

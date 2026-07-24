@@ -1,18 +1,22 @@
-# Private 0.2.0 API revision
+# API revision history and current candidate
 
-Status: private-minor candidate carried by the public `0.0.1`
-bootstrap package and pending exact-commit clean CI. The exact private `0.1.0`
-freeze and its support declaration remain the historical qualified baseline;
-the bootstrap capability emits `target-pending-clean-ci` until separately
-qualified.
+Status: the private `0.2.0` contract is carried by the published public `0.0.1`
+bootstrap. Its later documentation commit passed both support lanes, although
+the immutable bootstrap still emits `target-pending-clean-ci`. The current
+source candidate postdates that package: it adds the promise-aware callback
+contract, binding API 3, and capability schema 3, and remains unpublished and
+`target-pending-clean-ci` until its own exact commit is qualified.
+
+The exact private `0.1.0` freeze and its support declaration remain the
+historical first qualified baseline.
 
 Callback-specific follow-up items are retained in
 [`callback-contract-review.md`](callback-contract-review.md).
 
-This revision did not itself authorize publication or consumer integration.
-The separately approved bootstrap publishes only generated JavaScript package
-trees; source JavaScript packages remain private and both Rust crates remain
-`publish = false`.
+The `0.0.1` bootstrap was separately approved and published from generated
+JavaScript package trees. The current candidate does not itself authorize a
+subsequent publication or consumer integration; source JavaScript packages
+remain private and both Rust crates remain `publish = false`.
 
 ## Entry points and exports
 
@@ -117,7 +121,7 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; this `0.2.0` candidate emits
+`target-pending-clean-ci` and `supported`; the current async candidate emits
 `target-pending-clean-ci`. Exhaustive narrowing fixtures compile in the
 ordinary gate. Capability schema 3 and binding API 3 expose cancellation,
 shared-delivery, and promise-aware callback-completion facts; loader metadata
@@ -150,7 +154,7 @@ The intended maintained target remains a controlled source build on Ubuntu 24.04
 x86_64, Linux 6.8 or newer within that support line, glibc 2.39, Node
 `>=24.18.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
 pnpm 10.33.2, and a working Ubuntu C toolchain under trusted stable local roots.
-This target description does not turn the unqualified `0.2.0` commit into
+This target description does not turn the unqualified current candidate into
 `supported`; that status requires its own exact clean evidence.
 
 Unsupported targets include other Node ranges, distributions or glibc

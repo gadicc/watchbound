@@ -1,6 +1,6 @@
 # Callback contract: review before v1
 
-Status: implemented for the maintained unpublished candidate on 2026-07-24.
+Status: implemented for the unpublished post-bootstrap candidate on 2026-07-24.
 This note records the decisions that deserve a deliberate maintainer review
 before a v1 release. It is not a publication or Codex Desktop integration
 record.
@@ -64,9 +64,10 @@ surface and needs its own boundedness and lifecycle design.
 - Exercise the callback model in a separately authorized real consumer pilot
   before calling the API v1-stable. In particular, test cancellation
   cooperation and operation calls made from callbacks.
-- Ship it in a 0.x candidate first, with wrapper/native/engine versions moved in
-  lockstep and clean target-host evidence. Do not infer qualification from the
-  local development run.
+- The public `0.0.1` bootstrap provides an earlier 0.x line but does not contain
+  this callback contract. Before a v1 release, move wrapper/native/engine
+  versions in lockstep and obtain clean exact-commit target-host evidence. Do
+  not infer qualification from the local development run.
 - Re-run final conformance and performance trials only on a confirmed quiet,
   prepared host. Forced-overflow evidence remains separately supervised.
 - Revisit whether `PromiseLike<unknown>` should narrow to `PromiseLike<void>`

@@ -2,7 +2,7 @@
   "name": "watchbound",
   "version": "0.0.1",
   "private": true,
-  "description": "Maintained unpublished JavaScript wrapper for Watchbound",
+  "description": "Private source workspace for the Watchbound JavaScript wrapper",
   "author": "Gadi Cohen <dragon@wastelands.net>",
   "homepage": "https://github.com/gadicc/watchbound#readme",
   "repository": {

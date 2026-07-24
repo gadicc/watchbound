@@ -6,9 +6,12 @@ identity-barrier and 0.1.0 freeze commits passed both clean target lanes. This
 declaration recognizes Watchbound as maintained-unpublished only after its own
 exact commit passes the same two-lane gate.
 
-This is historical qualification evidence for `0.1.0`, not qualification of
-the later `0.2.0` cancellation/shared-delivery candidate. That revision reports
-`target-pending-clean-ci` until separate exact-commit evidence exists.
+This is historical qualification evidence for `0.1.0`, not the original
+qualification record for the later `0.2.0` cancellation/shared-delivery
+candidate. That contract was subsequently published in the `0.0.1` bootstrap,
+and a later exact commit passed both target lanes; the immutable bootstrap
+continues to report `target-pending-clean-ci`. The post-bootstrap async callback
+candidate requires separate exact-commit evidence.
 
 This decision does not publish a package, change package visibility, produce a
 prebuild, upload an artifact, or authorize consumer integration.

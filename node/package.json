@@ -2,7 +2,7 @@
   "name": "@gadicc/watchbound-node",
   "version": "0.0.1",
   "private": true,
-  "description": "Maintained unpublished Node-API binding for Watchbound",
+  "description": "Private source workspace for the Watchbound Node-API binding",
   "author": "Gadi Cohen <dragon@wastelands.net>",
   "homepage": "https://github.com/gadicc/watchbound#readme",
   "repository": {

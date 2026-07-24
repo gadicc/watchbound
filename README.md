@@ -17,24 +17,26 @@ safely claim completeness.
 
 The checked-in workspace packages remain private as an accidental-publish
 guard; registry packages are created only in controlled generated trees. The
-`0.0.1` package is identified by the `bootstrap` tag. After that, CI
-validates controlled public npm and JSR artifacts and semantic-release uses
-Conventional Commits to decide whether a release is needed and stamps one
-lockstep version across both npm packages, JSR, Rust, checksums, and the SBOM.
-Manual workflow dispatches run CI but cannot publish. Registry artifacts
-identify themselves as a bundled-native delivery for exactly Ubuntu 24.04
-x64/glibc 2.39; source workspaces continue to identify as controlled builds.
-Before the public version line was established, the first frozen private
-`0.1.0` API recorded clean-CI evidence and the cancellable-establishment and
-shared-delivery work was tracked as the private `0.2.0` revision. That
-development revision is packaged as the public `0.0.1` bootstrap
-and still reports `target-pending-clean-ci` until its exact commit is
-separately qualified. It is intentionally independent of Codex Desktop and
-does not contain Git-ignore or application policy.
+`0.0.1` npm and JSR bootstrap is published and contains the earlier cancellable-
+establishment and shared-delivery contract tracked as the private `0.2.0`
+revision. It reports `target-pending-clean-ci`; later exact-commit CI qualified
+that implementation baseline, but the immutable bootstrap metadata was not
+rewritten. The current source candidate adds promise-aware callbacks, callback
+cancellation context, binding API 3, and capability schema 3. It is not in
+`0.0.1` and remains `target-pending-clean-ci` until its own exact commit passes
+both support lanes.
 
-JSR is planned as a distribution channel for the same Node-only package
-surface. It does not imply Deno runtime support or widen the qualified
-Ubuntu/Node matrix.
+After the bootstrap, CI validates controlled public npm and JSR artifacts and
+semantic-release uses Conventional Commits to decide whether a release is
+needed and stamps one lockstep version across both npm packages, JSR, Rust,
+checksums, and the SBOM. Manual workflow dispatches run CI but cannot publish.
+Registry artifacts identify themselves as a bundled-native delivery for exactly
+Ubuntu 24.04 x64/glibc 2.39; source workspaces continue to identify as
+controlled builds. Watchbound is intentionally independent of Codex Desktop
+and does not contain Git-ignore or application policy.
+
+JSR distributes the same Node-only package surface as npm. It does not imply
+Deno runtime support or widen the qualified Ubuntu/Node matrix.
 
 The workspace is divided by ownership:
 
@@ -137,11 +139,11 @@ consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own a native source build
 and joined-disposal lifecycle. The intended maintained target is only Ubuntu
 24.04, Linux 6.8+ in that support line, x86_64, glibc 2.39, and Node
-`>=24.18.0 <25`, built from source under trusted stable local roots; the current
-`0.2.0` revision remains `target-pending-clean-ci`. WSL, network filesystems,
-Filesystem in Userspace (FUSE), overlay filesystems, unusual container mounts,
-musl, other distributions or architectures, and all non-Linux platforms are
-unqualified or unsupported. See
+`>=24.18.0 <25`, built from source under trusted stable local roots; the
+current async callback candidate remains `target-pending-clean-ci`. WSL,
+network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
+unusual container mounts, musl, other distributions or architectures, and all
+non-Linux platforms are unqualified or unsupported. See
 [`docs/support-matrix.md`](docs/support-matrix.md).
 
 One motivating Codex case transiently previews a repository and observed
@@ -182,10 +184,10 @@ typed file events plus historical snapshot queries. This repository compares
 Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
 inotify backend.
 
-| Capability | Watchbound `0.0.1` bootstrap (private `0.2.0` revision) | `@parcel/watcher` 2.5.6 |
+| Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout or proposed one-target bundled native registry package; `0.2.0` is `target-pending-clean-ci` for the narrow Ubuntu 24.04 x64/glibc 2.39 target below | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout; the earlier contract is published as the one-target `0.0.1` npm/JSR bootstrap, while this async candidate is unpublished and `target-pending-clean-ci` for the narrow Ubuntu 24.04 x64/glibc 2.39 target below | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -206,7 +208,7 @@ inotify backend.
 
 The Watchbound semantic and lifecycle rows are current private API guarantees.
 Its named threads, scheduling rounds, and queue construction are current
-implementation facts also exposed where applicable through capability schema 2;
+implementation facts also exposed where applicable through capability schema 3;
 their internal shape is not a public major-version stability promise.
 
 The Parcel API claims in the table come from its published
@@ -319,9 +321,9 @@ and separates versions/build facts, observed runtime facts, the support target,
 features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
 callback queue, single-credit admission, and promise-aware serialized callback
-completion explicitly. Runtime facts do not
-widen support: this `0.2.0` revision remains `target-pending-clean-ci` until
-exact clean target evidence supports a later status declaration. See
+completion explicitly. Runtime facts do not widen support: this async callback
+candidate remains `target-pending-clean-ci` until exact clean target evidence
+supports a later status declaration. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
 and [`docs/support-matrix.md`](docs/support-matrix.md). The private API revision
 and compatibility policy are recorded in

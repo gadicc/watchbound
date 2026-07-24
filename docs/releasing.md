@@ -1,9 +1,10 @@
 # Release and registry runbook
 
 Status: the `0.0.1` bootstrap is published to npm and JSR. OIDC automation is
-prepared for subsequent semantic releases. Production readiness, support
-qualification, native-distribution review, and explicit maintainer approval
-remain separate gates.
+prepared for subsequent semantic releases. The current post-bootstrap async
+callback candidate is unpublished and has not yet passed exact-commit target
+CI. Production readiness, support qualification, native-distribution review,
+and explicit maintainer approval remain separate gates.
 
 ## What CI does
 
@@ -186,6 +187,8 @@ Still requiring an explicit human decision or external evidence:
   release remains experimental;
 - before treating a release as stable, obtain byte-comparison evidence from
   two independent clean builders; same-runner repetition is useful but weaker;
+- obtain fresh supervised forced-overflow evidence for the exact release
+  candidate on a confirmed quiet, prepared host;
 - review known limitations; and
 - after publication, install exact registry versions into a clean supported
   host and record the smoke result.

@@ -1,8 +1,9 @@
 # Native delivery contract
 
-Status: source checkouts remain controlled builds. The proposed registry
-artifact is an explicit one-target bundled native package; it is not yet
-published or qualified as a stable release.
+Status: source checkouts remain controlled builds. The public `0.0.1` npm/JSR
+bootstrap is an explicit one-target bundled native package. The current async
+callback candidate is not in that package and is not yet qualified or published
+as a stable release.
 
 ## Current decision
 

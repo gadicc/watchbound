@@ -5,8 +5,10 @@ correctness gate, shared process-wide runtime, bounded fair native-watch
 allocator, generation-based atomic dynamic exclusions, bounded post-loss
 reconciliation, and an opt-in JavaScript automatic policy in targeted stress,
 plus explicit identity-policy-gated root replacement recovery, cancellable
-establishment, and bounded per-environment native-to-Node delivery,
-without product integration or publication.
+establishment, bounded per-environment native-to-Node delivery, and
+promise-aware serialized callbacks. The earlier contract is published as the
+`0.0.1` npm/JSR bootstrap; the current callback candidate is unpublished. No
+product integration has been authorized.
 
 The subsequent consumer/API audit recommends a maintained unpublished package,
 conditional on named ownership and a narrow support target, but explicitly
@@ -418,7 +420,7 @@ and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded the
 single native binary, not evidence that the host is supported. The separate
-`support` section is `target-pending-clean-ci` for the `0.2.0` candidate until
+`support` section is `target-pending-clean-ci` for the current candidate until
 its exact commit is qualified for the narrow controlled source-build target in
 `support-matrix.md`; matching facts do not widen that fixed target and
 nonmatching facts do not broaden it.
@@ -804,15 +806,15 @@ platform range, and packaging are sufficient. Parcel's Linux inotify
 conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
-The intended maintained-unpublished target is the narrow Ubuntu 24.04, Linux
+The intended maintained target is the narrow Ubuntu 24.04, Linux
 6.8+, x86_64, glibc 2.39, Node `>=24.18.0 <25` controlled source build on
-trusted stable local roots in `docs/support-matrix.md`; the current `0.2.0`
-revision remains `target-pending-clean-ci`. WSL, network filesystems, Filesystem
-in Userspace (FUSE), overlay filesystems, unusual container mounts, musl, other
-distributions and architectures, and non-Linux platforms are unqualified or
-unsupported. The engine traverses existing mount points, has no one-filesystem
-mode, and cannot observe a later descendant mount insertion through inotify
-alone.
+trusted stable local roots in `docs/support-matrix.md`; the current async
+callback revision remains `target-pending-clean-ci`. WSL, network filesystems,
+Filesystem in Userspace (FUSE), overlay filesystems, unusual container mounts,
+musl, other distributions and architectures, and non-Linux platforms are
+unqualified or unsupported. The engine traverses existing mount points, has no
+one-filesystem mode, and cannot observe a later descendant mount insertion
+through inotify alone.
 
 One motivating Codex repository-preview observation counted 251,811 Node
 `fs.watch` calls. The value is a call count only. It is not evidence of the

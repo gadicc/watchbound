@@ -1,15 +1,17 @@
-# Initial maintained source-build target
+# Narrow support target
 
-Status: narrow target based on the exact-commit clean-CI evidence recorded
-below for the historical private `0.1.0` revision. The private `0.2.0`
-candidate is packaged as the public `0.0.1` bootstrap, retains
-this intended target, and reports `target-pending-clean-ci` until its own exact
-commit is qualified. The registry package bundles only the exact native target
-below; it does not broaden this matrix.
+Status: the historical private `0.1.0` revision and the implementation baseline
+carried by the public `0.0.1` bootstrap have exact-commit clean-CI evidence
+recorded below. The immutable bootstrap still reports
+`target-pending-clean-ci`. The current async callback candidate retains this
+intended target, is not included in `0.0.1`, and also reports
+`target-pending-clean-ci` until its own exact commit is qualified. The registry
+package bundles only the exact native target below; it does not broaden this
+matrix.
 
-## Supported target
+## Qualified and intended target
 
-The initial maintained-unpublished target is deliberately narrow:
+The target is deliberately narrow:
 
 | Component | Target |
 | --- | --- |
@@ -30,7 +32,7 @@ this exact class of host. It does not extend beyond the table.
 
 Historical capability schema version 1 mirrors this table with `supported` for
 the qualified `0.1.0` build. Capability schemas 2 and 3 retain the table, with
-schema 3 adding callback-completion lifecycle facts; the current `0.2.0`
+schema 3 adding callback-completion lifecycle facts; the current async
 candidate emits `target-pending-clean-ci`. The adjacent `capabilities.runtime`
 section reports the platform, architecture, kernel, libc, Node, and Node-API
 facts observed in the process that loaded the native binary. Those facts are
@@ -74,13 +76,21 @@ contracts, passed tests and warnings-denied checks, completed the bounded
 strict ordinary conformance scenarios with forced overflow disabled. No
 artifact, cache, package, prebuild, or evidence derivative was uploaded.
 
+After the bootstrap was published, exact commit
+[`b4200aa6f1d8ebff9a5d7f9010e75643e2a5a632`](https://github.com/gadicc/watchbound/commit/b4200aa6f1d8ebff9a5d7f9010e75643e2a5a632)
+passed both lanes in [CI run 30038218924](https://github.com/gadicc/watchbound/actions/runs/30038218924)
+(floor job `89311410432`, moving job `89311410443`). That qualifies the
+bootstrap implementation baseline, but cannot rewrite the immutable `0.0.1`
+capability value. The current async callback candidate has no exact-commit CI
+evidence yet, so its pending status remains accurate.
+
 The separate commit changing the declared status to `supported` is subject to
 the same exact-commit two-lane gate. Landing it is not by itself qualification;
 maintainer recognition requires its completed green run.
 
 ## Explicitly unsupported
 
-The maintained-unpublished claim does not cover:
+The support claim does not cover:
 
 - Node.js 18, 20, 22, 25, 26, or other versions outside the stated range;
 - Linux distributions or glibc versions other than the stated target;

@@ -1,8 +1,10 @@
 # Node binding decision
 
-Status: selected for the maintained-unpublished source-build package. The
-`0.1.0` baseline has narrow-target evidence; the `0.2.0` binding revision is
-`target-pending-clean-ci`. This is not a stable public package commitment.
+Status: selected for controlled source builds and the one-target public
+bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
+baseline have narrow-target evidence. The current binding API 3 async callback
+candidate is unpublished and `target-pending-clean-ci`; this is not yet a stable
+public package commitment.
 
 ## Choice
 
@@ -105,7 +107,7 @@ JSON-serializable. Under `schemaVersion: 3`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision;
-`support.status` is `target-pending-clean-ci` for the `0.2.0` candidate until
+`support.status` is `target-pending-clean-ci` for the current candidate until
 its exact commit is separately qualified. Current process facts never broaden
 the fixed target.
 

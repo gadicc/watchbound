@@ -1,0 +1,4 @@
+interface:
+  display_name: "Watchbound"
+  short_description: "Build and maintain conservative Linux watchers"
+  default_prompt: "Use $watchbound to implement a truthful, bounded recursive filesystem watcher integration."

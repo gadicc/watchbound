@@ -55,6 +55,20 @@ stable `WATCHBOUND_*` codes under the versioned
 [structured error contract](docs/error-contract.md); human messages are
 diagnostic rather than a policy surface.
 
+## AI agent skill
+
+This repository includes an
+[Agent Skills-compatible Watchbound skill](skills/watchbound/SKILL.md) with
+package integration, coverage, lifecycle, recovery, and contributor guidance.
+Install it for a compatible coding agent with:
+
+```bash
+npx skills add gadicc/watchbound
+```
+
+The interactive installer detects supported agents and lets you choose the
+installation scope.
+
 ## Threading and workload fit
 
 The native addon is a shared library loaded into the Node or Electron process,

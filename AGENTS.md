@@ -52,6 +52,36 @@ pnpm check
 - Disposal must be idempotent and must prevent a callback from starting after
   the disposal promise resolves.
 
+## JSR documentation and score
+
+Treat the current complete JSR score factors as release invariants, not as an
+80% target:
+
+- Keep a substantive root `README.md` and a main-entrypoint module doc.
+- Keep at least one working package-usage example in a fenced code block in
+  the root README or main module doc. Build and test commands alone are not a
+  substitute for an API example.
+- Put a JSDoc module summary with `@module` in every JSR entrypoint. When an
+  entrypoint is added or renamed, update its module doc and the generated
+  `jsr.json` exports together.
+- Document every exported symbol and every public member of exported
+  interfaces and classes with meaningful JSDoc. This includes type aliases,
+  constants, overloads, re-exports, options, result fields, methods, and newly
+  public types reached through another exported type. Require 100% coverage
+  even though JSR awards the factor at 80%.
+- Preserve `/* @ts-self-types="./index.d.ts" */` on the JavaScript entrypoint
+  and keep its declaration surface synchronized with the runtime exports.
+- Keep every public type fast for JSR: exported variables, functions, class
+  members, parameters, and return values need explicit or simply inferable
+  types; do not introduce public module/global augmentation, CommonJS export
+  forms, export destructuring, private-type references, or expandos.
+
+Run `deno doc --lint js/index.d.ts` after any public declaration or
+documentation change. Before handoff of package-surface or entrypoint changes,
+also run `pnpm test:packages`; it prepares the exact JSR tree and exercises the
+JSR publish dry run. Recheck all score factors whenever JSR changes its scoring
+rules.
+
 ## Benchmarks and conformance
 
 - Quick or targeted functionality checks are allowed during development.

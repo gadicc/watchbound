@@ -190,6 +190,18 @@ group timeout cleanup.
 
 ## Commands
 
+Safe local end-to-end baseline:
+
+```sh
+pnpm test:baseline
+```
+
+This command builds the native addon, runs the same Watchbound-only strict
+ordinary quick conformance used by CI, and exercises the quick benchmark
+startup, burst, and disposal paths. It uses one 100-directory/event trial,
+retains no report, cannot select forced overflow, and establishes
+functionality—not a publishable performance measurement.
+
 Small non-authoritative harness/functionality check (forced overflow is
 omitted) is allowed before host preparation:
 

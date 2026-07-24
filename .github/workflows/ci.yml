@@ -164,6 +164,18 @@ jobs:
             --order rotating \
             --strict
 
+      - name: Exercise the quick benchmark paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --expose-gc benches/benchmark.mjs \
+            --adapter watchbound \
+            --quick \
+            --order rotating \
+            --strict \
+            --output "$RUNNER_TEMP/watchbound-benchmark-smoke.json" \
+            --quiet
+
       - name: Set up Deno for JSR validation
         if: matrix.lane == 'floor'
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2

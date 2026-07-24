@@ -63,6 +63,10 @@ test("private package manifests match the narrow maintained source-build target"
     "pnpm package:prepare && pnpm package:check",
   );
   assert.equal(
+    root.scripts["test:baseline"],
+    "node scripts/run-local-baseline.mjs",
+  );
+  assert.equal(
     root.scripts["check:registry-packages"],
     "node scripts/check-registry-packages.mjs",
   );

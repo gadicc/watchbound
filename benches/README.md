@@ -14,6 +14,7 @@ not corrupt the report's JSON.
 ## Commands
 
 ```sh
+pnpm test:baseline
 node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
@@ -22,6 +23,12 @@ pnpm test:reconciliation-stress
 node --expose-gc benches/benchmark.mjs --pretty
 node --expose-gc benches/benchmark.mjs --quick --pretty
 ```
+
+`pnpm test:baseline` builds the local addon and runs Watchbound-only strict
+quick conformance plus a quick benchmark functionality smoke. Its reports live
+only in a temporary directory and are deleted; the command never enables forced
+overflow and does not produce a performance result suitable for comparison or
+release evidence.
 
 The benchmark defaults to three trials, 1,000- and 10,000-subdirectory startup trees, and
 1,000-operation file, directory, and rename bursts. Use `--help` for filters, sizes, timeouts, and

@@ -335,6 +335,7 @@ and compatibility policy are recorded in
 ## Evaluate
 
 ```sh
+pnpm test:baseline
 node benches/conformance.mjs --quick --pretty
 node benches/conformance.mjs --adapter watchbound --scenario reconciliation --quick --strict --pretty
 node benches/conformance.mjs --adapter watchbound --scenario automatic-reconciliation --quick --strict --pretty
@@ -343,6 +344,12 @@ pnpm test:root-recovery-stress
 node benches/conformance.mjs --help
 node --expose-gc benches/benchmark.mjs --help
 ```
+
+`pnpm test:baseline` is the safe local end-to-end check. It builds the native
+addon, runs Watchbound's strict ordinary quick conformance, and exercises the
+quick benchmark paths with one 100-operation trial. It writes reports only to a
+temporary directory, removes them, never selects forced overflow, and treats
+the observed timings as functionality smoke rather than performance evidence.
 
 The targeted reconciliation and root-recovery commands are
 ordinary-development conformance checks. The first calls the explicit

@@ -34,6 +34,7 @@
     "test:packages": "pnpm package:prepare && pnpm package:check",
     "typecheck": "tsc -p js/test/types/tsconfig.json",
     "test": "cargo test --workspace && pnpm --dir node test && node --test js/test/*.test.js benches/test/*.test.mjs",
+    "test:baseline": "node scripts/run-local-baseline.mjs",
     "test:soak": "node scripts/maintenance-soak.mjs",
     "test:reconciliation-stress": "node benches/conformance.mjs --adapter watchbound --scenario reconciliation --runs 5 --burst-count 100 --strict",
     "test:root-recovery-stress": "node benches/conformance.mjs --adapter watchbound --scenario root-replacement-recovery --runs 3 --strict",

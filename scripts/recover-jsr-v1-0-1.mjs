@@ -20,11 +20,19 @@ const release = {
   sourceSha: "744cd8f8d5de4301e148f08e9f3adba230629fd5",
   originalRunId: "30116055532",
 };
+const allowedControllerDelta = [
+  ".github/workflows/recover-jsr-v1-0-1.yml",
+  "docs/releasing.md",
+  "js/test/package-contract.test.js",
+  "scripts/recover-jsr-v1-0-1.mjs",
+  "scripts/semantic-release-watchbound.mjs",
+].sort();
 const planPath = requiredPath("WATCHBOUND_ORIGINAL_RELEASE_PLAN");
 const nativePath = requiredPath("WATCHBOUND_CANONICAL_NATIVE_PATH");
 const independentPath = requiredPath(
   "WATCHBOUND_INDEPENDENT_REPRODUCIBILITY",
 );
+const sameRunnerPath = requiredPath("WATCHBOUND_REPRODUCIBLE_OUTPUT");
 const originalLedgerPath = requiredPath(
   "WATCHBOUND_ORIGINAL_PUBLICATION_LEDGER",
 );
@@ -41,6 +49,15 @@ assert.equal(
   release.version,
 );
 assert.equal(capture("git", ["rev-parse", `${release.tag}^{commit}`]), release.sourceSha);
+assert.equal(capture("git", ["status", "--short"]), "");
+assert.deepEqual(
+  capture("git", [
+    "diff",
+    "--name-only",
+    `${release.sourceSha}..HEAD`,
+  ]).split("\n").filter(Boolean).sort(),
+  allowedControllerDelta,
+);
 
 const plan = readJson(planPath);
 assert.equal(plan.kind, "watchbound-release-plan");
@@ -105,7 +122,21 @@ if (process.env.WATCHBOUND_RECOVERY_VALIDATE_ONLY === "1") {
 }
 
 async function recover(specifier, existedBeforeRecovery) {
-  prepare({}, { nextRelease });
+  const releaseEvidenceEnvironment = {
+    WATCHBOUND_INDEPENDENT_REPRODUCIBILITY:
+      process.env.WATCHBOUND_INDEPENDENT_REPRODUCIBILITY,
+    WATCHBOUND_REPRODUCIBLE_OUTPUT:
+      process.env.WATCHBOUND_REPRODUCIBLE_OUTPUT,
+  };
+  delete process.env.WATCHBOUND_INDEPENDENT_REPRODUCIBILITY;
+  delete process.env.WATCHBOUND_REPRODUCIBLE_OUTPUT;
+  try {
+    prepare({}, { nextRelease });
+  } finally {
+    Object.assign(process.env, releaseEvidenceEnvironment);
+  }
+  assert.ok(fs.statSync(independentPath).isFile());
+  assert.ok(fs.statSync(sameRunnerPath).isFile());
   await publish({}, { nextRelease });
 
   const recoveredLedgerPath = path.join(

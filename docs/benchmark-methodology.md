@@ -286,6 +286,10 @@ comparison before any overflow command. Retain the checkout/build transcript,
 source digest, addon hash, tool versions, inotify limits, temporary-filesystem
 identity, free blocks/inodes, `vmstat 1 5`, `/proc/pressure` samples, load,
 governor, and the list of other active I/O-heavy work.
+Possible future Docker, dedicated-runner, and bounded quiet-host polling designs
+are recorded in
+[`overflow-runner-strategy.md`](overflow-runner-strategy.md); none changes the
+current supported-host or supervision requirements.
 
 Then stop. Approval must name the SHA, version, addon hash, scenario, attempt
 number, and output path. Run the manual mode once:

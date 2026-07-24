@@ -125,8 +125,16 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
     observeCoverage: undefined,
     pendingCoverageObservation: null,
     observedState: null,
+    abortController: new AbortController(),
+    stopRequested: false,
+    startDisposal: null,
+    context: null,
   };
   const weakCallbackHolder = new WeakRef(callbackHolder);
+  callbackHolder.context = Object.freeze({
+    signal: callbackHolder.abortController.signal,
+    stop: createCallbackStop(weakCallbackHolder),
+  });
   return establishNativeSubscription({
     nativeEngine,
     root: absoluteRoot,
@@ -152,6 +160,19 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
       initializeObservedState(callbackHolder, initialCoverage, initialRootState);
       let disposePromise;
       let subscription;
+      const beginDispose = () => {
+        callbackHolder.abortController.abort();
+        return (disposePromise ??= (automaticPolicy
+          ? automaticPolicy.dispose(() => invokeWatchbound(
+              "dispose",
+              () => nativeSubscription.dispose(),
+            ))
+          : invokeWatchbound("dispose", () => nativeSubscription.dispose())
+        ).finally(() => callbackHolders.delete(subscription)));
+      };
+      callbackHolder.startDisposal = () => {
+        void beginDispose().catch(() => {});
+      };
       subscription = Object.freeze({
         initialCoverage,
         initialRootState,
@@ -213,16 +234,10 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
             ? automaticPolicy.recoverRoot(identityPolicy, recover)
             : recover();
         },
-        dispose: () =>
-          (disposePromise ??= (automaticPolicy
-            ? automaticPolicy.dispose(() => invokeWatchbound(
-                "dispose",
-                () => nativeSubscription.dispose(),
-              ))
-            : invokeWatchbound("dispose", () => nativeSubscription.dispose())
-          ).finally(() => callbackHolders.delete(subscription))),
+        dispose: beginDispose,
       });
       callbackHolders.set(subscription, callbackHolder);
+      if (callbackHolder.stopRequested) callbackHolder.startDisposal();
       return subscription;
     },
   });
@@ -263,9 +278,14 @@ function copyNativeSubscriptionOptions(options) {
 }
 
 function createNativeCallback(weakCallbackHolder, resolvedRoot) {
-  return (nativeBatch) => {
+  return (nativeBatch, deliveryId) => {
     const holder = weakCallbackHolder.deref();
-    if (holder) {
+    if (!holder) {
+      nativeBinding.completeDelivery(deliveryId, false, true);
+      return true;
+    }
+    let result;
+    try {
       const batch = invokeWatchbound(
         "deliver-batch",
         () => normalizeBatch(resolvedRoot, nativeBatch),
@@ -280,9 +300,74 @@ function createNativeCallback(weakCallbackHolder, resolvedRoot) {
       } else {
         holder.observeCoverage?.(batch);
       }
-      holder.onBatch(batch);
+      result = holder.onBatch(batch, holder.context);
+    } catch {
+      nativeBinding.completeDelivery(deliveryId, true, holder.stopRequested);
+      return true;
     }
+    settleCallbackResult(holder, deliveryId, result);
+    // `true` is the private binding protocol marker that transfers exactly-once
+    // completion ownership from the raw callback bridge to this wrapper.
+    return true;
   };
+}
+
+function requestCallbackStop(holder) {
+  if (holder.stopRequested) return;
+  holder.stopRequested = true;
+  holder.abortController.abort();
+  holder.startDisposal?.();
+}
+
+function createCallbackStop(weakHolder) {
+  return () => {
+    const holder = weakHolder.deref();
+    if (holder) requestCallbackStop(holder);
+  };
+}
+
+function settleCallbackResult(holder, deliveryId, result) {
+  if (
+    (typeof result !== "object" || result === null) &&
+    typeof result !== "function"
+  ) {
+    nativeBinding.completeDelivery(deliveryId, false, holder.stopRequested);
+    return;
+  }
+
+  let then;
+  try {
+    then = result.then;
+  } catch {
+    nativeBinding.completeDelivery(deliveryId, true, holder.stopRequested);
+    return;
+  }
+  if (typeof then !== "function") {
+    nativeBinding.completeDelivery(deliveryId, false, holder.stopRequested);
+    return;
+  }
+
+  const weakHolder = new WeakRef(holder);
+  let settled = false;
+  const complete = (callbackError) => {
+    if (settled) return;
+    settled = true;
+    const currentHolder = weakHolder.deref();
+    nativeBinding.completeDelivery(
+      deliveryId,
+      callbackError,
+      currentHolder?.stopRequested ?? true,
+    );
+  };
+  try {
+    then.call(
+      result,
+      () => complete(false),
+      () => complete(true),
+    );
+  } catch {
+    complete(true);
+  }
 }
 
 function normalizeBatch(root, batch) {

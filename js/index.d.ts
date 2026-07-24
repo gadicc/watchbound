@@ -104,6 +104,23 @@ export interface ChangeBatch {
   readonly coverage: Coverage;
 }
 
+export interface BatchCallbackContext {
+  /** Aborted synchronously when stop or subscription disposal begins. */
+  readonly signal: AbortSignal;
+  /**
+   * Idempotently requests disposal without awaiting the current callback.
+   * Join the request later with Subscription.dispose().
+   */
+  stop(): void;
+}
+
+export type BatchCallback =
+  | ((batch: ChangeBatch, context: BatchCallbackContext) => void)
+  | ((
+      batch: ChangeBatch,
+      context: BatchCallbackContext,
+    ) => PromiseLike<unknown>);
+
 /**
  * The establishment baseline or the last batch whose callback entered
  * JavaScript. Native state and completed operations may be ahead of it.
@@ -270,7 +287,7 @@ export type AutomaticReconciliationStatus =
 export type SupportStatus = "target-pending-clean-ci" | "supported";
 
 export interface Capabilities {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly versions: {
     readonly wrapper: string;
     readonly native: string;
@@ -378,6 +395,11 @@ export interface Capabilities {
     readonly nativeCallbackQueueCapacity: 1;
     readonly deliveryDispatcherScope: "node-environment";
     readonly deliveryAdmission: "single-credit";
+    readonly callbackCompletion: "promise-aware-serialized";
+    readonly callbackMaxInFlight: 1;
+    readonly callbackErrorPolicy: "count-and-continue";
+    readonly callbackDisposalPolicy: "join-pending-completion";
+    readonly callbackTeardownPolicy: "abandon-pending-completion";
     readonly deliveryDispatcherWorkQuantum: 64;
     readonly deliveryDispatcherPollMilliseconds: 5;
   };
@@ -430,7 +452,7 @@ export interface Engine {
   runtimeStats(): Readonly<RuntimeStats>;
   subscribe(
     root: string,
-    onBatch: (batch: ChangeBatch) => void,
+    onBatch: BatchCallback,
     options?: SubscriptionOptions,
   ): Promise<Subscription>;
 }
@@ -441,6 +463,6 @@ export declare function createEngine(options?: EngineOptions): Engine;
 
 export declare function subscribe(
   root: string,
-  onBatch: (batch: ChangeBatch) => void,
+  onBatch: BatchCallback,
   options?: SubscriptionOptions,
 ): Promise<Subscription>;

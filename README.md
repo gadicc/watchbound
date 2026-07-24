@@ -93,8 +93,10 @@ still waiting in libuv's queue can settle only after it receives a worker turn.
 
 Subscriptions retain separate bounded engine queues, one-entry Node-API
 thread-safe-function queues, and one callback admission credit. The dispatcher
-does not drain a second engine batch until the callback returns and restores
-that credit. If a consumer remains slow, that subscription's engine queue can
+does not drain a second engine batch until the callback returns a non-thenable
+or its returned Promise-like settles. Async callbacks are therefore serialized
+per subscription and participate in consumer-backpressure accounting. If a
+consumer remains slow, that subscription's engine queue can
 fill; Watchbound drops over-detailed output, marks coverage
 `consumer-backpressure`, and retains a conservative root invalidation for later
 delivery. A synchronously blocked JavaScript loop also prevents peer callbacks
@@ -114,6 +116,13 @@ Once `subscribe()` resolves, aborting that signal is a no-op and callers use
 `subscription.dispose()`. Establishment still occupies one shared libuv worker
 until native success or rollback completes; queued work may therefore delay
 cancellation settlement.
+
+Batch callbacks receive a stable frozen context with an `AbortSignal` and
+idempotent `stop(): void`. Explicit disposal aborts that signal and joins an
+already-admitted Promise-like callback; `stop()` requests the same disposal
+without inviting the callback to await itself. Synchronous throws and async
+rejections are counted and contained. Environment teardown abandons pending
+callback completion rather than depending on JavaScript settlement.
 
 Watchbound fits consumers that can treat paths as conservative invalidations,
 recompute derived state after a root invalidation, and act on explicit partial
@@ -305,11 +314,12 @@ and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
 default engine. `engine.nativeWatchBudget` is its request, while
 `engine.runtimeStats()` describes actual process-global resources.
 
-The deeply frozen, JSON-serializable `capabilities` export has schema version 2
+The deeply frozen, JSON-serializable `capabilities` export has schema version 3
 and separates versions/build facts, observed runtime facts, the support target,
 features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
-callback queue, and single-credit admission explicitly. Runtime facts do not
+callback queue, single-credit admission, and promise-aware serialized callback
+completion explicitly. Runtime facts do not
 widen support: this `0.2.0` revision remains `target-pending-clean-ci` until
 exact clean target evidence supports a later status declaration. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md)

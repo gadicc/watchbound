@@ -29,8 +29,9 @@ ordinary conformance, TypeScript fixtures, and environment teardown passed on
 this exact class of host. It does not extend beyond the table.
 
 Historical capability schema version 1 mirrors this table with `supported` for
-the qualified `0.1.0` build. Capability schema version 2 retains the table but
-emits `target-pending-clean-ci` for the current `0.2.0` candidate. The adjacent `capabilities.runtime`
+the qualified `0.1.0` build. Capability schemas 2 and 3 retain the table, with
+schema 3 adding callback-completion lifecycle facts; the current `0.2.0`
+candidate emits `target-pending-clean-ci`. The adjacent `capabilities.runtime`
 section reports the platform, architecture, kernel, libc, Node, and Node-API
 facts observed in the process that loaded the native binary. Those facts are
 diagnostic only: a match does not independently establish or widen support, and

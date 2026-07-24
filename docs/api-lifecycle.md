@@ -188,21 +188,21 @@ reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
 
-## Capability schema version 2
+## Capability schema version 3
 
 The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
 has these top-level sections:
 
 | Section | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `2`. |
+| `schemaVersion` | Exactly `3`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Manifest-derived delivery: source workspaces report `controlled-source-build` and `prebuilt: false`; generated registry packages report `bundled-native-package` and `prebuilt: true`. Both include build profile, target triple, Node-API 6, and Rust 1.88 minimum. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
 | `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 target under trusted stable local roots, plus the same manifest-derived delivery identity. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; the unqualified 0.2.0 candidate emits `target-pending-clean-ci`. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
-| `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, and single-credit admission. |
+| `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, single-credit admission, and callback completion/error/disposal/teardown policy. |
 
 The exact identity leaves are `versions.{wrapper,native,engine,bindingApi}`,
 `build.{delivery,prebuilt,profile,targetTriple,nodeApi,rustMinimum}`, and
@@ -237,6 +237,9 @@ and deferred logical interests, and use an inactive zero snapshot. Sequences and
 cumulative counters are bigint, gauges are numbers, and the native callback
 queue capacity is one. `deliveryDispatcherScope` is `node-environment` and
 `deliveryAdmission` is `single-credit`.
+Callback completion is `promise-aware-serialized`, with one callback in flight
+per subscription. Callback errors use `count-and-continue`, explicit disposal
+joins pending completion, and environment teardown abandons it.
 `deliveryDispatcherWorkQuantum` is 64 registrations per turn and
 `deliveryDispatcherPollMilliseconds` is 5.
 
@@ -259,7 +262,9 @@ invalidation and uncertain coverage when delivery can resume.
 
 The Node boundary adds a one-entry thread-safe-function queue and one admission
 credit per subscription. Its environment dispatcher receives no second engine
-batch until the admitted callback finishes and returns that credit. No
+batch until the admitted callback completes: a non-Promise-like return
+completes synchronously, while a Promise-like return retains the credit until
+settlement. No
 readiness list, retry queue, or other native-to-Node staging queue grows behind
 a slow callback. The engine output queue remains separately bounded, although
 the default `watchLimit: null` and default engine
@@ -303,6 +308,36 @@ channels per subscription. Consumer backpressure therefore degrades only the
 affected subscription. Native inotify overflow is different: it is loss on the
 shared kernel queue and conservatively makes every live subscription uncertain.
 
+### Callback completion and cancellation
+
+The public callback is either `(batch, context) => void` or
+`(batch, context) => PromiseLike<unknown>`. Callbacks for one subscription
+never overlap. Fulfillment values are ignored. A synchronous throw, a throwing
+`then` accessor, a thenable that throws before settling, and Promise-like
+rejection each increment `callbackErrors`; Watchbound observes rejection and
+continues later delivery.
+No Watchbound-owned detached-task mode exists. Consumers that deliberately
+start unjoined work own its rejection, ordering, bounds, and shutdown.
+
+Every callback receives the same frozen `{ signal, stop }` context. The signal
+aborts synchronously when explicit disposal or `stop()` begins. `stop()` is
+idempotent, returns `void`, closes later callback admission, and requests
+disposal; callers can subsequently join that request with
+`subscription.dispose()`. This shape avoids requiring a callback to await its
+own completion barrier. A callback can enter before `subscribe()` resolves, so
+an early stop is latched and the eventual public subscription is immediately
+disposed.
+
+An explicit disposer waits for an admitted Promise-like callback to settle. A
+never-settling callback therefore keeps `dispose()` pending unless it
+cooperates with `context.signal`. This is intentional joined-disposal
+semantics. Awaiting `subscription.dispose()` from the current callback,
+awaiting a later callback from the same subscription, or waiting for
+`observedState` to advance to a batch that needs the current credit is a
+self-deadlock. Native reconciliation, exclusion, and root-recovery
+acknowledgements may settle while callback credit is held, but their resulting
+batch cannot enter until the callback settles.
+
 ## Disposal
 
 Rust `dispose` is idempotent and safe to call concurrently. The first caller
@@ -330,29 +365,34 @@ registration may still recheck it, but cannot admit a callback after the
 subscription barrier closes. Its stronger user-visible guarantee is: once the
 disposal promise resolves, no callback for that subscription can begin.
 
-Synchronous JavaScript callback throws increment `callbackErrors` and do not
-stop later delivery. A Node thread-safe-function delivery failure increments
+Synchronous callback throws and asynchronous callback rejections increment
+`callbackErrors` and do not stop later delivery. A Node thread-safe-function
+delivery failure increments
 `bridgeDeliveryErrors`, closes only that dispatcher registration, and makes
 joined disposal reject.
-The wrapper retains its callback through the returned subscription while the
+The wrapper retains its callback and stable callback context through the
+returned subscription while the
 native callback holds only a `WeakRef`. Callers must therefore retain the
 subscription for callback delivery; dropping it permits best-effort GC cleanup,
 including when the callback captures the subscription. Explicit `dispose()` is
 the only deterministic cleanup guarantee.
 
 Explicit disposal and environment teardown have different guarantees.
-`dispose()` closes admission synchronously, then its libuv task joins engine
-disposal, any admitted callback in a live environment, thread-safe-function
+`dispose()` aborts the callback context and closes admission synchronously,
+then its libuv task joins engine disposal, any admitted callback completion in
+a live environment, thread-safe-function
 finalization, an inactive dispatcher, and any inactive cleanup coordinator.
 Concurrent calls join the same result, and the JavaScript wrapper returns the
 same promise. After that promise resolves, no callback, topology transaction,
 automatic retry, or engine enqueue for the subscription can begin.
 
-Environment teardown is a safety path, not the public joined-disposal promise.
+Environment teardown and GC cleanup are safety paths, not the public
+joined-disposal promise.
 Its cleanup hook closes the environment-wide admission barrier, marks pending
 establishment as interrupted, abort-releases callback bridges, and schedules
 native cleanup for every established registration. It does not wait for
-JavaScript callbacks, because the environment is closing. A deduplicated
+JavaScript callbacks or Promise-like settlement, because the environment is
+closing. Any in-flight completion ticket is abandoned. A deduplicated
 per-environment cleanup table is advanced by at most one transient coordinator;
 if that thread cannot be created, the retained dispatcher is the fallback.
 Node may delay entering the cleanup hook until queued async work can advance.

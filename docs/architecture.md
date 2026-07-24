@@ -402,18 +402,19 @@ engine's active configuration rather than its own request.
 
 ### Versioned public capabilities
 
-The wrapper combines native capability-schema-version-2 feature/default metadata, loaded
+The wrapper combines native capability-schema-version-3 feature/default metadata, loaded
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 2`. Features distinguish
+and `observability`, under `schemaVersion: 3`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
 watches, and expose cancellable establishment and shared Node delivery. Options
 publish exact defaults, `u32` hard bounds, scope, units, and accounting.
 Observability publishes ordered-batch authority, callback-entry state,
 result/getter lead, stats scope, counter encodings, the one-entry native
-callback queue, per-environment dispatcher scope, single-credit admission, and
-the fixed 64-registration/5 ms dispatcher scheduling bounds.
+callback queue, per-environment dispatcher scope, single-credit admission,
+promise-aware serialized callback completion, error/disposal/teardown policy,
+and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded the
 single native binary, not evidence that the host is supported. The separate
@@ -741,9 +742,12 @@ total registrations and receives at most one engine batch from each selected
 active registration, with a 5 ms poll fallback because engine receivers do not
 expose readiness handles. IDs created after a round begins wait for the next
 round, so registration churn cannot starve an older peer. Each subscription has
-one callback credit. The dispatcher does not receive another batch until
-completion restores that credit, so a full Node queue is neither a retry
-mechanism nor an unbounded staging queue.
+one callback credit. A wrapper callback acknowledges a ticket immediately for
+a non-Promise-like result or after Promise-like settlement. The dispatcher does
+not receive another batch until that exactly-once acknowledgement restores the
+credit, so a full Node queue is neither a retry mechanism nor an unbounded
+staging queue. Ticket IDs are scoped to the environment generation; stale,
+duplicate, and cross-environment acknowledgements are no-ops.
 
 A slow callback holds only its subscription's credit, but all callbacks in one
 Node environment execute on that environment's JavaScript thread. A
@@ -754,12 +758,14 @@ peer's own bounded engine queue and make that peer independently
 `consumer-backpressure` uncertain. A separate Worker environment has a
 separate JavaScript thread and dispatcher and can continue callback progress.
 
-Explicit disposal closes the subscription admission gate before engine
-disposal. A dispatcher turn that already retained the registration may still
+Explicit disposal aborts the stable callback context and closes the
+subscription admission gate before engine disposal. A dispatcher turn that
+already retained the registration may still
 visit it, but its admission recheck cannot enqueue a new callback after that
 linearization point. Environment teardown closes the environment gate before
-invalidating Node-API resources and never waits for JavaScript callbacks. GC
-and terminal delivery failures mark pre-existing
+invalidating Node-API resources and abandons a pending completion ticket rather
+than waiting for JavaScript or a Promise-like. GC similarly abandons a ticket;
+terminal delivery failures mark pre-existing
 entries in a deduplicated per-environment cleanup table; at most one transient
 coordinator per affected environment advances phased Node cleanup and polls
 callback quiescence in nonblocking phases. It can inspect other selected

@@ -8,6 +8,8 @@ import {
   normalizeWatchboundError,
   subscribe,
   type AutomaticReconciliationStatus,
+  type BatchCallback,
+  type BatchCallbackContext,
   type ChangeBatch,
   type Coverage,
   type Engine,
@@ -228,8 +230,12 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 2 = capabilities.schemaVersion;
+  const schemaVersion: 3 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
+  const callbackCompletion: "promise-aware-serialized" =
+    capabilities.observability.callbackCompletion;
+  const callbackMaxInFlight: 1 =
+    capabilities.observability.callbackMaxInFlight;
   const targetTriple: string = capabilities.build.targetTriple;
   const delivery:
     | "controlled-source-build"
@@ -272,6 +278,8 @@ function inspectCapabilities(): void {
 
   void schemaVersion;
   void bindingApi;
+  void callbackCompletion;
+  void callbackMaxInFlight;
   void targetTriple;
   void delivery;
   void prebuilt;
@@ -392,6 +400,16 @@ async function usePublicApi(): Promise<void> {
   const callback = (batch: ChangeBatch): void => {
     inspectBatch(batch);
   };
+  const expressionBatches: ChangeBatch[] = [];
+  const expressionCallback: BatchCallback = (batch) => expressionBatches.push(batch);
+  const asyncCallback: BatchCallback = async (batch, context) => {
+    const callbackContext: BatchCallbackContext = context;
+    inspectBatch(batch);
+    if (callbackContext.signal.aborted) callbackContext.stop();
+    await Promise.resolve();
+  };
+  void expressionCallback;
+  void asyncCallback;
   const establishmentController = new AbortController();
   const fromEngine: Subscription = await bounded.subscribe(
     "/tmp/watchbound-types",

@@ -107,7 +107,11 @@ test("destroying a Node environment releases its live native subscription", { ti
     assert.deepEqual(normalizedRuntimeStats(observer), ZERO_RUNTIME_STATS);
 
     worker = new Worker(path.join(__dirname, "fixtures", "environment-teardown-worker.cjs"), {
-      workerData: { root, expectedPath: workerChange },
+      workerData: {
+        root,
+        expectedPath: workerChange,
+        holdDeliveryCompletion: true,
+      },
     });
     const ready = await waitForWorkerMessage(worker, "ready");
     assert.deepEqual(ready.initialCoverage, { state: "complete" });

@@ -28,6 +28,8 @@ static ACTIVE_CLEANUP_COORDINATORS: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE_CLEANUP_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE_THREADSAFE_FUNCTIONS: AtomicUsize = AtomicUsize::new(0);
 static ENVIRONMENT_GENERATIONS: AtomicU64 = AtomicU64::new(0);
+static NEXT_DELIVERY_ID: AtomicU64 = AtomicU64::new(1);
+static PENDING_DELIVERIES: OnceLock<Mutex<HashMap<u64, Weak<DeliveryState>>>> = OnceLock::new();
 #[cfg(test)]
 static FAIL_NEXT_CLEANUP_COORDINATOR_SPAWN: AtomicBool = AtomicBool::new(false);
 
@@ -207,6 +209,10 @@ impl EnvironmentRecord {
             #[cfg(test)]
             fail_next_dispatcher_spawn: AtomicBool::new(false),
         }
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     fn wait_until_running(&self) -> NodeResult<()> {
@@ -1157,7 +1163,7 @@ fn cleanup_environment(hook: EnvironmentCleanupHook) {
 pub(crate) struct DeliveryState {
     environment: Weak<EnvironmentRecord>,
     state: Mutex<Weak<SubscriptionState>>,
-    slot: Mutex<Option<ChangeBatch>>,
+    slot: Mutex<Option<PendingDelivery>>,
     admission: Mutex<DeliveryAdmission>,
     drained: Condvar,
     threadsafe_function_finalized: Mutex<bool>,
@@ -1171,6 +1177,12 @@ struct DeliveryAdmission {
     open: bool,
     credit: bool,
     outstanding_callbacks: usize,
+    in_flight_id: Option<u64>,
+}
+
+struct PendingDelivery {
+    id: u64,
+    batch: ChangeBatch,
 }
 
 impl DeliveryState {
@@ -1183,6 +1195,7 @@ impl DeliveryState {
                 open: true,
                 credit: true,
                 outstanding_callbacks: 0,
+                in_flight_id: None,
             }),
             drained: Condvar::new(),
             threadsafe_function_finalized: Mutex::new(false),
@@ -1235,14 +1248,14 @@ impl DeliveryState {
     }
 
     pub(crate) fn try_admit(
-        &self,
+        self: &Arc<Self>,
         batch: ChangeBatch,
         threadsafe_function: &RawBatchThreadsafeFunction,
     ) -> bool {
         self.try_admit_with(batch, || threadsafe_function.call())
     }
 
-    fn try_admit_with(&self, batch: ChangeBatch, wake: impl FnOnce() -> Status) -> bool {
+    fn try_admit_with(self: &Arc<Self>, batch: ChangeBatch, wake: impl FnOnce() -> Status) -> bool {
         let Some(environment) = self.environment.upgrade() else {
             return false;
         };
@@ -1251,14 +1264,20 @@ impl DeliveryState {
             if environment_closing || !admission.open || !admission.credit {
                 return None;
             }
+            let delivery_id = next_delivery_id();
             {
                 let mut slot = lock_unpoisoned(&self.slot);
                 debug_assert!(slot.is_none(), "delivery credit existed with a full slot");
-                *slot = Some(batch);
+                *slot = Some(PendingDelivery {
+                    id: delivery_id,
+                    batch,
+                });
             }
             admission.credit = false;
             admission.outstanding_callbacks += 1;
+            admission.in_flight_id = Some(delivery_id);
             ACTIVE_OUTSTANDING_CALLBACKS.fetch_add(1, Ordering::AcqRel);
+            register_pending_delivery(delivery_id, self);
 
             let status = wake();
             if status == Status::Ok {
@@ -1266,6 +1285,7 @@ impl DeliveryState {
             }
 
             lock_unpoisoned(&self.slot).take();
+            unregister_pending_delivery(delivery_id);
             self.rollback_failed_admission(&mut admission);
             Some(status)
         });
@@ -1281,6 +1301,7 @@ impl DeliveryState {
 
     fn rollback_failed_admission(&self, admission: &mut DeliveryAdmission) {
         admission.credit = true;
+        admission.in_flight_id = None;
         admission.outstanding_callbacks = admission
             .outstanding_callbacks
             .checked_sub(1)
@@ -1304,25 +1325,54 @@ impl DeliveryState {
         }
     }
 
-    fn complete_wake(&self, callback_error: bool, delivery_status: Option<Status>) {
-        lock_unpoisoned(&self.slot).take();
-        {
-            let mut admission = lock_unpoisoned(&self.admission);
-            if admission.outstanding_callbacks != 0 {
-                admission.outstanding_callbacks -= 1;
-                ACTIVE_OUTSTANDING_CALLBACKS.fetch_sub(1, Ordering::AcqRel);
-            }
-            admission.credit = true;
-            if callback_error {
-                self.callback_errors.fetch_add(1, Ordering::Relaxed);
-            }
+    fn finish_delivery(
+        &self,
+        delivery_id: u64,
+        callback_error: bool,
+        stop: bool,
+        delivery_status: Option<Status>,
+    ) -> bool {
+        let mut admission = lock_unpoisoned(&self.admission);
+        if admission.in_flight_id != Some(delivery_id) {
+            return false;
         }
+        let mut slot = lock_unpoisoned(&self.slot);
+        if slot
+            .as_ref()
+            .is_some_and(|pending| pending.id == delivery_id)
+        {
+            slot.take();
+        }
+        admission.in_flight_id = None;
+        admission.outstanding_callbacks = admission
+            .outstanding_callbacks
+            .checked_sub(1)
+            .expect("delivery completed without an outstanding callback");
+        ACTIVE_OUTSTANDING_CALLBACKS.fetch_sub(1, Ordering::AcqRel);
+        admission.credit = true;
+        if stop {
+            admission.open = false;
+        }
+        if callback_error {
+            self.callback_errors.fetch_add(1, Ordering::Relaxed);
+        }
+        drop(slot);
+        drop(admission);
+        unregister_pending_delivery(delivery_id);
         self.drained.notify_all();
         if let Some(environment) = self.environment.upgrade() {
             environment.notify_dispatcher();
         }
         if let Some(status) = delivery_status {
             self.record_delivery_failure(status);
+        }
+        true
+    }
+
+    pub(crate) fn abandon_in_flight(&self) {
+        let delivery_id = lock_unpoisoned(&self.admission).in_flight_id;
+        if let Some(delivery_id) = delivery_id {
+            self.finish_delivery(delivery_id, false, true, None);
         }
     }
 
@@ -1378,46 +1428,141 @@ impl DeliveryState {
     }
 
     fn invoke_callback(&self, raw_env: sys::napi_env, callback: sys::napi_value) {
-        if raw_env.is_null() || callback.is_null() {
-            self.complete_wake(false, None);
-            return;
-        }
-        let Some(batch) = lock_unpoisoned(&self.slot).take() else {
-            self.complete_wake(false, Some(Status::GenericFailure));
+        let delivery_id = lock_unpoisoned(&self.admission).in_flight_id;
+        let Some(delivery_id) = delivery_id else {
             return;
         };
+        if raw_env.is_null() || callback.is_null() {
+            self.finish_delivery(delivery_id, false, false, None);
+            return;
+        }
+        let Some(pending) = lock_unpoisoned(&self.slot).take() else {
+            self.finish_delivery(delivery_id, false, false, Some(Status::GenericFailure));
+            return;
+        };
+        if pending.id != delivery_id {
+            self.finish_delivery(delivery_id, false, false, Some(Status::GenericFailure));
+            return;
+        }
         let batch = match unsafe {
             <crate::JsChangeBatch as ToNapiValue>::to_napi_value(
                 raw_env,
-                crate::JsChangeBatch::from(batch),
+                crate::JsChangeBatch::from(pending.batch),
             )
         } {
             Ok(batch) => batch,
             Err(error) => {
                 clear_pending_exception(raw_env);
-                self.complete_wake(false, Some(error.status));
+                self.finish_delivery(delivery_id, false, false, Some(error.status));
                 return;
             }
         };
+        let mut delivery_id_value = ptr::null_mut();
+        let delivery_id_status =
+            unsafe { sys::napi_create_bigint_uint64(raw_env, delivery_id, &mut delivery_id_value) };
+        if delivery_id_status != sys::Status::napi_ok {
+            self.finish_delivery(
+                delivery_id,
+                false,
+                false,
+                Some(Status::from(delivery_id_status)),
+            );
+            return;
+        }
         let mut receiver = ptr::null_mut();
         let undefined_status = unsafe { sys::napi_get_undefined(raw_env, &mut receiver) };
         if undefined_status != sys::Status::napi_ok {
-            self.complete_wake(false, Some(Status::from(undefined_status)));
+            self.finish_delivery(
+                delivery_id,
+                false,
+                false,
+                Some(Status::from(undefined_status)),
+            );
             return;
         }
         let mut return_value = ptr::null_mut();
+        let arguments = [batch, delivery_id_value];
         let call_status = unsafe {
-            sys::napi_call_function(raw_env, receiver, callback, 1, &batch, &mut return_value)
+            sys::napi_call_function(
+                raw_env,
+                receiver,
+                callback,
+                arguments.len(),
+                arguments.as_ptr(),
+                &mut return_value,
+            )
         };
         if call_status == sys::Status::napi_pending_exception {
             clear_pending_exception(raw_env);
-            self.complete_wake(true, None);
+            self.finish_delivery(delivery_id, true, false, None);
         } else if call_status == sys::Status::napi_ok {
-            self.complete_wake(false, None);
+            if !callback_owns_completion(raw_env, return_value) {
+                self.finish_delivery(delivery_id, false, false, None);
+            }
         } else {
-            self.complete_wake(false, Some(Status::from(call_status)));
+            self.finish_delivery(delivery_id, false, false, Some(Status::from(call_status)));
         }
     }
+}
+
+fn next_delivery_id() -> u64 {
+    loop {
+        let delivery_id = NEXT_DELIVERY_ID.fetch_add(1, Ordering::Relaxed);
+        if delivery_id != 0 {
+            return delivery_id;
+        }
+    }
+}
+
+fn pending_deliveries() -> &'static Mutex<HashMap<u64, Weak<DeliveryState>>> {
+    PENDING_DELIVERIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_pending_delivery(delivery_id: u64, delivery: &Arc<DeliveryState>) {
+    let previous =
+        lock_unpoisoned(pending_deliveries()).insert(delivery_id, Arc::downgrade(delivery));
+    debug_assert!(
+        previous.is_none(),
+        "delivery ID was reused while still live"
+    );
+}
+
+fn unregister_pending_delivery(delivery_id: u64) {
+    lock_unpoisoned(pending_deliveries()).remove(&delivery_id);
+}
+
+pub(crate) fn complete_delivery(
+    environment_id: u64,
+    delivery_id: u64,
+    callback_error: bool,
+    stop: bool,
+) -> bool {
+    let delivery = lock_unpoisoned(pending_deliveries())
+        .get(&delivery_id)
+        .and_then(Weak::upgrade);
+    delivery.is_some_and(|delivery| {
+        delivery
+            .environment
+            .upgrade()
+            .is_some_and(|environment| environment.id == environment_id)
+            && delivery.finish_delivery(delivery_id, callback_error, stop, None)
+    })
+}
+
+fn callback_owns_completion(raw_env: sys::napi_env, return_value: sys::napi_value) -> bool {
+    if return_value.is_null() {
+        return false;
+    }
+    let mut value_type = sys::ValueType::napi_undefined;
+    if unsafe { sys::napi_typeof(raw_env, return_value, &mut value_type) } != sys::Status::napi_ok
+        || value_type != sys::ValueType::napi_boolean
+    {
+        return false;
+    }
+    let mut owns_completion = false;
+    (unsafe { sys::napi_get_value_bool(raw_env, return_value, &mut owns_completion) })
+        == sys::Status::napi_ok
+        && owns_completion
 }
 
 fn clear_pending_exception(raw_env: sys::napi_env) {
@@ -1441,7 +1586,11 @@ unsafe impl Sync for RawBatchThreadsafeFunction {}
 impl RawBatchThreadsafeFunction {
     pub(crate) fn new(
         env: &Env,
-        callback: &Function<'_, napi::bindgen_prelude::FnArgs<(crate::JsChangeBatch,)>, ()>,
+        callback: &Function<
+            '_,
+            napi::bindgen_prelude::FnArgs<(crate::JsChangeBatch, napi::bindgen_prelude::BigInt)>,
+            bool,
+        >,
         delivery: &Arc<DeliveryState>,
     ) -> NodeResult<Self> {
         let mut resource_name = ptr::null_mut();
@@ -1547,9 +1696,7 @@ unsafe extern "C" fn finalize_delivery_context(
         return;
     }
     let delivery = unsafe { Arc::<DeliveryState>::from_raw(finalize_data.cast()) };
-    if delivery.outstanding_callbacks() != 0 {
-        delivery.complete_wake(false, None);
-    }
+    delivery.abandon_in_flight();
     ACTIVE_THREADSAFE_FUNCTIONS.fetch_sub(1, Ordering::AcqRel);
     delivery.mark_threadsafe_function_finalized();
 }
@@ -1568,7 +1715,10 @@ unsafe extern "C" fn call_js_delivery(
         delivery.invoke_callback(raw_env, callback);
     }));
     if invocation.is_err() {
-        delivery.complete_wake(false, Some(Status::GenericFailure));
+        let delivery_id = lock_unpoisoned(&delivery.admission).in_flight_id;
+        if let Some(delivery_id) = delivery_id {
+            delivery.finish_delivery(delivery_id, false, false, Some(Status::GenericFailure));
+        }
     }
 }
 
@@ -1908,11 +2058,67 @@ mod tests {
             );
         }
 
-        delivery.complete_wake(false, None);
+        delivery.abandon_in_flight();
         assert_eq!(delivery.outstanding_callbacks(), 0);
         assert_eq!(diagnostics().outstanding_callbacks, outstanding_before);
         drop(registration);
         assert!(lock_unpoisoned(&environment.inner).registrations.is_empty());
+    }
+
+    #[test]
+    fn delivery_acknowledgement_is_environment_scoped_and_exactly_once() {
+        let environment = Arc::new(EnvironmentRecord::new(30));
+        environment.mark_running();
+        let other_environment = Arc::new(EnvironmentRecord::new(31));
+        other_environment.mark_running();
+        let delivery = DeliveryState::new(&environment);
+        let outstanding_before = diagnostics().outstanding_callbacks;
+        let batch = ChangeBatch {
+            sequence: 1,
+            exclusion_generation: 0,
+            root_state: RootState {
+                generation: 0,
+                identity: RootIdentity {
+                    device: 1,
+                    inode: 2,
+                },
+                attachment: RootAttachment::Attached,
+                loss_evidence: None,
+            },
+            invalidated_paths: Vec::new(),
+            coverage: Coverage::Complete,
+        };
+        assert!(delivery.try_admit_with(batch, || Status::Ok));
+        let delivery_id = lock_unpoisoned(&delivery.admission)
+            .in_flight_id
+            .expect("admitted delivery did not receive an ID");
+
+        assert!(!complete_delivery(
+            other_environment.id(),
+            delivery_id,
+            true,
+            false,
+        ));
+        assert!(!complete_delivery(
+            environment.id(),
+            delivery_id + 1,
+            true,
+            false,
+        ));
+        assert_eq!(delivery.outstanding_callbacks(), 1);
+        assert_eq!(delivery.callback_errors(), 0);
+
+        assert!(complete_delivery(environment.id(), delivery_id, true, true,));
+        assert!(!complete_delivery(
+            environment.id(),
+            delivery_id,
+            true,
+            true,
+        ));
+        assert_eq!(delivery.callback_errors(), 1);
+        assert_eq!(delivery.outstanding_callbacks(), 0);
+        assert_eq!(diagnostics().outstanding_callbacks, outstanding_before);
+        assert!(!delivery.can_receive());
     }
 
     #[test]

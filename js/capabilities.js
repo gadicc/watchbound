@@ -14,9 +14,9 @@ export const WRAPPER_VERSION = wrapperPackage.version;
 export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
 
 export function buildCapabilities(native, metadata) {
-  if (native?.schemaVersion !== 2 || metadata?.schemaVersion !== 1) {
+  if (native?.schemaVersion !== 3 || metadata?.schemaVersion !== 1) {
     throw new Error(
-      "native capability metadata does not use capability schema 2 and metadata schema 1",
+      "native capability metadata does not use capability schema 3 and metadata schema 1",
     );
   }
   if (
@@ -25,6 +25,11 @@ export function buildCapabilities(native, metadata) {
     native.nativeCallbackQueueCapacity !== 1 ||
     native.deliveryDispatcherScope !== "node-environment" ||
     native.deliveryAdmission !== "single-credit" ||
+    native.callbackCompletion !== "wrapper-acknowledged-promise-settlement" ||
+    native.callbackMaxInFlight !== 1 ||
+    native.callbackErrorPolicy !== "count-and-continue" ||
+    native.callbackDisposalPolicy !== "join-pending-completion" ||
+    native.callbackTeardownPolicy !== "abandon-pending-completion" ||
     native.deliveryDispatcherWorkQuantum !== 64 ||
     native.deliveryDispatcherPollMilliseconds !== 5
   ) {
@@ -38,7 +43,7 @@ export function buildCapabilities(native, metadata) {
   const prebuilt = WRAPPER_DELIVERY === "bundled-native-package";
 
   return deepFreeze({
-    schemaVersion: 2,
+    schemaVersion: 3,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -164,6 +169,11 @@ export function buildCapabilities(native, metadata) {
       nativeCallbackQueueCapacity: native.nativeCallbackQueueCapacity,
       deliveryDispatcherScope: native.deliveryDispatcherScope,
       deliveryAdmission: native.deliveryAdmission,
+      callbackCompletion: "promise-aware-serialized",
+      callbackMaxInFlight: native.callbackMaxInFlight,
+      callbackErrorPolicy: native.callbackErrorPolicy,
+      callbackDisposalPolicy: native.callbackDisposalPolicy,
+      callbackTeardownPolicy: native.callbackTeardownPolicy,
       deliveryDispatcherWorkQuantum: native.deliveryDispatcherWorkQuantum,
       deliveryDispatcherPollMilliseconds:
         native.deliveryDispatcherPollMilliseconds,

@@ -18,7 +18,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v2 reports cancellation, shared delivery, target state, defaults, and bounds", () => {
+test("capability schema v3 reports callback completion, target state, defaults, and bounds", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -29,12 +29,12 @@ test("capability schema v2 reports cancellation, shared delivery, target state, 
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 2);
+  assert.equal(capabilities.schemaVersion, 3);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
     engine: wrapperPackage.version,
-    bindingApi: 2,
+    bindingApi: 3,
   });
   assert.deepEqual(capabilities.build, {
     delivery: "controlled-source-build",
@@ -165,6 +165,11 @@ test("capability schema v2 reports cancellation, shared delivery, target state, 
     nativeCallbackQueueCapacity: 1,
     deliveryDispatcherScope: "node-environment",
     deliveryAdmission: "single-credit",
+    callbackCompletion: "promise-aware-serialized",
+    callbackMaxInFlight: 1,
+    callbackErrorPolicy: "count-and-continue",
+    callbackDisposalPolicy: "join-pending-completion",
+    callbackTeardownPolicy: "abandon-pending-completion",
     deliveryDispatcherWorkQuantum: 64,
     deliveryDispatcherPollMilliseconds: 5,
   });

@@ -6,6 +6,9 @@ freeze and its support declaration remain the historical qualified baseline;
 the bootstrap capability emits `target-pending-clean-ci` until separately
 qualified.
 
+Callback-specific follow-up items are retained in
+[`callback-contract-review.md`](callback-contract-review.md).
+
 This revision did not itself authorize publication or consumer integration.
 The separately approved bootstrap publishes only generated JavaScript package
 trees; source JavaScript packages remain private and both Rust crates remain
@@ -51,6 +54,15 @@ Root and exclusion generations are independent: exclusions begin at zero and
 advance to each explicitly committed value; root generation begins at zero and
 increments once per committed explicit recovery.
 
+The v1 callback shape is the union of `(batch, context) => void` and
+`(batch, context) => PromiseLike<unknown>`. One stable frozen context supplies
+an `AbortSignal` and idempotent `stop(): void`. Promise-like callbacks are
+serialized per subscription and hold the native credit until settlement.
+Throws and rejections increment `callbackErrors` and later delivery continues.
+Explicit disposal aborts the signal and joins pending completion; environment
+teardown and GC abandon it. Awaiting disposal or a later same-subscription batch
+from the current callback is a documented self-deadlock.
+
 ## Coverage, errors, and retry policy
 
 Coverage is the closed union `complete`, reasoned `partial`, or reasoned
@@ -81,9 +93,9 @@ admission credit.
 Pressure accounting and delivery failure remain subscription-local; a blocked
 same-environment JavaScript loop can still delay every callback in that
 environment, while separate Worker environments retain callback progress.
-Environment teardown does not depend on JavaScript callbacks running. Explicit
-disposal and live-environment GC/delivery cleanup close admission first, then
-wait for already-admitted callbacks to quiesce before finalization.
+Environment teardown and GC do not depend on JavaScript callbacks or promises
+settling. Explicit disposal closes admission first, then waits for an
+already-admitted callback to quiesce before finalization.
 
 The native boundary preserves exact Linux path bytes. Roots are JavaScript
 strings whose lexical components are retained through native symlink
@@ -107,8 +119,9 @@ codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; this `0.2.0` candidate emits
 `target-pending-clean-ci`. Exhaustive narrowing fixtures compile in the
-ordinary gate. Capability schema 2 and binding API 2 expose cancellation and
-shared-delivery facts; loader metadata remains schema 1.
+ordinary gate. Capability schema 3 and binding API 3 expose cancellation,
+shared-delivery, and promise-aware callback-completion facts; loader metadata
+remains schema 1.
 
 Patch releases may make compatible fixes, documentation/test changes, and
 internal changes that preserve this contract. Any externally observable option,

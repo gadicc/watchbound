@@ -45,7 +45,7 @@ Before `require()` reaches native exports, the loader requires Linux x64,
 detected glibc, and process Node-API 6 or newer. It then loads only the exact
 local basename and validates:
 
-- metadata schema version 1 and binding API version 2;
+- metadata schema version 1 and binding API version 3;
 - identical native, engine, and native-package versions;
 - addon Node-API floor 6;
 - target triple `x86_64-unknown-linux-gnu`;

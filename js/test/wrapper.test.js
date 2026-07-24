@@ -46,6 +46,16 @@ async function waitForQuiet(batchCount, quietMs = 75, timeoutMs = 3_000) {
   assert.fail("callbacks did not quiesce before the bounded deadline");
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 test("wrapper delivers string paths and idempotent disposal", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-"));
   let subscription;
@@ -74,6 +84,155 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     assert.equal(batches[0].pathEncodingCollapsed, false);
     await Promise.all([subscription.dispose(), subscription.dispose()]);
     assert.equal(subscription.stats().disposed, true);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("promise-like callbacks are serialized and async rejections are counted", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-async-callback-"));
+  const firstRelease = deferred();
+  const firstEntered = deferred();
+  const entered = [];
+  const completed = [];
+  const unhandled = [];
+  let active = 0;
+  let maxActive = 0;
+  let stableContext;
+  let subscription;
+  const onUnhandledRejection = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandledRejection);
+  try {
+    subscription = await subscribe(root, async (batch, context) => {
+      assert.equal(Object.isFrozen(context), true);
+      assert.equal(context.signal instanceof AbortSignal, true);
+      assert.equal(typeof context.stop, "function");
+      stableContext ??= context;
+      assert.equal(context, stableContext);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      const ordinal = entered.push(batch.sequence);
+      if (ordinal === 1) {
+        firstEntered.resolve();
+        await firstRelease.promise;
+      }
+      active -= 1;
+      completed.push(batch.sequence);
+      if (ordinal === 2) throw new Error("intentional async callback failure");
+    }, { batchWindowMs: 5, outputQueueCapacity: 4 });
+
+    fs.writeFileSync(path.join(root, "first.txt"), "first");
+    await firstEntered.promise;
+    fs.writeFileSync(path.join(root, "second.txt"), "second");
+    await delay(75);
+    assert.equal(entered.length, 1, "a later callback overlapped the pending callback");
+
+    firstRelease.resolve();
+    await waitFor(() => entered.length >= 2, "the callback following settlement did not run");
+    await waitFor(
+      () => subscription.stats().callbackErrors === 1n,
+      "async callback rejection was not counted",
+    );
+    await delay(25);
+    assert.equal(maxActive, 1);
+    assert.deepEqual(completed, entered);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    firstRelease.resolve();
+    await subscription?.dispose();
+    process.off("unhandledRejection", onUnhandledRejection);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a pending async callback does not block a same-environment peer", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-async-peer-"));
+  const firstRoot = path.join(parent, "first");
+  const peerRoot = path.join(parent, "peer");
+  fs.mkdirSync(firstRoot);
+  fs.mkdirSync(peerRoot);
+  const release = deferred();
+  const entered = deferred();
+  const peerObserved = deferred();
+  let first;
+  let peer;
+  try {
+    first = await subscribe(firstRoot, async () => {
+      entered.resolve();
+      await release.promise;
+    }, { batchWindowMs: 5 });
+    peer = await subscribe(peerRoot, () => {
+      peerObserved.resolve();
+    }, { batchWindowMs: 5 });
+
+    fs.writeFileSync(path.join(firstRoot, "first.txt"), "first");
+    await entered.promise;
+    fs.writeFileSync(path.join(peerRoot, "peer.txt"), "peer");
+    await Promise.race([
+      peerObserved.promise,
+      delay(3_000).then(() => {
+        assert.fail("a pending async callback blocked its same-environment peer");
+      }),
+    ]);
+  } finally {
+    release.resolve();
+    await Promise.all([first?.dispose(), peer?.dispose()]);
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("dispose aborts callback context and joins pending callback completion", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-callback-dispose-"));
+  const entered = deferred();
+  let callbackCompleted = false;
+  let callbackContext;
+  let subscription;
+  try {
+    subscription = await subscribe(root, async (_batch, context) => {
+      callbackContext = context;
+      entered.resolve();
+      if (!context.signal.aborted) {
+        await new Promise((resolve) => {
+          context.signal.addEventListener("abort", resolve, { once: true });
+        });
+      }
+      callbackCompleted = true;
+    }, { batchWindowMs: 5 });
+
+    fs.writeFileSync(path.join(root, "changed.txt"), "change");
+    await entered.promise;
+    const disposal = subscription.dispose();
+    assert.equal(callbackContext.signal.aborted, true);
+    await disposal;
+    assert.equal(callbackCompleted, true);
+    assert.equal(subscription.stats().disposed, true);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("callback context is stable and stop requests idempotent disposal", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-callback-stop-"));
+  const contexts = [];
+  let subscription;
+  try {
+    subscription = await subscribe(root, (_batch, context) => {
+      contexts.push(context);
+      context.stop();
+      context.stop();
+    }, { batchWindowMs: 5 });
+
+    fs.writeFileSync(path.join(root, "changed.txt"), "change");
+    await waitFor(() => contexts.length === 1, "the stopping callback did not run");
+    await waitFor(() => subscription.stats().disposed, "callback stop did not dispose");
+    assert.equal(contexts[0].signal.aborted, true);
+    await subscription.dispose();
+
+    fs.writeFileSync(path.join(root, "after-stop.txt"), "after");
+    await delay(50);
+    assert.equal(contexts.length, 1);
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });
@@ -751,7 +910,7 @@ test("non-UTF-8 child paths preserve bytes and collapse the string invalidation 
   }
 });
 
-test("a callback that captures its subscription does not defeat GC cleanup", async () => {
+test("callback cycles and retained pending promises do not defeat GC cleanup", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-cycle-"));
   const wrapperUrl = new URL("../index.js", import.meta.url).href;
   const source = `
@@ -785,6 +944,27 @@ test("a callback that captures its subscription does not defeat GC cleanup", asy
       global.gc();
       await delay(10);
     }
+
+    let asyncCallbacks = 0;
+    globalThis.retainedPending = new Promise(() => {});
+    let asyncSubscription = await subscribe(
+      ${JSON.stringify(root)},
+      (_batch, context) => {
+        asyncCallbacks += 1;
+        globalThis.retainedContext = context;
+        return globalThis.retainedPending;
+      },
+      { batchWindowMs: 5 },
+    );
+    fs.writeFileSync(path.join(${JSON.stringify(root)}, "async.txt"), "change");
+    const asyncDeadline = Date.now() + 1_000;
+    while (asyncCallbacks === 0 && Date.now() < asyncDeadline) await delay(10);
+    if (asyncCallbacks === 0) throw new Error("pending callback did not enter");
+    asyncSubscription = null;
+    for (let index = 0; index < 60; index += 1) {
+      global.gc();
+      await delay(10);
+    }
   `;
   const child = spawn(
     process.execPath,
@@ -800,8 +980,8 @@ test("a callback that captures its subscription does not defeat GC cleanup", asy
     const result = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
-        reject(new Error("callback/subscription cycle kept the child process alive"));
-      }, 3_000);
+        reject(new Error("callback ownership kept the child process alive"));
+      }, 5_000);
       child.once("close", (code, signal) => {
         clearTimeout(timer);
         resolve({ code, signal });

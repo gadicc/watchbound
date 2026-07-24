@@ -5,7 +5,7 @@ export declare class NativeEngine {
   get nativeWatchBudget(): number | null
   runtimeStats(): JsRuntimeStats
   createEstablishmentCancellation(): NativeEstablishmentCancellation
-  subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (arg0: JsChangeBatch) => void, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>
+  subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (batch: JsChangeBatch, deliveryId: bigint) => boolean, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>
 }
 
 export declare class NativeEstablishmentCancellation {
@@ -49,6 +49,11 @@ export declare function __watchboundTestOnlyCreateThreadpoolBlocker(): __Watchbo
 
 export declare function deliveryDiagnostics(): JsDeliveryDiagnostics
 
+/**
+ * @internal Private wrapper acknowledgement for one native delivery ticket.
+ */
+export declare function completeDelivery(deliveryId: bigint, callbackError: boolean, stop: boolean): boolean
+
 export interface JsBindingMetadata {
   schemaVersion: number
   bindingApiVersion: number
@@ -76,6 +81,11 @@ export interface JsCapabilities {
   nativeCallbackQueueCapacity: number
   deliveryDispatcherScope: string
   deliveryAdmission: string
+  callbackCompletion: string
+  callbackMaxInFlight: number
+  callbackErrorPolicy: string
+  callbackDisposalPolicy: string
+  callbackTeardownPolicy: string
   deliveryDispatcherWorkQuantum: number
   deliveryDispatcherPollMilliseconds: number
   subscriptionDefaults: JsSubscriptionDefaults
@@ -182,4 +192,4 @@ export interface JsSubscriptionOptions {
   outputQueueCapacity?: number
 }
 
-export declare function subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (arg0: JsChangeBatch) => void, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>
+export declare function subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (batch: JsChangeBatch, deliveryId: bigint) => boolean, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>

@@ -19,6 +19,10 @@ async function main() {
         changeReported = true;
         setImmediate(() => parentPort.postMessage({ type: "change-observed" }));
       }
+      // Private binding seam: returning true transfers completion ownership to
+      // the wrapper. This fixture deliberately never acknowledges the ticket
+      // so Worker teardown must abandon it without waiting on JavaScript.
+      return workerData.holdDeliveryCompletion === true;
     },
   );
 

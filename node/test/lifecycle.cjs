@@ -618,19 +618,27 @@ test("native engine validation and capability metadata are machine-readable", ()
   assert.equal(binding.createEngine().nativeWatchBudget ?? null, null);
   const metadata = binding.bindingMetadata();
   assert.equal(metadata.schemaVersion, 1);
-  assert.equal(metadata.bindingApiVersion, 2);
+  assert.equal(metadata.bindingApiVersion, 3);
   assert.equal(metadata.nativeVersion, metadata.engineVersion);
   assert.equal(metadata.nodeApiVersion, 6);
   assert.match(metadata.targetTriple, /linux/);
   assert.equal(metadata.buildProfile, "release");
 
   const capabilities = binding.capabilities();
-  assert.equal(capabilities.schemaVersion, 2);
+  assert.equal(capabilities.schemaVersion, 3);
   assert.equal(capabilities.cancellableEstablishment, true);
   assert.equal(capabilities.sharedNodeDelivery, true);
   assert.equal(capabilities.nativeCallbackQueueCapacity, 1);
   assert.equal(capabilities.deliveryDispatcherScope, "node-environment");
   assert.equal(capabilities.deliveryAdmission, "single-credit");
+  assert.equal(
+    capabilities.callbackCompletion,
+    "wrapper-acknowledged-promise-settlement",
+  );
+  assert.equal(capabilities.callbackMaxInFlight, 1);
+  assert.equal(capabilities.callbackErrorPolicy, "count-and-continue");
+  assert.equal(capabilities.callbackDisposalPolicy, "join-pending-completion");
+  assert.equal(capabilities.callbackTeardownPolicy, "abandon-pending-completion");
   assert.equal(capabilities.deliveryDispatcherWorkQuantum, 64);
   assert.equal(capabilities.deliveryDispatcherPollMilliseconds, 5);
   assert.equal(capabilities.processNativeWatchBudget, true);

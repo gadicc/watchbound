@@ -27,8 +27,8 @@ type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
 type TaskOutcome<T> = NodeResult<T>;
 
 const MAX_SYSTEM_DETAIL_BYTES: usize = 128;
-const BINDING_API_VERSION: u32 = 2;
-const CAPABILITY_SCHEMA_VERSION: u32 = 2;
+const BINDING_API_VERSION: u32 = 3;
+const CAPABILITY_SCHEMA_VERSION: u32 = 3;
 const NODE_API_VERSION: u32 = 6;
 
 #[derive(Clone, Debug)]
@@ -540,6 +540,11 @@ pub struct JsCapabilities {
     pub native_callback_queue_capacity: u32,
     pub delivery_dispatcher_scope: String,
     pub delivery_admission: String,
+    pub callback_completion: String,
+    pub callback_max_in_flight: u32,
+    pub callback_error_policy: String,
+    pub callback_disposal_policy: String,
+    pub callback_teardown_policy: String,
     pub delivery_dispatcher_work_quantum: u32,
     pub delivery_dispatcher_poll_milliseconds: u32,
     pub subscription_defaults: JsSubscriptionDefaults,
@@ -567,6 +572,11 @@ pub fn capabilities() -> JsCapabilities {
         native_callback_queue_capacity: 1,
         delivery_dispatcher_scope: "node-environment".to_owned(),
         delivery_admission: "single-credit".to_owned(),
+        callback_completion: "wrapper-acknowledged-promise-settlement".to_owned(),
+        callback_max_in_flight: 1,
+        callback_error_policy: "count-and-continue".to_owned(),
+        callback_disposal_policy: "join-pending-completion".to_owned(),
+        callback_teardown_policy: "abandon-pending-completion".to_owned(),
         delivery_dispatcher_work_quantum: delivery::DISPATCHER_WORK_QUANTUM as u32,
         delivery_dispatcher_poll_milliseconds: delivery::DISPATCHER_POLL_MILLISECONDS,
         subscription_defaults: SubscriptionOptions::default().into(),
@@ -600,6 +610,33 @@ pub fn delivery_diagnostics() -> JsDeliveryDiagnostics {
         active_threadsafe_functions: saturating_u32(diagnostics.active_threadsafe_functions),
         environment_generations: diagnostics.environment_generations,
     }
+}
+
+#[napi]
+pub fn complete_delivery(
+    env: Env,
+    delivery_id: BigInt,
+    callback_error: bool,
+    stop: bool,
+) -> Result<bool> {
+    let (negative, delivery_id, lossless) = delivery_id.get_u64();
+    if negative || !lossless || delivery_id == 0 {
+        return Err(sync_error(
+            &env,
+            NodeErrorDetails::new(
+                ErrorCode::InvalidArgument,
+                Operation::DeliverBatch,
+                "deliveryId must be a positive bigint",
+            ),
+        ));
+    }
+    let environment = delivery::environment_for(&env).map_err(|error| sync_error(&env, error))?;
+    Ok(delivery::complete_delivery(
+        environment.id(),
+        delivery_id,
+        callback_error,
+        stop,
+    ))
 }
 
 #[napi(object, object_from_js = false)]
@@ -878,7 +915,7 @@ impl NativeEngine {
         env: Env,
         root: String,
         options: Option<JsSubscriptionOptions>,
-        callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+        callback: Function<'_, FnArgs<(JsChangeBatch, BigInt)>, bool>,
         cancellation: Option<&NativeEstablishmentCancellation>,
     ) -> Result<AsyncTask<SubscribeTask>> {
         prepare_subscribe(env, self.engine, root, options, callback, cancellation)
@@ -918,7 +955,7 @@ pub fn subscribe(
     env: Env,
     root: String,
     options: Option<JsSubscriptionOptions>,
-    callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+    callback: Function<'_, FnArgs<(JsChangeBatch, BigInt)>, bool>,
     cancellation: Option<&NativeEstablishmentCancellation>,
 ) -> Result<AsyncTask<SubscribeTask>> {
     prepare_subscribe(env, Engine::new(), root, options, callback, cancellation)
@@ -929,7 +966,7 @@ fn prepare_subscribe(
     engine: Engine,
     root: String,
     options: Option<JsSubscriptionOptions>,
-    callback: Function<'_, FnArgs<(JsChangeBatch,)>, ()>,
+    callback: Function<'_, FnArgs<(JsChangeBatch, BigInt)>, bool>,
     cancellation: Option<&NativeEstablishmentCancellation>,
 ) -> Result<AsyncTask<SubscribeTask>> {
     let root = resolve_root(root).map_err(|error| sync_error(&env, error))?;
@@ -1300,6 +1337,9 @@ impl Drop for NativeSubscription {
         if self.state.cleanup_finished() {
             return;
         }
+        // A collected JavaScript subscription has no explicit joiner. Do not
+        // let a never-settling user promise retain native watcher state.
+        self.state.delivery.abandon_in_flight();
         self.state.request_background_cleanup();
     }
 }

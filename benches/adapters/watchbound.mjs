@@ -162,7 +162,7 @@ export async function loadAdapter() {
       const subscription = await implementation.subscribe(
         path.resolve(root),
         (batch) => {
-          onBatch({
+          return onBatch({
             sequence: jsonCounter(batch.sequence),
             paths: batch.invalidatedPaths,
             details: batch.invalidatedPaths.map((changedPath) => ({

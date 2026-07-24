@@ -24,7 +24,7 @@ const nativePath = path.join(privateDirectory, nativeBasename);
 
 const validMetadata = Object.freeze({
   schemaVersion: 1,
-  bindingApiVersion: 2,
+  bindingApiVersion: 3,
   nativeVersion: packageVersion,
   engineVersion: packageVersion,
   nodeApiVersion: 6,

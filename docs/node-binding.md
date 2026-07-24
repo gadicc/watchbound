@@ -82,23 +82,26 @@ thread-safe function, encodes wrapper exclusion prefixes, validates root
 recovery policy, and closes disposal admission. Module loading, metadata and
 capability calls, engine creation, statistics, subscription getters,
 cancellation-token methods, result conversion, batch normalization, and the
-consumer callback are synchronous too. The filesystem traversal and joined
+consumer callback's entry are synchronous too. A returned Promise-like resumes
+through ordinary JavaScript jobs while retaining that subscription's delivery
+credit. The filesystem traversal and joined
 topology/disposal work remain off the JavaScript thread, but large inputs,
 caller accessors, callback work, or contended locks can still pause it.
 
 ## Native identity, capabilities, and engine handles
 
 The one native binary loaded into the process exposes metadata schema version 1:
-native and engine versions, binding API version 2, Node-API 6, target triple,
-and build profile. Its raw capability schema is version 2 and also provides
-establishment-cancellation and shared-delivery facts alongside feature flags,
+native and engine versions, binding API version 3, Node-API 6, target triple,
+and build profile. Its raw capability schema is version 3 and also provides
+establishment-cancellation, shared-delivery, and callback-completion facts
+alongside feature flags,
 Rust subscription defaults, the shared positive-`u32` option bounds, process
 budgeting, and shared-native-watch support. The wrapper combines those values
 with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 2`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 3`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision;
@@ -136,7 +139,7 @@ The loader accepts exactly `watchbound.linux-x64-gnu.node` beside the package.
 It has no environment-variable override, optional-package lookup, WASI branch,
 download, or install-time build fallback. Before exporting the binding it
 requires Linux x64, detected glibc, Node-API 6 or newer, metadata schema 1,
-binding API 2, matching package/native/engine versions, Node-API build floor 6,
+binding API 3, matching package/native/engine versions, Node-API build floor 6,
 the `x86_64-unknown-linux-gnu` target, and a release build profile. The wrapper
 then asserts its own package version against the native package version.
 
@@ -210,6 +213,14 @@ exists. These delivery bounds do not impose a native-watch bound: the default
 subscription and default engine have `watchLimit: null` and
 `nativeWatchBudget: null` until a consumer configures them.
 
+Binding API 3 passes an opaque bigint delivery ID beside each raw batch. The
+public wrapper returns the private boolean ownership marker, assimilates the
+user's Promise-like, and calls `completeDelivery(id, callbackError, stop)`
+exactly once. Native code restores credit only for the current ticket in the
+same environment generation. Duplicate, stale, or cross-environment
+acknowledgements do nothing. Raw private callbacks that do not return the
+ownership marker retain synchronous auto-completion for low-level tests.
+
 Every callback in one environment still executes on that environment's
 JavaScript thread. A synchronously blocked callback delays peer callback
 completion even though the dispatcher and filesystem runtime continue.
@@ -218,10 +229,12 @@ it independently `consumer-backpressure` uncertain. A separate Worker
 environment has a separate JavaScript thread and dispatcher and can make
 callback progress.
 
-Disposal is asynchronous so JavaScript remains able to drain or cancel native
-callbacks while the engine and dispatcher registration join. The disposal
-promise may resolve only after no queued or in-flight callback can newly enter
-JavaScript.
+Disposal is asynchronous so JavaScript remains able to settle or cooperatively
+cancel native callbacks while the engine and dispatcher registration join. The
+disposal promise may resolve only after an admitted callback completion is
+acknowledged and no queued or in-flight callback can newly enter JavaScript.
+Environment teardown and subscription GC instead abandon an outstanding ticket
+before native cleanup so they never depend on JavaScript promise settlement.
 An already admitted reconciliation, exclusion update, or root recovery is
 joined or explicitly interrupted by the same lifecycle boundary.
 

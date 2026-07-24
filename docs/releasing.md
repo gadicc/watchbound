@@ -137,6 +137,13 @@ plan, independently reproduced native binary, package integrities, and partial
 publication ledger; it can publish only the missing JSR version and create the
 missing GitHub Release.
 
+Its first dispatch, run `30117474624`, failed before any registry mutation
+because package rehearsal correctly rejected release evidence from `744cd8f`
+while executing at the later controller commit. The corrected controller first
+requires a clean checkout whose complete source delta is the reviewed
+recovery-only allowlist, preserves the original reproducibility evidence
+unchanged, and keeps the canonical binary and npm integrity checks mandatory.
+
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary
 workflow secret, branch-protection requirement, manual-dispatch prerequisite,

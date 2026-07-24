@@ -130,6 +130,13 @@ real pnpm package location before locating the native dependency. Immediate
 JSR visibility checks read the registry's exact package metadata directly, so
 they do not depend on Deno's client-side dependency-age policy or CLI version.
 
+The `v1.0.1` partial-publication recovery is deliberately separate from normal
+semantic release because the correct immutable tag and npm packages already
+exist. Its one-time controller pins the original source commit, release run,
+plan, independently reproduced native binary, package integrities, and partial
+publication ledger; it can publish only the missing JSR version and create the
+missing GitHub Release.
+
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary
 workflow secret, branch-protection requirement, manual-dispatch prerequisite,

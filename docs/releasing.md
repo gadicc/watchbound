@@ -81,9 +81,11 @@ covered by the incident runbook.
 
 The publish step fails closed on registry lookup errors and refuses the unsafe
 partial state where the wrapper exists but its exact native dependency does
-not. The GitHub-hosted publish job has the write permissions semantic-release
-needs for its tag, release, issues, and pull-request notes, plus
-`id-token: write` for registry OIDC. It has no npm or JSR secret.
+not. The planning job has `contents: write` because semantic-release verifies
+push access even in dry-run mode; the planner itself does not push. The
+GitHub-hosted publish job has the write permissions semantic-release needs for
+its tag, release, issues, and pull-request notes, plus `id-token: write` for
+registry OIDC. It has no npm or JSR secret.
 
 Feature branches, pull requests, and `dev` pushes run the ordinary CI workflow
 but cannot start the Release workflow or publish.

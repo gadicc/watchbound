@@ -96,6 +96,10 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     "utf8",
   );
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
+  assert.match(
+    release,
+    /^  plan:\n    name: Plan exact candidate\n    runs-on: ubuntu-24\.04\n    timeout-minutes: 15\n    permissions:\n      # semantic-release verifies push access even when dryRun is enabled\.\n      contents: write$/mu,
+  );
   assert.match(release, /github\.event_name == 'push'/u);
   assert.match(release, /github\.ref == 'refs\/heads\/main'/u);
   assert.match(release, /needs\.plan\.outputs\.will-release == 'true'/u);

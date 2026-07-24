@@ -16,6 +16,9 @@ jobs:
     name: Plan exact candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      # semantic-release verifies push access even when dryRun is enabled.
+      contents: write
     outputs:
       qualify: ${{ steps.plan.outputs.qualify }}
       will-release: ${{ steps.plan.outputs.will-release }}

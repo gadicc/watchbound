@@ -144,6 +144,14 @@ requires a clean checkout whose complete source delta is the reviewed
 recovery-only allowlist, preserves the original reproducibility evidence
 unchanged, and keeps the canonical binary and npm integrity checks mandatory.
 
+Run `30118062644` then published and verified JSR `1.0.1` with provenance, but
+the controller rejected the completed ledger because its assertion omitted the
+intermediate `published-verification-pending` record. The idempotent follow-up
+run `30118226669` verified all three registry versions as existing and passed
+the installed npm lifecycle smoke, then exposed that the smoke child resolved
+its relative evidence path from a temporary project. Registry smoke evidence
+paths are now made absolute before changing working directories.
+
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary
 workflow secret, branch-protection requirement, manual-dispatch prerequisite,

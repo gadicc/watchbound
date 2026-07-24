@@ -127,7 +127,8 @@ The corrected package treats JSR's normalized npm manifest as bundled delivery
 only when its generated package name and exact native dependency agree. Package
 rehearsal simulates that normalized manifest, and registry checks resolve the
 real pnpm package location before locating the native dependency. Immediate
-JSR visibility checks explicitly set the minimum dependency age to zero.
+JSR visibility checks read the registry's exact package metadata directly, so
+they do not depend on Deno's client-side dependency-age policy or CLI version.
 
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary

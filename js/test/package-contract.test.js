@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "../../scripts/install-jsr-native.mjs";
+import { jsrPackageExists } from "../../scripts/semantic-release-watchbound.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -148,9 +149,12 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(plugin, /installCanonicalNative/u);
   assert.match(plugin, /registry integrity mismatch/u);
   assert.match(plugin, /publication-ledger\.json/u);
-  assert.match(plugin, /npm", \["view"/u);
-  assert.match(plugin, /deno", \["info"/u);
-  assert.match(plugin, /"--minimum-dependency-age=0"/u);
+  assert.match(plugin, /async function npmPackageState/u);
+  assert.match(plugin, /\["view", specifier, "--json"\]/u);
+  assert.doesNotMatch(plugin, /deno", \["info"/u);
+  assert.doesNotMatch(plugin, /minimum-dependency-age/u);
+  assert.match(plugin, /https:\/\/jsr\.io\/@/u);
+  assert.match(plugin, /meta\.json/u);
   assert.match(plugin, /installExactJsrNative/u);
   assert.match(
     plugin,
@@ -167,6 +171,56 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     compareNativeBuilds,
     /--remap-path-prefix=\$\{manifest\.isolation\.cargoHome\}=\/watchbound\/cargo-home/u,
   );
+});
+
+test("JSR existence checks exact registry metadata without Deno policy", async () => {
+  const requests = [];
+  const fetchMetadata = async (...args) => {
+    requests.push(args);
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          scope: "gadicc",
+          name: "watchbound",
+          versions: {
+            "1.0.0": { yanked: true },
+            "1.0.1": {},
+          },
+        };
+      },
+    };
+  };
+
+  assert.equal(
+    await jsrPackageExists(
+      "jsr:@gadicc/watchbound@1.0.1",
+      fetchMetadata,
+    ),
+    true,
+  );
+  assert.equal(
+    await jsrPackageExists(
+      "jsr:@gadicc/watchbound@1.0.2",
+      fetchMetadata,
+    ),
+    false,
+  );
+  assert.equal(
+    await jsrPackageExists(
+      "jsr:@gadicc/watchbound@1.0.0",
+      fetchMetadata,
+    ),
+    true,
+  );
+  assert.equal(requests.length, 3);
+  for (const [url, options] of requests) {
+    assert.equal(url, "https://jsr.io/@gadicc/watchbound/meta.json");
+    assert.equal(options.cache, "no-store");
+    assert.equal(options.headers.accept, "application/json");
+    assert.ok(options.signal instanceof AbortSignal);
+  }
 });
 
 test("JSR publication restores only the exact prepared native tarball", () => {

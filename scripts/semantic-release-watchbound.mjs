@@ -102,7 +102,7 @@ export async function publish(_pluginConfig, { nextRelease }) {
       wrapperExists ? "verified-existing" : "verified-published",
     );
 
-    if (!packageExists("jsr", jsrPackage)) {
+    if (!await jsrPackageExists(jsrPackage)) {
       installExactJsrNative(
         run,
         path.join(workspaceRoot, "dist/jsr"),
@@ -243,30 +243,49 @@ function verifyExistingNpmPackage(state, kind, version, tarball) {
 
 async function waitForJsrPackage(specifier) {
   for (let attempt = 1; attempt <= 10; attempt += 1) {
-    if (packageExists("jsr", specifier)) return true;
+    if (await jsrPackageExists(specifier)) return true;
     await delay(3_000);
   }
   return false;
 }
 
-function packageExists(registry, specifier) {
-  const [command, args] = registry === "npm"
-    ? ["npm", ["view", specifier, "version"]]
-    : ["deno", ["info", "--minimum-dependency-age=0", specifier]];
-  const result = spawnSync(command, args, {
-    cwd: workspaceRoot,
-    encoding: "utf8",
-    stdio: "pipe",
+export async function jsrPackageExists(
+  specifier,
+  fetchImplementation = globalThis.fetch,
+) {
+  const match =
+    /^jsr:@(?<scope>[a-z0-9-]+)\/(?<packageName>[a-z0-9-]+)@(?<version>[^/]+)$/u
+      .exec(specifier);
+  if (!match?.groups) {
+    throw new Error(`invalid exact JSR package specifier: ${specifier}`);
+  }
+  const { scope, packageName, version } = match.groups;
+  const metadataUrl =
+    `https://jsr.io/@${scope}/${packageName}/meta.json`;
+  const response = await fetchImplementation(metadataUrl, {
+    cache: "no-store",
+    headers: {
+      accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
   });
-  if (result.error) throw result.error;
-  if (result.status === 0) return true;
-
-  const output = `${result.stdout}\n${result.stderr}`;
-  if (isMissing(registry, output)) return false;
-
-  throw new Error(
-    `could not determine whether ${specifier} exists:\n${output.trim()}`,
-  );
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    throw new Error(
+      `could not determine whether ${specifier} exists: ` +
+        `${metadataUrl} returned HTTP ${response.status}`,
+    );
+  }
+  const metadata = await response.json();
+  if (
+    metadata?.scope !== scope ||
+    metadata?.name !== packageName ||
+    !metadata.versions ||
+    typeof metadata.versions !== "object"
+  ) {
+    throw new Error(`invalid JSR package metadata for ${specifier}`);
+  }
+  return Object.hasOwn(metadata.versions, version);
 }
 
 function isMissing(registry, output) {

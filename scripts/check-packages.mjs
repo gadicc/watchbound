@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -76,6 +77,28 @@ try {
     ],
     smokeRoot,
   );
+  const nativeSha256 = sha256(
+    path.join(distRoot, "npm", "node", "watchbound.linux-x64-gnu.node"),
+  );
+  run(
+    process.execPath,
+    [
+      path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
+      "--project",
+      smokeRoot,
+      "--wrapper",
+      "watchbound",
+      "--version",
+      version,
+      "--native-sha256",
+      nativeSha256,
+      "--route",
+      "local-npm-tarballs",
+      "--evidence",
+      path.join(smokeRoot, "npm-installed-smoke.json"),
+    ],
+    workspaceRoot,
+  );
 
   run(
     "npm",
@@ -95,6 +118,27 @@ try {
     "deno",
     ["publish", "--dry-run", "--allow-dirty", "--no-check"],
     path.join(distRoot, "jsr"),
+  );
+  run(
+    process.execPath,
+    [
+      path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
+      "--project",
+      path.join(distRoot, "jsr"),
+      "--wrapper",
+      "@gadicc/watchbound",
+      "--wrapper-path",
+      path.join(distRoot, "jsr"),
+      "--version",
+      version,
+      "--native-sha256",
+      nativeSha256,
+      "--route",
+      "local-jsr-node-tree",
+      "--evidence",
+      path.join(smokeRoot, "jsr-installed-smoke.json"),
+    ],
+    workspaceRoot,
   );
   fs.rmSync(path.join(distRoot, "jsr", "node_modules"), {
     recursive: true,
@@ -158,4 +202,11 @@ function run(command, args, cwd, capture = false) {
 
 function writeJson(destination, value) {
   fs.writeFileSync(destination, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function sha256(source) {
+  return crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(source))
+    .digest("hex");
 }

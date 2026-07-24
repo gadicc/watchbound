@@ -34,6 +34,29 @@ registry independently, verify the immutable artifact digest and provenance
 where a version exists, then either complete only the missing operation from a
 reviewed exact commit or publish a new patch/prerelease version.
 
+Semantic-release creates and pushes its Git tag before invoking publish
+plugins. A failed tagged run may therefore produce no release on an ordinary
+rerun. Use the reviewed recovery command from the exact tagged source only
+after its local tarballs match every existing registry integrity and the
+independent native digest. Never delete or move the tag to make semantic-release
+repeat the publish phase.
+
+## Registry-smoke failure
+
+The release remains published-but-unverified until both fresh-runner npm and
+JSR Node-route smokes pass.
+
+- If an exact version is temporarily invisible, retain the first result and
+  rerun only the read-only smoke after the bounded propagation window.
+- If integrity, dependency resolution, import, delivery, callback lifecycle,
+  disposal, or resource restoration fails, do not retry publication. Deprecate
+  both affected npm packages, yank the JSR version, annotate the GitHub Release,
+  and prepare a corrected lockstep patch.
+- Move `latest` back only to a verified contract-compatible stable release. The
+  earlier-callback `0.0.1` bootstrap is not a silent v1 rollback target.
+- Preserve the installed lock metadata, expected and observed native hashes,
+  registry integrity/provenance, host facts, resource samples, and smoke log.
+
 ## GitHub and communication
 
 - Mark any GitHub release notes with the affected status and remediation.

@@ -2,9 +2,10 @@
 
 Status: selected for controlled source builds and the one-target public
 bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
-baseline have narrow-target evidence. The current binding API 3 async callback
-candidate is unpublished and `target-pending-clean-ci`; this is not yet a stable
-public package commitment.
+baseline have narrow-target evidence. The prospective `1.0.0` binding API 3
+async callback candidate is unpublished. It declares `supported`, with that
+declaration effective only after the exact candidate commit passes both clean
+support lanes and the independent-builder comparison.
 
 ## Choice
 
@@ -106,10 +107,11 @@ The resulting public `capabilities` object is deeply frozen and
 JSON-serializable. Under `schemaVersion: 3`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
-`runtime` identify the current process only. They are not a support decision;
-`support.status` is `target-pending-clean-ci` for the current candidate until
-its exact commit is separately qualified. Current process facts never broaden
-the fixed target.
+`runtime` identify the current process only. They are not a support decision.
+The prospective `1.0.0` metadata declares `support.status: "supported"`; the
+release workflow qualifies that exact status-bearing commit, so no later
+status-only commit is required. Current process facts never broaden the fixed
+target.
 
 Node exposes a cheap `NativeEngine`, and the wrapper exposes
 `createEngine({ nativeWatchBudget: number | null })`. Creation stores a request
@@ -281,15 +283,16 @@ thread-safe-function delivery failures are counted separately; the former do
 not stop later delivery, while the latter close only that registration and
 surface when disposal joins it.
 
-## Still gated
+## Release boundary
 
-- qualification of the exact release commit for the one proposed Ubuntu 24.04
-  x64/glibc 2.39 bundled native package;
-- independent-builder reproducibility evidence and production-blocker review
-  before a stable release;
-- any package publication or consumer integration.
+- qualify the exact release commit in both Ubuntu 24.04 support lanes;
+- build on two isolated clean Ubuntu 24.04 builders and compare the intended
+  native binaries byte for byte before publication;
+- publish only from an intentional `main` push after every pre-publication gate;
+- verify exact npm and JSR Node-route installs on fresh supported hosts after
+  immutable publication.
 
-Checksums, CycloneDX SBOM generation, binary inspection, same-runner
-reproducibility, npm/JSR provenance, and `main`-push semantic-release automation are
-implemented in the release-package boundary. They do not widen the loader's
-single exact target.
+Checksums, CycloneDX SBOM generation, binary inspection, same-runner and
+independent-builder reproducibility, npm/JSR provenance, and `main`-push
+semantic-release automation are implemented in the release-package boundary.
+They do not widen the loader's single exact target.

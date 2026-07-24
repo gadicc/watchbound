@@ -32,6 +32,14 @@ export default {
             path: "dist/evidence/*.cdx.json",
             label: "CycloneDX 1.6 SBOM",
           },
+          {
+            path: "dist/evidence/*reproducibility.json",
+            label: "Native reproducibility evidence",
+          },
+          {
+            path: "dist/evidence/publication-ledger.json",
+            label: "Registry publication ledger",
+          },
         ],
       },
     ],

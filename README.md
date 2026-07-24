@@ -21,15 +21,17 @@ guard; registry packages are created only in controlled generated trees. The
 establishment and shared-delivery contract tracked as the private `0.2.0`
 revision. It reports `target-pending-clean-ci`; later exact-commit CI qualified
 that implementation baseline, but the immutable bootstrap metadata was not
-rewritten. The current source candidate adds promise-aware callbacks, callback
-cancellation context, binding API 3, and capability schema 3. It is not in
-`0.0.1` and remains `target-pending-clean-ci` until its own exact commit passes
-both support lanes.
+rewritten. The prospective `1.0.0` source candidate adds promise-aware
+callbacks, callback cancellation context, binding API 3, and capability schema
+3. It is not in `0.0.1`. Its metadata declares `supported`, but that declaration
+becomes truthful only when the exact candidate commit passes both support lanes;
+until then it is a release candidate, not a qualified release.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits to decide whether a release is
-needed and stamps one lockstep version across both npm packages, JSR, Rust,
-checksums, and the SBOM. Manual workflow dispatches run CI but cannot publish.
+needed and verifies the committed lockstep version across both npm packages,
+JSR, Rust, checksums, and the SBOM. Manual workflow dispatches run the same
+qualification, including independent clean builders, but cannot publish.
 Registry artifacts identify themselves as a bundled-native delivery for exactly
 Ubuntu 24.04 x64/glibc 2.39; source workspaces continue to identify as
 controlled builds. Watchbound is intentionally independent of Codex Desktop
@@ -139,8 +141,9 @@ consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own a native source build
 and joined-disposal lifecycle. The intended maintained target is only Ubuntu
 24.04, Linux 6.8+ in that support line, x86_64, glibc 2.39, and Node
-`>=24.18.0 <25`, built from source under trusted stable local roots; the
-current async callback candidate remains `target-pending-clean-ci`. WSL,
+`>=24.18.0 <25`, built from source under trusted stable local roots. The
+prospective `1.0.0` declaration is effective only after its exact commit passes
+both support lanes. WSL,
 network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, other distributions or architectures, and all
 non-Linux platforms are unqualified or unsupported. See
@@ -187,7 +190,7 @@ inotify backend.
 | Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout; the earlier contract is published as the one-target `0.0.1` npm/JSR bootstrap, while this async candidate is unpublished and `target-pending-clean-ci` for the narrow Ubuntu 24.04 x64/glibc 2.39 target below | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout; the earlier contract is published as the one-target `0.0.1` npm/JSR bootstrap. The prospective `1.0.0` async candidate is unpublished and qualifies its `supported` declaration only when its exact commit passes both Ubuntu 24.04 lanes and the independent-build comparison | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -321,9 +324,9 @@ and separates versions/build facts, observed runtime facts, the support target,
 features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
 callback queue, single-credit admission, and promise-aware serialized callback
-completion explicitly. Runtime facts do not widen support: this async callback
-candidate remains `target-pending-clean-ci` until exact clean target evidence
-supports a later status declaration. See
+completion explicitly. Runtime facts do not widen support. The prospective
+`1.0.0` source declares `supported`, and the release workflow treats that
+declaration as effective only after exact-commit clean target evidence. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
 and [`docs/support-matrix.md`](docs/support-matrix.md). The private API revision
 and compatibility policy are recorded in

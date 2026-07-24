@@ -18,6 +18,7 @@ test("private package manifests match the narrow maintained source-build target"
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
   const { version } = root;
+  assert.equal(version, "1.0.0");
 
   assert.equal(wrapper.name, "watchbound");
   assert.equal(native.name, "@gadicc/watchbound-node");
@@ -61,6 +62,10 @@ test("private package manifests match the narrow maintained source-build target"
     root.scripts["test:packages"],
     "pnpm package:prepare && pnpm package:check",
   );
+  assert.equal(
+    root.scripts["check:registry-packages"],
+    "node scripts/check-registry-packages.mjs",
+  );
   assert.equal(root.scripts.release, "semantic-release");
   assert.equal(root.devDependencies["semantic-release"], "25.0.8");
   for (const crate of ["engine/Cargo.toml", "node/Cargo.toml"]) {
@@ -83,15 +88,21 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     "utf8",
   );
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
-  assert.match(
-    release,
-    /^    if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'$/mu,
-  );
+  assert.match(release, /github\.event_name == 'push'/u);
+  assert.match(release, /github\.ref == 'refs\/heads\/main'/u);
+  assert.match(release, /needs\.plan\.outputs\.will-release == 'true'/u);
   assert.doesNotMatch(release, /^    environment:/mu);
   assert.match(release, /^      id-token: write$/mu);
   assert.match(release, /^          fetch-depth: 0$/mu);
   assert.match(release, /GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/u);
   assert.match(release, /run: pnpm release/u);
+  assert.match(release, /^  repro-build:$/mu);
+  assert.match(release, /^  repro-compare:$/mu);
+  assert.match(release, /^  registry-smoke:$/mu);
+  assert.match(release, /compare-native-builds\.mjs/u);
+  assert.match(release, /check-registry-packages\.mjs/u);
+  assert.match(release, /WATCHBOUND_EXPECTED_NATIVE_SHA256/u);
+  assert.match(release, /watchbound-approved-native/u);
   assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
   assert.match(release, /^  workflow_dispatch:$/mu);
 
@@ -105,6 +116,9 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(plugin, /scripts\/set-release-version\.mjs/u);
   assert.match(plugin, /pnpm", \["check:reproducible"\]/u);
   assert.match(plugin, /pnpm", \["test:packages"\]/u);
+  assert.match(plugin, /installCanonicalNative/u);
+  assert.match(plugin, /registry integrity mismatch/u);
+  assert.match(plugin, /publication-ledger\.json/u);
   assert.match(plugin, /npm", \["view"/u);
   assert.match(plugin, /deno", \["info"/u);
   assert.match(plugin, /"publish"/u);

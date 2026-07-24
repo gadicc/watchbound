@@ -1,9 +1,10 @@
 # Native delivery contract
 
 Status: source checkouts remain controlled builds. The public `0.0.1` npm/JSR
-bootstrap is an explicit one-target bundled native package. The current async
-callback candidate is not in that package and is not yet qualified or published
-as a stable release.
+bootstrap is an explicit one-target bundled native package. The prospective
+`1.0.0` async-callback candidate commits its exact version and support
+declaration, but remains unpublished and is not recognized as qualified until
+its own exact-SHA gates pass.
 
 ## Current decision
 
@@ -93,22 +94,27 @@ target, the implementation now provides:
 - a SHA-256 checksum manifest and deterministic release metadata;
 - a CycloneDX 1.6 SBOM covering the npm boundary and Rust dependency graph;
 - npm and JSR OIDC provenance after the one-time interactive local bootstrap;
-- two clean same-runner builds whose native bytes must match;
+- two isolated clean Ubuntu 24.04 builders whose transferred native binaries
+  are re-hashed and byte-compared, plus same-runner repetition as defense in
+  depth;
 - ELF class/architecture, dynamic-library allowlist, RPATH/RUNPATH absence,
   stripped-symbol status, Node-API export, maximum-size, tarball allowlist,
   load, and teardown checks;
 - a `main`-push semantic-release boundary, non-publishing manual rehearsal,
   immutable-version registry checks, and an incident-response runbook.
 
-The following requirements remain stable-release gates:
+The following requirements are stable-release gates:
 
 - exact-commit green evidence on both supported CI lanes;
-- byte comparison from at least two independent clean builders rather than
-  only two clean builds on one runner;
-- review of any unavoidable reproducibility difference;
+- exact SHA-256 and byte identity from two independent builders, with any
+  mismatch failing closed rather than being waived;
+- fresh supervised manual and automatic forced-overflow evidence for the exact
+  candidate SHA, version, and independently approved native digest;
 - maintainer acceptance that the single Ubuntu 24.04 x64/glibc 2.39 artifact is
   the entire public support promise;
-- production-blocker resolution and registry-install smoke evidence.
+- production-blocker resolution; and
+- immediate post-publication exact npm and JSR Node-route registry-install
+  smoke, with immutable-version incident response on failure.
 
 There is no runtime checksum/signature lookup because the addon is already
 inside the immutable npm package whose registry provenance and tarball digest

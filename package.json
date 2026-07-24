@@ -1,6 +1,6 @@
 {
   "name": "@gadicc/watchbound-workspace",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "Private workspace for the Watchbound resource-aware Linux directory watcher",
   "author": "Gadi Cohen <dragon@wastelands.net>",
@@ -27,6 +27,7 @@
     "build:node": "node scripts/build-node.mjs",
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-js.mjs && pnpm typecheck",
     "check:reproducible": "node scripts/check-reproducible-build.mjs",
+    "check:registry-packages": "node scripts/check-registry-packages.mjs",
     "package:prepare": "node scripts/prepare-packages.mjs",
     "package:check": "node scripts/check-packages.mjs",
     "release": "semantic-release",

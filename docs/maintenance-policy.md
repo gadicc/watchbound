@@ -25,9 +25,10 @@ per-environment delivery. The public registry line reset with a `0.0.1`
 bootstrap package containing that revision; later public versions are owned by
 semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
 although a later exact commit qualified its implementation baseline. The
-current unpublished source candidate adds promise-aware callbacks, callback
-cancellation context, binding API 3, and capability schema 3, and needs its own
-exact-commit qualification. The repository targets the narrow host in
+prospective `1.0.0` source candidate adds promise-aware callbacks, callback
+cancellation context, binding API 3, and capability schema 3. It commits a
+`supported` declaration that becomes effective only when its exact commit
+passes both qualification lanes. The repository targets the narrow host in
 `support-matrix.md`; bootstrap publication must not imply a broader
 compatibility promise.
 
@@ -93,17 +94,20 @@ The historical maintained-unpublished status did not authorize a release. The
 separately approved bootstrap is now published. The prepared
 one-target bundled-native proposal now includes target-specific naming,
 checksums, provenance, CycloneDX SBOM, binary inspection, version/delivery
-lockstep, same-runner reproducibility, fail-closed loading, and an incident
-runbook. Before publication, separately review package visibility and
-versioning, the exact release commit, remaining production blockers, the
-narrow support statement, and the generated evidence.
+lockstep, independent-builder byte comparison, same-runner defense in depth,
+fail-closed loading, and an incident runbook. Before publication, separately
+review package visibility and versioning, the exact release commit, remaining
+production blockers, the narrow support statement, and the generated evidence.
 
-Publishing, distributing prebuilds, uploading artifacts, or integrating a
-consumer always requires fresh explicit approval.
+An intentional maintainer merge or push of the exact qualified commit to
+`main` is the fresh publication approval. No branch-protection rule, protected
+environment, or separate deployment approval is required. Uploading artifacts
+outside the documented workflow or integrating a consumer remains separately
+authorized work.
 
 The checked-in release workflow is preparation, not blanket approval. Feature
 branches and manual-dispatch runs cannot publish. After CI passes on `main`,
-semantic-release may publish a missing lockstep version when Conventional
-Commits require one. A stable release additionally requires
-independent-builder reproducibility evidence and a clean install from the
-published registry artifacts.
+semantic-release may publish the committed lockstep version when Conventional
+Commits require it and every pre-publication dependency succeeds. A stable
+release is published-but-verification-pending until clean exact-version npm and
+JSR Node-route installs pass on fresh supported runners.

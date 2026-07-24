@@ -1,10 +1,11 @@
 # Release and registry runbook
 
-Status: the `0.0.1` bootstrap is published to npm and JSR. OIDC automation is
-prepared for subsequent semantic releases. The current post-bootstrap async
-callback candidate is unpublished and has not yet passed exact-commit target
-CI. Production readiness, support qualification, native-distribution review,
-and explicit maintainer approval remain separate gates.
+Status: the `0.0.1` bootstrap is published to npm and JSR. The prospective
+`1.0.0` async-callback candidate commits its exact release version and declares
+the narrow target supported, but that declaration becomes effective only after
+the candidate's own two-lane CI succeeds. It remains unpublished. Independent
+builder, supervised-overflow, and post-publication registry-smoke evidence are
+separate gates.
 
 ## What CI does
 
@@ -24,7 +25,9 @@ ordinary strict conformance serially. The floor lane additionally:
 1. generates controlled public npm trees from the private workspace manifests;
 2. packs `@gadicc/watchbound-node` and `watchbound`;
 3. checks the exact files in both tarballs;
-4. installs both tarballs offline into an empty project and imports the wrapper;
+4. installs both tarballs offline into an empty project and exercises real
+   delivery, Promise callback serialization, callback cancellation/stop, joined
+   disposal, and final resource baselines;
 5. runs a JSR publish dry run over the generated wrapper tree;
 6. inspects the ELF target, stripped-symbol status, dynamic-library allowlist,
    Node-API export, embedded search paths, and size;
@@ -41,9 +44,12 @@ Node-specific declarations instead.
 
 ## Main-branch semantic release
 
-`.github/workflows/release.yml` runs after a push to `main`. It first reuses the
-complete CI workflow. If CI passes, semantic-release analyzes Conventional
-Commits since the last semantic-release tag:
+`.github/workflows/release.yml` has a non-publishing manual qualification mode
+and a publishing `main`-push mode. It plans the exact committed version without
+mutating source, reuses the complete CI workflow, builds the addon on two
+isolated clean Ubuntu 24.04 jobs, transfers both exact binaries, and recomputes
+their SHA-256 values in a third job before byte-comparing them. If those gates
+pass, semantic-release analyzes Conventional Commits since the last tag:
 
 - `fix` produces a patch;
 - `feat` produces a minor;
@@ -52,18 +58,26 @@ Commits since the last semantic-release tag:
 
 For a release, the custom semantic-release plugin:
 
-1. stamps the selected version into the private workspace manifests, Cargo
-   workspace, Cargo lockfile, generated npm packages, and JSR metadata;
-2. performs two clean native builds with the floor toolchain and requires
-   byte-identical output;
-3. packs, audits, and offline-smoke-tests the exact npm tarballs;
+1. requires the semantic-release version to equal the committed lockstep
+   version and proves version stamping is a no-op;
+2. performs two same-runner clean builds as defense in depth and requires both
+   to match the independently approved digest;
+3. installs the canonical independently compared binary, then packs, audits,
+   and offline-smoke-tests the exact npm tarballs;
 4. dry-runs the generated JSR tree and writes checksums, release metadata, and
    a CycloneDX 1.6 SBOM;
-5. checks each registry and publishes only missing immutable versions, always
-   publishing the native npm package before its wrapper and JSR last;
-6. publishes through npm and JSR GitHub Actions OIDC with provenance; and
-7. creates the semantic-release Git tag, notes, and GitHub Release with the
-   inspected tarballs and evidence attached.
+5. checks each registry and publishes only missing immutable versions, verifying
+   any existing npm version against the exact local integrity and dependency
+   metadata, always publishing native npm before wrapper npm and JSR last;
+6. publishes through npm and JSR GitHub Actions OIDC with provenance.
+
+After preparation succeeds, semantic-release creates its Git tag before calling
+the publish plugins. After registry publication, the GitHub plugin creates the
+release and attaches the inspected tarballs and reproducibility evidence. The
+workflow then, on fresh supported runners, installs the exact npm wrapper and
+the JSR Node-compatibility route, exercises the full lifecycle contract, and
+verifies the installed native hash. The tag-before-publish failure case is
+covered by the incident runbook.
 
 The publish step fails closed on registry lookup errors and refuses the unsafe
 partial state where the wrapper exists but its exact native dependency does
@@ -75,10 +89,10 @@ A manual workflow dispatch runs the complete reusable CI workflow but cannot
 enter semantic-release. Feature branches, pull requests, and `dev` pushes
 cannot publish.
 
-This lighter policy treats merge or push access to `main` as the human release
-boundary. There is no protected GitHub environment, temporary workflow secret,
-or separate release approval deployment. Protect `main`, require CI, restrict
-merge access, and use Conventional Commit types deliberately.
+An intentional maintainer merge or push to `main` is the human publication
+authorization boundary. There is no protected GitHub environment, temporary
+workflow secret, branch-protection requirement, or separate release-approval
+deployment. Manual dispatch qualifies the selected SHA but cannot publish.
 
 ## One-time `0.0.1` bootstrap
 
@@ -179,32 +193,39 @@ inspection, checksums, a CycloneDX SBOM, same-runner byte reproducibility, and
 OIDC provenance after bootstrap. The incident path is in
 [`release-incident-response.md`](release-incident-response.md).
 
-Still requiring an explicit human decision or external evidence:
+Still requiring an explicit human decision or external evidence before the
+same qualified SHA is pushed to `main`:
 
 - accept the deliberately narrow Ubuntu 24.04 x64/glibc 2.39 public artifact,
   with unsupported targets failing closed;
 - resolve or explicitly accept every production blocker and decide whether the
   release remains experimental;
-- before treating a release as stable, obtain byte-comparison evidence from
-  two independent clean builders; same-runner repetition is useful but weaker;
 - obtain fresh supervised forced-overflow evidence for the exact release
   candidate on a confirmed quiet, prepared host;
 - review known limitations; and
-- after publication, install exact registry versions into a clean supported
-  host and record the smoke result.
+- accept that exact stable registry smoke necessarily follows immutable
+  publication and use the incident path if either route fails.
 
 ## Release checklist
 
 1. Use a Conventional Commit whose type matches the intended release impact.
-2. Run `pnpm build:node`, `pnpm test`, `pnpm check`,
+2. Commit the intended release version in package, Cargo, and lock metadata.
+3. Run `pnpm build:node`, `pnpm test`, `pnpm check`,
    `pnpm check:reproducible`, and `pnpm test:packages`.
-3. Push the reviewed commit and wait for both CI support lanes.
-4. For the one-time bootstrap only, stage `0.0.1`, publish locally in native,
-   wrapper, then JSR order, and configure the registry OIDC relationships.
-5. For subsequent releases, merge the approved Conventional Commit to `main`;
-   semantic-release determines and publishes the version.
-6. Verify provenance, npm dist-tags, JSR version state, GitHub evidence, and
-   clean registry installation on a supported host.
+4. Manually dispatch the non-publishing Release workflow for the exact candidate
+   and retain both support lanes and independent-builder comparison evidence.
+5. On a confirmed quiet supported host, run the separately approved manual and
+   automatic forced-overflow trials against that SHA and native digest.
+6. For the completed one-time bootstrap only, `0.0.1` was published locally in
+   native, wrapper, then JSR order, and the registry OIDC relationships were
+   configured.
+7. For subsequent releases, intentionally merge or push the exact approved
+   Conventional Commit to `main`; semantic-release validates and publishes its
+   committed version.
+8. Treat the release as published-but-verification-pending until both exact npm
+   and JSR Node-route registry smokes pass.
+9. Verify provenance, npm dist-tags, JSR version state, GitHub evidence, and the
+   retained smoke results.
 
 Do not merge a release-worthy commit to `main` merely to exercise publishing.
 Use `workflow_dispatch` for a non-publishing full-CI rehearsal.

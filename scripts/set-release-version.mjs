@@ -34,6 +34,11 @@ for (const crate of ["watchbound-engine", "watchbound-node"]) {
     `$1${version}$2`,
   );
 }
+replaceExactly(
+  "pnpm-lock.yaml",
+  /specifier: workspace:.*$/mu,
+  `specifier: workspace:${version}`,
+);
 
 process.stdout.write(`Stamped Watchbound release version ${version}\n`);
 

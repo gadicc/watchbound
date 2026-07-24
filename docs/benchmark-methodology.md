@@ -266,6 +266,48 @@ result, resource restoration, and environmental caveats are recorded with the
 raw identity. A completed targeted run does not authorize a retry or any other
 command containing `--allow-forced-overflow`.
 
+For the prospective stable release, use a clean source-only checkout of the
+exact candidate SHA on Ubuntu 24.04 x64/glibc 2.39 with Node 24.18.0, Rust
+1.88.0, and pnpm 10.33.2. Install from the frozen lockfile, freshly build the
+release addon, and require its SHA-256 to equal the independent-builder
+comparison before any overflow command. Retain the checkout/build transcript,
+source digest, addon hash, tool versions, inotify limits, temporary-filesystem
+identity, free blocks/inodes, `vmstat 1 5`, `/proc/pressure` samples, load,
+governor, and the list of other active I/O-heavy work.
+
+Then stop. Approval must name the SHA, version, addon hash, scenario, attempt
+number, and output path. Run the manual mode once:
+
+```sh
+node benches/conformance.mjs \
+  --adapter watchbound \
+  --scenario overflow-reconciliation \
+  --runs 1 \
+  --allow-forced-overflow \
+  --strict \
+  --output benches/results/v1.0.0-<candidate-sha>-overflow-reconciliation-attempt-1.json \
+  --quiet
+```
+
+Recheck host state and stop for a second explicit approval before the automatic
+mode:
+
+```sh
+node benches/conformance.mjs \
+  --adapter watchbound \
+  --scenario automatic-overflow-reconciliation \
+  --runs 1 \
+  --allow-forced-overflow \
+  --strict \
+  --output benches/results/v1.0.0-<candidate-sha>-automatic-overflow-reconciliation-attempt-1.json \
+  --quiet
+```
+
+Retain and hash every outcome, including failures. Neither completion nor
+failure authorizes a retry or the other scenario. Archive the unchanged private
+reports under `artifact-archival.md`; any public derivative remains separately
+approval-gated.
+
 Final correctness run, including the I/O-heavy forced-overflow case, after the
 user confirms the host is ready:
 

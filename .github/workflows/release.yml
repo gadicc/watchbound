@@ -13,18 +13,249 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Plan exact candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      qualify: ${{ steps.plan.outputs.qualify }}
+      will-release: ${{ steps.plan.outputs.will-release }}
+      version: ${{ steps.plan.outputs.version }}
+      source-sha: ${{ steps.plan.outputs.source-sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+
+    steps:
+      - name: Check out the exact candidate and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert exact candidate checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Enable the pinned pnpm release
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(pnpm --version)" = 10.33.2
+
+      - name: Install release planner from the lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Compute the non-mutating release plan
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WATCHBOUND_PLAN_MODE: ${{ github.event_name == 'push' && 'release' || 'qualification' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/plan-release.mjs \
+            --mode "$WATCHBOUND_PLAN_MODE" \
+            --output "$RUNNER_TEMP/release-plan.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Retain the release plan
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-release-plan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-plan.json
+          if-no-files-found: error
+          retention-days: 90
+
   tests:
-    name: Test release source
+    name: Qualify exact release source
+    needs: plan
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 
-  release:
-    name: Release if relevant
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: tests
+  repro-build:
+    name: Independent native build (${{ matrix.builder }})
+    needs: plan
+    if: needs.plan.outputs.qualify == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        builder: [builder-a, builder-b]
+    env:
+      CARGO_HOME: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-cargo-home
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-target
+      COREPACK_HOME: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-corepack
+      PNPM_STORE_DIR: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-pnpm-store
+      RUSTUP_HOME: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-rustup
+      SOURCE_DATE_EPOCH: "0"
+      TZ: UTC
+
+    steps:
+      - name: Check out the exact source only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert isolated clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.source-sha }}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Set up isolated pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustc --version | grep -Eq '^rustc 1\.88\.0 '
+
+      - name: Assert the supported build host
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 24.04
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.39"
+          test "$(node --version)" = v24.18.0
+
+      - name: Enable isolated pinned pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(pnpm --version)" = 10.33.2
+          pnpm config set store-dir "$PNPM_STORE_DIR"
+
+      - name: Install independently from the lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the exact release-profile addon
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version 1 --locked >/dev/null
+          pnpm build:node
+          test -f node/watchbound.linux-x64-gnu.node
+          test "$(find node -maxdepth 1 -type f -name '*.node' -print | wc -l)" -eq 1
+          test -z "$(find node -maxdepth 1 -type f -name '*.so' -print -quit)"
+          git diff --exit-code -- Cargo.lock pnpm-lock.yaml
+
+      - name: Record the exact builder output
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/watchbound-${{ matrix.builder }}-evidence"
+          mkdir -p "$evidence_root"
+          node scripts/record-native-build.mjs \
+            --builder "${{ matrix.builder }}" \
+            --output "$evidence_root/build-manifest.json"
+          cp node/watchbound.linux-x64-gnu.node "$evidence_root/"
+
+      - name: Transfer exact independent output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-native-${{ matrix.builder }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-evidence
+          if-no-files-found: error
+          retention-days: 90
+
+  repro-compare:
+    name: Compare independent native outputs
+    needs: [plan, repro-build]
+    if: needs.plan.outputs.qualify == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      native-sha256: ${{ steps.compare.outputs.native-sha256 }}
+
+    steps:
+      - name: Check out comparison code at the exact SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download builder A
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-native-builder-a-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-builder-a
+
+      - name: Download builder B
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-native-builder-b-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-builder-b
+
+      - name: Recompute and compare both exact binaries
+        id: compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/compare-native-builds.mjs \
+            --left "$RUNNER_TEMP/watchbound-builder-a/build-manifest.json" \
+            --right "$RUNNER_TEMP/watchbound-builder-b/build-manifest.json" \
+            --output "$RUNNER_TEMP/watchbound-approved-native" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Retain canonical binary and comparison evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-approved-native-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-approved-native
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Publish the exact qualified release
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.plan.outputs.will-release == 'true'
+    needs: [plan, tests, repro-compare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: "0"
+      SOURCE_DATE_EPOCH: "0"
+      TZ: UTC
+    outputs:
+      published: ${{ steps.published.outputs.published }}
+      version: ${{ steps.published.outputs.version }}
+      native-sha256: ${{ needs.repro-compare.outputs.native-sha256 }}
     permissions:
       contents: write
       issues: write
@@ -32,11 +263,26 @@ jobs:
       id-token: write
 
     steps:
-      - name: Check out the release source and history
+      - name: Check out the exact release source and history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert exact release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.source-sha }}"
+          test "$(node -p "require('./package.json').version")" = "${{ needs.plan.outputs.version }}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Download the independently approved native artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-approved-native
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -76,5 +322,106 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
-          WATCHBOUND_REPRODUCIBLE_BUILD: "1"
+          WATCHBOUND_CANONICAL_NATIVE_PATH: ${{ runner.temp }}/watchbound-approved-native/watchbound.linux-x64-gnu.node
+          WATCHBOUND_EXPECTED_NATIVE_SHA256: ${{ needs.repro-compare.outputs.native-sha256 }}
+          WATCHBOUND_INDEPENDENT_REPRODUCIBILITY: ${{ runner.temp }}/watchbound-approved-native/independent-reproducibility.json
+          WATCHBOUND_PLANNED_VERSION: ${{ needs.plan.outputs.version }}
+          WATCHBOUND_REPRODUCIBLE_OUTPUT: ${{ runner.temp }}/watchbound-same-runner-reproducibility.json
         run: pnpm release
+
+      - name: Record successful publication
+        id: published
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "published=true"
+            echo "version=${{ needs.plan.outputs.version }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Retain release and partial-publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-release-evidence-${{ github.run_attempt }}
+          path: dist/evidence
+          if-no-files-found: warn
+          retention-days: 90
+
+  registry-smoke:
+    name: Registry smoke (${{ matrix.route }})
+    needs: [plan, release]
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        route: [npm, jsr-node]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the exact smoke fixture
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact supported Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Assert clean supported smoke host
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 24.04
+          test "$(uname -m)" = x86_64
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.39"
+          test "$(node --version)" = v24.18.0
+
+      - name: Enable exact package-manager versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          npm install --global npm@11.18.0
+          test "$(pnpm --version)" = 10.33.2
+          test "$(npm --version)" = 11.18.0
+
+      - name: Install and exercise the exact registry version
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-registry-packages.mjs \
+            --route "${{ matrix.route }}" \
+            --version "${{ needs.release.outputs.version }}" \
+            --native-sha256 "${{ needs.release.outputs.native-sha256 }}" \
+            --evidence "$RUNNER_TEMP/watchbound-registry-${{ matrix.route }}.json"
+
+      - name: Retain registry smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-registry-${{ matrix.route }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-registry-${{ matrix.route }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  verified:
+    name: Stable release verified
+    needs: registry-smoke
+    if: needs.registry-smoke.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Record verification completion
+        run: echo "Both exact registry routes passed on the supported host."

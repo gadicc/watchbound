@@ -63,6 +63,15 @@ assert.ok(binarySize > 0 && binarySize <= 8 * 1024 * 1024);
 fs.rmSync(evidenceRoot, { recursive: true, force: true });
 fs.mkdirSync(evidenceRoot, { recursive: true });
 
+const independentReproducibility = readOptionalEvidence(
+  process.env.WATCHBOUND_INDEPENDENT_REPRODUCIBILITY,
+  "watchbound-independent-native-comparison",
+);
+const sameRunnerReproducibility = readOptionalEvidence(
+  process.env.WATCHBOUND_REPRODUCIBLE_OUTPUT,
+  "watchbound-same-runner-reproducibility",
+);
+
 const artifacts = [
   {
     path: path.relative(workspaceRoot, binaryPath),
@@ -81,7 +90,6 @@ const artifacts = [
 fs.writeFileSync(
   path.join(evidenceRoot, "SHA256SUMS"),
   `${artifacts
-    .filter(({ path: artifactPath }) => artifactPath.endsWith(".tgz"))
     .map(
       ({ path: artifactPath, sha256: digest }) =>
         `${digest}  ${path.basename(artifactPath)}`,
@@ -94,6 +102,38 @@ const cargoMetadata = JSON.parse(
   capture("cargo", ["metadata", "--format-version", "1", "--locked"]),
 );
 const commit = capture("git", ["rev-parse", "HEAD"]);
+if (independentReproducibility !== null) {
+  assert.equal(independentReproducibility.sourceSha, commit);
+  assert.equal(independentReproducibility.version, version);
+  assert.equal(
+    independentReproducibility.sha256,
+    artifacts.find(({ path: artifactPath }) =>
+      artifactPath.endsWith(".node"))?.sha256,
+  );
+  fs.copyFileSync(
+    path.resolve(process.env.WATCHBOUND_INDEPENDENT_REPRODUCIBILITY),
+    path.join(evidenceRoot, "independent-reproducibility.json"),
+  );
+}
+if (sameRunnerReproducibility !== null) {
+  const expectedNativeSha256 =
+    independentReproducibility?.sha256 ??
+    sameRunnerReproducibility.builds?.[0]?.sha256;
+  assert.equal(sameRunnerReproducibility.sourceSha, commit);
+  assert.equal(sameRunnerReproducibility.version, version);
+  assert.equal(sameRunnerReproducibility.byteIdentical, true);
+  assert.equal(sameRunnerReproducibility.builds?.length, 2);
+  assert.equal(sameRunnerReproducibility.builds[0].sha256, expectedNativeSha256);
+  assert.equal(sameRunnerReproducibility.builds[1].sha256, expectedNativeSha256);
+  assert.equal(
+    sameRunnerReproducibility.expectedSha256,
+    independentReproducibility?.sha256 ?? null,
+  );
+  fs.copyFileSync(
+    path.resolve(process.env.WATCHBOUND_REPRODUCIBLE_OUTPUT),
+    path.join(evidenceRoot, "same-runner-reproducibility.json"),
+  );
+}
 const tools = {
   cargo: toolVersion("cargo", ["--version"]),
   deno: toolVersion("deno", ["--version"]),
@@ -117,10 +157,22 @@ writeJson(path.join(evidenceRoot, "release-metadata.json"), {
     maximumBytes: 8 * 1024 * 1024,
   },
   reproducibility: {
-    level:
-      process.env.WATCHBOUND_REPRODUCIBLE_BUILD === "1"
+    level: independentReproducibility !== null
+      ? "two-independent-clean-builders"
+      : sameRunnerReproducibility !== null
         ? "same-runner-two-clean-builds"
         : "not-checked",
+    independent: independentReproducibility === null
+      ? null
+      : {
+          sourceSha: independentReproducibility.sourceSha,
+          sha256: independentReproducibility.sha256,
+          bytes: independentReproducibility.bytes,
+          builders: independentReproducibility.builders.map(
+            ({ builder, runner }) => ({ builder, runner }),
+          ),
+        },
+    sameRunner: sameRunnerReproducibility,
   },
   tools,
   artifacts,
@@ -246,6 +298,14 @@ function capture(command, args) {
 
 function readJson(source) {
   return JSON.parse(fs.readFileSync(source, "utf8"));
+}
+
+function readOptionalEvidence(source, expectedKind) {
+  if (!source) return null;
+  const value = readJson(path.resolve(source));
+  assert.equal(value.schemaVersion, 1);
+  assert.equal(value.kind, expectedKind);
+  return value;
 }
 
 function writeJson(destination, value) {

@@ -2,10 +2,11 @@
 
 Status: the private `0.2.0` contract is carried by the published public `0.0.1`
 bootstrap. Its later documentation commit passed both support lanes, although
-the immutable bootstrap still emits `target-pending-clean-ci`. The current
-source candidate postdates that package: it adds the promise-aware callback
-contract, binding API 3, and capability schema 3, and remains unpublished and
-`target-pending-clean-ci` until its own exact commit is qualified.
+the immutable bootstrap still emits `target-pending-clean-ci`. The prospective
+`1.0.0` source candidate postdates that package: it adds the promise-aware
+callback contract, binding API 3, and capability schema 3, and remains
+unpublished. It declares `supported`; that declaration is effective only after
+the same exact commit passes the release qualification gates.
 
 The exact private `0.1.0` freeze and its support declaration remain the
 historical first qualified baseline.
@@ -121,8 +122,8 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; the current async candidate emits
-`target-pending-clean-ci`. Exhaustive narrowing fixtures compile in the
+`target-pending-clean-ci` and `supported`; the prospective `1.0.0` candidate
+emits `supported`. Exhaustive narrowing fixtures compile in the
 ordinary gate. Capability schema 3 and binding API 3 expose cancellation,
 shared-delivery, and promise-aware callback-completion facts; loader metadata
 remains schema 1.
@@ -154,8 +155,9 @@ The intended maintained target remains a controlled source build on Ubuntu 24.04
 x86_64, Linux 6.8 or newer within that support line, glibc 2.39, Node
 `>=24.18.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
 pnpm 10.33.2, and a working Ubuntu C toolchain under trusted stable local roots.
-This target description does not turn the unqualified current candidate into
-`supported`; that status requires its own exact clean evidence.
+The status-bearing candidate commit must itself pass both clean support lanes
+and independent-builder comparison; the target description or a successful
+local build is not qualification evidence.
 
 Unsupported targets include other Node ranges, distributions or glibc
 versions; musl; arm64 and other architectures; non-Linux systems; WSL,

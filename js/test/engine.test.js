@@ -58,7 +58,7 @@ test("capability schema v3 reports callback completion, target state, defaults, 
       typeof capabilities.runtime.libc.version === "string",
   );
   assert.deepEqual(capabilities.support, {
-    status: "target-pending-clean-ci",
+    status: "supported",
     operatingSystem: {
       family: "linux",
       distribution: "ubuntu",

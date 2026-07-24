@@ -1,6 +1,6 @@
 {
   "name": "@gadicc/watchbound-workspace",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Private workspace for the Watchbound resource-aware Linux directory watcher",
   "author": "Gadi Cohen <dragon@wastelands.net>",

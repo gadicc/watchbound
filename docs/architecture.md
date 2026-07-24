@@ -7,9 +7,10 @@ reconciliation, and an opt-in JavaScript automatic policy in targeted stress,
 plus explicit identity-policy-gated root replacement recovery, cancellable
 establishment, bounded per-environment native-to-Node delivery, and
 promise-aware serialized callbacks. The earlier contract is published as the
-`0.0.1` npm/JSR bootstrap; the prospective `1.0.0` callback candidate is
-unpublished and requires exact-commit qualification. No product integration
-has been authorized.
+`0.0.1` npm/JSR bootstrap. The `1.0.0` callback source qualified and was
+published, but its JSR Node route exposed a packaging incompatibility; the
+corrected `1.0.1` candidate requires its own exact-commit qualification. No
+product integration has been authorized.
 
 The subsequent consumer/API audit recommends a maintained unpublished package,
 conditional on named ownership and a narrow support target, but explicitly
@@ -421,7 +422,7 @@ and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded the
 single native binary, not evidence that the host is supported. The separate
-`support` section declares `supported` for prospective `1.0.0`; that declaration
+`support` section declares `supported` for corrected `1.0.1`; that declaration
 becomes effective only when the same exact commit is qualified for the narrow
 controlled source-build target in `support-matrix.md`. Matching facts do not
 widen that fixed target and nonmatching facts do not broaden it.
@@ -809,7 +810,7 @@ other backends or product surface.
 
 The intended maintained target is the narrow Ubuntu 24.04, Linux
 6.8+, x86_64, glibc 2.39, Node `>=24.18.0 <25` controlled source build on
-trusted stable local roots in `docs/support-matrix.md`. The prospective `1.0.0`
+trusted stable local roots in `docs/support-matrix.md`. The corrected `1.0.1`
 declaration is effective only after exact-commit release qualification. WSL, network filesystems,
 Filesystem in Userspace (FUSE), overlay filesystems, unusual container mounts,
 musl, other distributions and architectures, and non-Linux platforms are

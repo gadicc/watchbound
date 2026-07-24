@@ -184,6 +184,13 @@ export function buildCapabilities(native, metadata) {
 function packageDelivery(manifest) {
   const delivery = manifest?.watchbound?.delivery;
   if (
+    delivery === undefined &&
+    manifest?.name === "@jsr/gadicc__watchbound" &&
+    manifest?.dependencies?.["@gadicc/watchbound-node"] === manifest.version
+  ) {
+    return "bundled-native-package";
+  }
+  if (
     delivery !== "controlled-source-build" &&
     delivery !== "bundled-native-package"
   ) {

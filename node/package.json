@@ -1,6 +1,6 @@
 {
   "name": "@gadicc/watchbound-node",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Private source workspace for the Watchbound Node-API binding",
   "author": "Gadi Cohen <dragon@wastelands.net>",

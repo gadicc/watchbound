@@ -1,9 +1,10 @@
 # Native delivery contract
 
 Status: source checkouts remain controlled builds. The public `0.0.1` npm/JSR
-bootstrap is an explicit one-target bundled native package. The prospective
-`1.0.0` async-callback candidate commits its exact version and support
-declaration, but remains unpublished and is not recognized as qualified until
+bootstrap is an explicit one-target bundled native package. The `1.0.0`
+async-callback source qualified, but its JSR npm-compatibility route exposed a
+manifest-normalization defect. The corrected `1.0.1` candidate commits its
+exact version and support declaration and is not recognized as qualified until
 its own exact-SHA gates pass.
 
 ## Current decision

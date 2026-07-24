@@ -1,6 +1,6 @@
 # Callback contract: review before v1
 
-Status: implemented for the prospective `1.0.0` post-bootstrap candidate on
+Status: implemented for the `1.0.0` post-bootstrap source candidate on
 2026-07-24. This note records the deliberate maintainer review completed before
 the v1 release boundary. It is not a publication or Codex Desktop integration
 record.

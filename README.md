@@ -21,11 +21,13 @@ guard; registry packages are created only in controlled generated trees. The
 establishment and shared-delivery contract tracked as the private `0.2.0`
 revision. It reports `target-pending-clean-ci`; later exact-commit CI qualified
 that implementation baseline, but the immutable bootstrap metadata was not
-rewritten. The prospective `1.0.0` source candidate adds promise-aware
-callbacks, callback cancellation context, binding API 3, and capability schema
-3. It is not in `0.0.1`. Its metadata declares `supported`, but that declaration
-becomes truthful only when the exact candidate commit passes both support lanes;
-until then it is a release candidate, not a qualified release.
+rewritten. The `1.0.0` source adds promise-aware callbacks, callback
+cancellation context, binding API 3, and capability schema 3. Its source and
+npm packages qualified, but its JSR Node route exposed a normalized-manifest
+incompatibility. The corrected `1.0.1` candidate retains the same public
+contract. Its metadata declares `supported`, but that declaration becomes
+truthful only when the exact candidate commit passes both support lanes; until
+then it is a release candidate, not a qualified release.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits to decide whether a release is
@@ -156,7 +158,7 @@ platforms/filesystems, or applications that cannot own a native source build
 and joined-disposal lifecycle. The intended maintained target is only Ubuntu
 24.04, Linux 6.8+ in that support line, x86_64, glibc 2.39, and Node
 `>=24.18.0 <25`, built from source under trusted stable local roots. The
-prospective `1.0.0` declaration is effective only after its exact commit passes
+corrected `1.0.1` declaration is effective only after its exact commit passes
 both support lanes. WSL,
 network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, other distributions or architectures, and all
@@ -204,7 +206,7 @@ inotify backend.
 | Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout; the earlier contract is published as the one-target `0.0.1` npm/JSR bootstrap. The prospective `1.0.0` async candidate is unpublished and qualifies its `supported` declaration only when its exact commit passes both Ubuntu 24.04 lanes and the independent-build comparison | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout; the earlier contract is published as the one-target `0.0.1` npm/JSR bootstrap. The corrected `1.0.1` async candidate qualifies its `supported` declaration only when its exact commit passes both Ubuntu 24.04 lanes and the independent-build comparison | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |

@@ -252,7 +252,7 @@ async function waitForJsrPackage(specifier) {
 function packageExists(registry, specifier) {
   const [command, args] = registry === "npm"
     ? ["npm", ["view", specifier, "version"]]
-    : ["deno", ["info", specifier]];
+    : ["deno", ["info", "--minimum-dependency-age=0", specifier]];
   const result = spawnSync(command, args, {
     cwd: workspaceRoot,
     encoding: "utf8",

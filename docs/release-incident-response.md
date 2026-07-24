@@ -41,12 +41,13 @@ after its local tarballs match every existing registry integrity and the
 independent native digest. Never delete or move the tag to make semantic-release
 repeat the publish phase.
 
-The one-time `v1.0.0` recovery is encoded in
-`.github/workflows/recover-jsr-v1.yml`. It is pinned to the original tag,
-source SHA, workflow run, attempt, independent native digest, and both npm
-tarball digests. It verifies the existing npm registry artifacts but has no npm
-publication path. Its exact confirmation authorizes only the missing JSR
-operation, the post-publication JSR smoke, and completion of the GitHub Release.
+The one-time `v1.0.0` recovery at commit `e5bdf4c` was pinned to the original
+tag, source SHA, workflow run, attempt, independent native digest, and both npm
+tarball digests. It verified the existing npm registry artifacts and published
+only the missing JSR version. Recovery run `30105778464` then exposed a failed
+JSR Node-route smoke caused by JSR npm-manifest normalization. The workflow is
+retired; yank the affected immutable JSR `1.0.0` and use the corrected lockstep
+patch release rather than attempting recovery again.
 
 ## Registry-smoke failure
 

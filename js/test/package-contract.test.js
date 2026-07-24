@@ -19,7 +19,7 @@ test("private package manifests match the narrow maintained source-build target"
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
   const { version } = root;
-  assert.equal(version, "1.0.0");
+  assert.equal(version, "1.0.1");
 
   assert.equal(wrapper.name, "watchbound");
   assert.equal(native.name, "@gadicc/watchbound-node");
@@ -150,6 +150,7 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(plugin, /publication-ledger\.json/u);
   assert.match(plugin, /npm", \["view"/u);
   assert.match(plugin, /deno", \["info"/u);
+  assert.match(plugin, /"--minimum-dependency-age=0"/u);
   assert.match(plugin, /installExactJsrNative/u);
   assert.match(
     plugin,
@@ -173,7 +174,7 @@ test("JSR publication restores only the exact prepared native tarball", () => {
   installExactJsrNative(
     (...args) => calls.push(args),
     "/tmp/watchbound-jsr",
-    "/tmp/gadicc-watchbound-node-1.0.0.tgz",
+    "/tmp/gadicc-watchbound-node-1.0.1.tgz",
   );
   assert.deepEqual(calls, [[
     "npm",
@@ -185,46 +186,19 @@ test("JSR publication restores only the exact prepared native tarball", () => {
       "--no-package-lock",
       "--no-save",
       "--offline",
-      "/tmp/gadicc-watchbound-node-1.0.0.tgz",
+      "/tmp/gadicc-watchbound-node-1.0.1.tgz",
     ],
     "/tmp/watchbound-jsr",
   ]]);
 });
 
-test("the v1.0.0 recovery is manual, immutable, and JSR-only", () => {
-  const workflow = fs.readFileSync(
-    path.join(workspaceRoot, ".github/workflows/recover-jsr-v1.yml"),
-    "utf8",
+test("the spent v1.0.0 recovery cannot be dispatched again", () => {
+  assert.equal(
+    fs.existsSync(
+      path.join(workspaceRoot, ".github/workflows/recover-jsr-v1.yml"),
+    ),
+    false,
   );
-  const recovery = fs.readFileSync(
-    path.join(workspaceRoot, "scripts/recover-jsr-release.mjs"),
-    "utf8",
-  );
-  assert.match(workflow, /^  workflow_dispatch:$/mu);
-  assert.match(workflow, /publish-jsr-v1\.0\.0/u);
-  assert.match(
-    workflow,
-    /RECOVERY_SOURCE_SHA: 2797e4972615feb9409adccae78a344b65d2d3f5/u,
-  );
-  assert.match(workflow, /RECOVERY_RUN_ID: "30103706249"/u);
-  assert.match(workflow, /^      actions: read$/mu);
-  assert.match(workflow, /^      contents: write$/mu);
-  assert.match(workflow, /^      id-token: write$/mu);
-  assert.match(workflow, /ref: v1\.0\.0/u);
-  assert.match(workflow, /watchbound-release-plan-1/u);
-  assert.match(workflow, /watchbound-approved-native-1/u);
-  assert.match(workflow, /watchbound-release-evidence-1/u);
-  assert.match(workflow, /recover-jsr-release\.mjs/u);
-  assert.match(workflow, /--publish/u);
-  assert.doesNotMatch(workflow, /pnpm release/u);
-  assert.doesNotMatch(workflow, /npm publish/u);
-
-  assert.match(recovery, /originalPublicationLedger/u);
-  assert.match(recovery, /verified-published/u);
-  assert.match(recovery, /verifyExistingNpmPackage/u);
-  assert.match(recovery, /installExactJsrNative/u);
-  assert.match(recovery, /run\("deno", \["publish", "--no-check"\]/u);
-  assert.doesNotMatch(recovery, /npm", \["publish"/u);
 });
 
 test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {

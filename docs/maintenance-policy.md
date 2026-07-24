@@ -25,7 +25,7 @@ per-environment delivery. The public registry line reset with a `0.0.1`
 bootstrap package containing that revision; later public versions are owned by
 semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
 although a later exact commit qualified its implementation baseline. The
-prospective `1.0.0` source candidate adds promise-aware callbacks, callback
+corrected `1.0.1` source candidate retains promise-aware callbacks, callback
 cancellation context, binding API 3, and capability schema 3. It commits a
 `supported` declaration that becomes effective only when its exact commit
 passes both qualification lanes. The repository targets the narrow host in

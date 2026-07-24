@@ -2,8 +2,8 @@
 
 Status: selected for controlled source builds and the one-target public
 bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
-baseline have narrow-target evidence. The prospective `1.0.0` binding API 3
-async callback candidate is unpublished. It declares `supported`, with that
+baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
+source qualified; the corrected `1.0.1` package declares `supported`, with that
 declaration effective only after the exact candidate commit passes both clean
 support lanes and the independent-builder comparison.
 
@@ -108,7 +108,7 @@ JSON-serializable. Under `schemaVersion: 3`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
-The prospective `1.0.0` metadata declares `support.status: "supported"`; the
+The corrected `1.0.1` metadata declares `support.status: "supported"`; the
 release workflow qualifies that exact status-bearing commit, so no later
 status-only commit is required. Current process facts never broaden the fixed
 target.

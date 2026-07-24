@@ -16,7 +16,8 @@ const projectRoot = path.resolve(options.project);
 const wrapperRoot = options["wrapper-path"]
   ? path.resolve(options["wrapper-path"])
   : path.join(projectRoot, "node_modules", options.wrapper);
-const wrapperRequire = createRequire(path.join(wrapperRoot, "index.js"));
+const wrapperEntry = fs.realpathSync(path.join(wrapperRoot, "index.js"));
+const wrapperRequire = createRequire(wrapperEntry);
 const nativeRoot = path.dirname(
   wrapperRequire.resolve("@gadicc/watchbound-node"),
 );
@@ -76,7 +77,7 @@ async function runSmoke() {
     wrapperPackage.dependencies?.["@gadicc/watchbound-node"],
     options.version,
   );
-  assert.equal(wrapperPackage.watchbound?.delivery, "bundled-native-package");
+  assert.equal(wrapperDelivery(wrapperPackage), "bundled-native-package");
   assert.equal(nativePackage.watchbound?.delivery, "bundled-native-package");
   assert.ok(fs.existsSync(nativePath), `missing installed native addon: ${nativePath}`);
   const nativeSha256 = sha256(nativePath);
@@ -86,7 +87,7 @@ async function runSmoke() {
     "installed native addon differs from the independently approved artifact",
   );
 
-  const module = await import(pathToFileURL(path.join(wrapperRoot, "index.js")));
+  const module = await import(pathToFileURL(wrapperEntry));
   const { capabilities, createEngine } = module;
   assert.deepEqual(capabilities.versions, {
     wrapper: options.version,
@@ -170,6 +171,19 @@ async function runSmoke() {
       },
     },
   };
+}
+
+function wrapperDelivery(manifest) {
+  if (manifest.watchbound?.delivery !== undefined) {
+    return manifest.watchbound.delivery;
+  }
+  if (
+    manifest.name === "@jsr/gadicc__watchbound" &&
+    manifest.dependencies?.["@gadicc/watchbound-node"] === manifest.version
+  ) {
+    return "bundled-native-package";
+  }
+  return undefined;
 }
 
 async function checkRealDeliveryAndSerialization(engine) {

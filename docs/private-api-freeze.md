@@ -122,7 +122,7 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; the prospective `1.0.0` candidate
+`target-pending-clean-ci` and `supported`; the corrected `1.0.1` candidate
 emits `supported`. Exhaustive narrowing fixtures compile in the
 ordinary gate. Capability schema 3 and binding API 3 expose cancellation,
 shared-delivery, and promise-aware callback-completion facts; loader metadata

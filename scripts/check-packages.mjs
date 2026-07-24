@@ -140,6 +140,46 @@ try {
     ],
     workspaceRoot,
   );
+  const jsrManifestPath = path.join(distRoot, "jsr", "package.json");
+  const preparedJsrManifest = JSON.parse(
+    fs.readFileSync(jsrManifestPath, "utf8"),
+  );
+  writeJson(jsrManifestPath, {
+    name: "@jsr/gadicc__watchbound",
+    version,
+    type: "module",
+    dependencies: {
+      "@gadicc/watchbound-node": version,
+    },
+    exports: {
+      ".": {
+        types: "./index.d.ts",
+        default: "./index.js",
+      },
+    },
+  });
+  run(
+    process.execPath,
+    [
+      path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
+      "--project",
+      path.join(distRoot, "jsr"),
+      "--wrapper",
+      "@gadicc/watchbound",
+      "--wrapper-path",
+      path.join(distRoot, "jsr"),
+      "--version",
+      version,
+      "--native-sha256",
+      nativeSha256,
+      "--route",
+      "local-jsr-npm-compatibility-tree",
+      "--evidence",
+      path.join(smokeRoot, "jsr-npm-compatibility-smoke.json"),
+    ],
+    workspaceRoot,
+  );
+  writeJson(jsrManifestPath, preparedJsrManifest);
   fs.rmSync(path.join(distRoot, "jsr", "node_modules"), {
     recursive: true,
     force: true,

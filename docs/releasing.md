@@ -2,11 +2,12 @@
 
 Status: the `0.0.1` bootstrap is published to npm and JSR. The `1.0.0`
 async-callback release passed its source and independent-builder gates and both
-exact npm packages are published with OIDC provenance. Its original workflow
-failed before JSR publication, so the release remains incomplete until the
-one-time recovery below publishes and verifies the missing JSR version and
-creates the GitHub Release. Supervised-overflow evidence remains a separate
-gate.
+exact npm packages are published with OIDC provenance. Recovery run
+`30105778464` subsequently published JSR `1.0.0` with provenance, but its
+Node-route smoke exposed that JSR's npm-compatibility manifest normalization
+removes Watchbound's custom delivery field. The immutable JSR version is
+therefore affected and must be yanked; `1.0.1` is the corrected lockstep
+candidate. Supervised-overflow evidence remains a separate gate.
 
 ## What CI does
 
@@ -100,7 +101,7 @@ registry OIDC. It has no npm or JSR secret.
 Feature branches, pull requests, and `dev` pushes run the ordinary CI workflow
 but cannot start the Release workflow or publish.
 
-### One-time `v1.0.0` JSR recovery
+### `v1.0.0` JSR recovery incident
 
 Release workflow run `30103706249` published and verified both npm `1.0.0`
 packages, then failed before JSR publication because package rehearsal had
@@ -108,21 +109,25 @@ removed the generated JSR tree's `node_modules`. The npm artifacts, their
 provenance, the immutable `v1.0.0` tag, the two independent native builds, and
 the retained package checksums were verified after the incident.
 
-`.github/workflows/recover-jsr-v1.yml` is a deliberately narrow manual
-recovery for that release only. It checks out the immutable tag, downloads the
-original run's plan, independently approved binary, and partial-publication
-evidence, and requires every pinned source and artifact digest to match. It
-reconstructs the package trees with the original lockfile, proves both npm
-registry versions match the reconstructed tarballs, installs the exact native
-tarball into the JSR tree, and repeats the JSR dry run. Only then may it publish
-the missing JSR version with GitHub Actions OIDC, run the fresh JSR Node-route
-smoke, and create the missing GitHub Release with the original and recovery
-evidence. It contains no npm publication command and is idempotent if JSR or
-the GitHub Release already exists.
+The one-time workflow at commit `e5bdf4c` checked out the immutable tag,
+downloaded the original plan, independently approved binary, and
+partial-publication evidence, and matched every pinned source and artifact
+digest. It proved both npm registry versions matched the reconstructed
+tarballs, restored the exact native dependency, repeated the JSR dry run, and
+published JSR `1.0.0` with provenance.
 
-Run it from the Actions UI only after reviewing the workflow at its dispatch
-SHA, and enter the exact confirmation `publish-jsr-v1.0.0`. Do not reuse this
-workflow for another version or run.
+Its first verification failed because Deno's default 24-hour minimum dependency
+age hid the new version. Direct metadata and a zero-age lookup confirmed the
+version was present. The subsequent supported Node-route install exposed the
+separate manifest-normalization incompatibility described above. The recovery
+workflow is retired and cannot be dispatched again. Do not create a normal
+GitHub Release presenting `1.0.0` as fully verified.
+
+The corrected package treats JSR's normalized npm manifest as bundled delivery
+only when its generated package name and exact native dependency agree. Package
+rehearsal simulates that normalized manifest, and registry checks resolve the
+real pnpm package location before locating the native dependency. Immediate
+JSR visibility checks explicitly set the minimum dependency age to zero.
 
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary

@@ -1,0 +1,184 @@
+name: Recover JSR v1.0.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type publish-jsr-v1.0.0 to run the reviewed recovery
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchbound-jsr-v1.0.0-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    name: Recover exact missing JSR release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    env:
+      RECOVERY_VERSION: 1.0.0
+      RECOVERY_TAG: v1.0.0
+      RECOVERY_SOURCE_SHA: 2797e4972615feb9409adccae78a344b65d2d3f5
+      RECOVERY_RUN_ID: "30103706249"
+      RECOVERY_RUN_ATTEMPT: "1"
+      RECOVERY_NATIVE_SHA256: 1f3ed9d80f3cef4dbc91bac1c0618fa813ba3d680f2e7e5f4371d0c2e1db59a0
+      RECOVERY_NATIVE_TARBALL_SHA256: 1daaab3e65d0ea28804e682dd4f47a741038b91a7d82655d77bc95910d5df7d6
+      RECOVERY_WRAPPER_TARBALL_SHA256: 1a00992678c9f147abec755f6c6c33834ecd0fc4008a5e45fbb94ef11b80d65e
+
+    steps:
+      - name: Require the exact recovery confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = "publish-jsr-v1.0.0"
+
+      - name: Check out the reviewed recovery controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: recovery-controller
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: v1.0.0
+          path: release-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert controller and release identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C recovery-controller rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C release-source rev-parse HEAD)" = "$RECOVERY_SOURCE_SHA"
+          test "$(git -C release-source rev-parse "refs/tags/$RECOVERY_TAG^{}")" = "$RECOVERY_SOURCE_SHA"
+          test -z "$(git -C release-source status --porcelain=v1 --untracked-files=all)"
+
+      - name: Download the original release plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-release-plan-1
+          path: original-release-plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 30103706249
+
+      - name: Download the independently approved native artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-1
+          path: approved-native
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 30103706249
+
+      - name: Download the original partial-publication evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-release-evidence-1
+          path: original-release-evidence
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 30103706249
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Set up exact Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustc --version | grep -Eq '^rustc 1\.88\.0 '
+
+      - name: Enable exact package-manager versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          npm install --global npm@11.18.0
+          test "$(pnpm --version)" = 10.33.2
+          test "$(npm --version)" = 11.18.0
+
+      - name: Set up exact Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.6.7
+
+      - name: Install the exact release source from its lockfile
+        working-directory: release-source
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify existing npm artifacts and publish only missing JSR
+        shell: bash
+        run: |
+          set -euo pipefail
+          node recovery-controller/scripts/recover-jsr-release.mjs \
+            --workspace "$GITHUB_WORKSPACE/release-source" \
+            --approved-native "$GITHUB_WORKSPACE/approved-native" \
+            --original-evidence "$GITHUB_WORKSPACE/original-release-evidence" \
+            --release-plan "$GITHUB_WORKSPACE/original-release-plan/release-plan.json" \
+            --recovery-output "$RUNNER_TEMP/watchbound-jsr-recovery.json" \
+            --version "$RECOVERY_VERSION" \
+            --source-sha "$RECOVERY_SOURCE_SHA" \
+            --controller-sha "${{ github.sha }}" \
+            --run-id "$RECOVERY_RUN_ID" \
+            --run-attempt "$RECOVERY_RUN_ATTEMPT" \
+            --native-sha256 "$RECOVERY_NATIVE_SHA256" \
+            --native-tarball-sha256 "$RECOVERY_NATIVE_TARBALL_SHA256" \
+            --wrapper-tarball-sha256 "$RECOVERY_WRAPPER_TARBALL_SHA256" \
+            --publish
+
+      - name: Complete the missing GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RECOVERY_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$RECOVERY_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)" = "$RECOVERY_TAG"
+          else
+            gh release create "$RECOVERY_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "$RECOVERY_TAG" \
+              --generate-notes \
+              "release-source/dist/tarballs/gadicc-watchbound-node-$RECOVERY_VERSION.tgz#Inspected native npm package" \
+              "release-source/dist/tarballs/watchbound-$RECOVERY_VERSION.tgz#Inspected wrapper npm package" \
+              "release-source/dist/evidence/SHA256SUMS#SHA-256 package checksums" \
+              "release-source/dist/evidence/release-metadata.json#Release build metadata" \
+              "release-source/dist/evidence/watchbound-$RECOVERY_VERSION.cdx.json#CycloneDX 1.6 SBOM" \
+              "release-source/dist/evidence/independent-reproducibility.json#Independent native reproducibility evidence" \
+              "release-source/dist/evidence/same-runner-reproducibility.json#Same-runner native reproducibility evidence" \
+              "release-source/dist/evidence/jsr-recovery-ledger.json#JSR recovery ledger" \
+              "release-source/dist/evidence/original-publication-ledger.json#Original partial-publication ledger" \
+              "release-source/dist/evidence/jsr-registry-smoke.json#Recovered JSR registry smoke"
+          fi
+
+      - name: Retain recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-jsr-recovery-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/watchbound-jsr-recovery.json
+            release-source/dist/evidence
+          if-no-files-found: warn
+          retention-days: 90

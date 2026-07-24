@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { installExactJsrNative } from "./install-jsr-native.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -102,6 +103,16 @@ export async function publish(_pluginConfig, { nextRelease }) {
     );
 
     if (!packageExists("jsr", jsrPackage)) {
+      installExactJsrNative(
+        run,
+        path.join(workspaceRoot, "dist/jsr"),
+        nativeTarball,
+      );
+      run(
+        "deno",
+        ["publish", "--dry-run", "--allow-dirty", "--no-check"],
+        path.join(workspaceRoot, "dist/jsr"),
+      );
       run("deno", ["publish", "--no-check"], path.join(workspaceRoot, "dist/jsr"));
       recordOperation(ledger, "jsr-wrapper", "published-verification-pending");
       if (!await waitForJsrPackage(jsrPackage)) {

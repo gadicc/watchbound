@@ -1,11 +1,12 @@
 # Release and registry runbook
 
-Status: the `0.0.1` bootstrap is published to npm and JSR. The prospective
-`1.0.0` async-callback candidate commits its exact release version and declares
-the narrow target supported, but that declaration becomes effective only after
-the candidate's own two-lane CI succeeds. It remains unpublished. Independent
-builder, supervised-overflow, and post-publication registry-smoke evidence are
-separate gates.
+Status: the `0.0.1` bootstrap is published to npm and JSR. The `1.0.0`
+async-callback release passed its source and independent-builder gates and both
+exact npm packages are published with OIDC provenance. Its original workflow
+failed before JSR publication, so the release remains incomplete until the
+one-time recovery below publishes and verifies the missing JSR version and
+creates the GitHub Release. Supervised-overflow evidence remains a separate
+gate.
 
 ## What CI does
 
@@ -76,7 +77,9 @@ For a release, the custom semantic-release plugin:
 5. checks each registry and publishes only missing immutable versions, verifying
    any existing npm version against the exact local integrity and dependency
    metadata, always publishing native npm before wrapper npm and JSR last;
-6. publishes through npm and JSR GitHub Actions OIDC with provenance.
+6. reinstalls the exact prepared native tarball into the generated JSR tree
+   immediately before a final JSR dry run and publication; and
+7. publishes through npm and JSR GitHub Actions OIDC with provenance.
 
 After preparation succeeds, semantic-release creates its Git tag before calling
 the publish plugins. After registry publication, the GitHub plugin creates the
@@ -96,6 +99,30 @@ registry OIDC. It has no npm or JSR secret.
 
 Feature branches, pull requests, and `dev` pushes run the ordinary CI workflow
 but cannot start the Release workflow or publish.
+
+### One-time `v1.0.0` JSR recovery
+
+Release workflow run `30103706249` published and verified both npm `1.0.0`
+packages, then failed before JSR publication because package rehearsal had
+removed the generated JSR tree's `node_modules`. The npm artifacts, their
+provenance, the immutable `v1.0.0` tag, the two independent native builds, and
+the retained package checksums were verified after the incident.
+
+`.github/workflows/recover-jsr-v1.yml` is a deliberately narrow manual
+recovery for that release only. It checks out the immutable tag, downloads the
+original run's plan, independently approved binary, and partial-publication
+evidence, and requires every pinned source and artifact digest to match. It
+reconstructs the package trees with the original lockfile, proves both npm
+registry versions match the reconstructed tarballs, installs the exact native
+tarball into the JSR tree, and repeats the JSR dry run. Only then may it publish
+the missing JSR version with GitHub Actions OIDC, run the fresh JSR Node-route
+smoke, and create the missing GitHub Release with the original and recovery
+evidence. It contains no npm publication command and is idempotent if JSR or
+the GitHub Release already exists.
+
+Run it from the Actions UI only after reviewing the workflow at its dispatch
+SHA, and enter the exact confirmation `publish-jsr-v1.0.0`. Do not reuse this
+workflow for another version or run.
 
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary

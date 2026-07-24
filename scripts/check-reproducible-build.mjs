@@ -85,6 +85,7 @@ try {
         sourceSha,
         version,
         expectedSha256,
+        rustFlags: process.env.RUSTFLAGS ?? null,
         builds,
         byteIdentical: true,
       }, null, 2)}\n`,

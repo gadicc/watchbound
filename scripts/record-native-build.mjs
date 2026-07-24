@@ -63,6 +63,7 @@ const manifest = {
   },
   buildEnvironment: {
     cargoIncremental: requiredEnvironment("CARGO_INCREMENTAL"),
+    rustFlags: requiredEnvironment("RUSTFLAGS"),
     sourceDateEpoch: requiredEnvironment("SOURCE_DATE_EPOCH"),
     timezone: requiredEnvironment("TZ"),
   },

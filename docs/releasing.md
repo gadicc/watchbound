@@ -48,8 +48,15 @@ Node-specific declarations instead.
 exact committed version without mutating source, reuses the complete CI
 workflow, builds the addon on two isolated clean Ubuntu 24.04 jobs, transfers
 both exact binaries, and recomputes their SHA-256 values in a third job before
-byte-comparing them. If those gates pass, semantic-release analyzes
-Conventional Commits since the last tag:
+byte-comparing them. The independent builders retain distinct Cargo, target,
+package-manager, and Rustup homes. Rust compiler flags remap each private Cargo
+source root to the stable virtual path `/watchbound/cargo-home`, preventing
+runner-specific source paths from changing otherwise identical binaries. The
+evidence retains both the real isolation paths and the applied remapping, and
+the comparison still requires whole-file byte equality.
+
+If those gates pass, semantic-release analyzes Conventional Commits since the
+last tag:
 
 - `fix` produces a patch;
 - `feat` produces a minor;

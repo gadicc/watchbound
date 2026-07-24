@@ -109,10 +109,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "CARGO_HOME=$RUNNER_TEMP/watchbound-$BUILDER-cargo-home" >> "$GITHUB_ENV"
+          cargo_home="$RUNNER_TEMP/watchbound-$BUILDER-cargo-home"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/watchbound-$BUILDER-target" >> "$GITHUB_ENV"
           echo "COREPACK_HOME=$RUNNER_TEMP/watchbound-$BUILDER-corepack" >> "$GITHUB_ENV"
           echo "PNPM_STORE_DIR=$RUNNER_TEMP/watchbound-$BUILDER-pnpm-store" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
           echo "RUSTUP_HOME=$RUNNER_TEMP/watchbound-$BUILDER-rustup" >> "$GITHUB_ENV"
 
       - name: Check out the exact source only
@@ -306,6 +308,13 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+
+      - name: Normalize embedded Cargo source paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
 
       - name: Enable the pinned pnpm release
         shell: bash

@@ -95,6 +95,14 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     path.join(workspaceRoot, "scripts/semantic-release-watchbound.mjs"),
     "utf8",
   );
+  const recordNativeBuild = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/record-native-build.mjs"),
+    "utf8",
+  );
+  const compareNativeBuilds = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/compare-native-builds.mjs"),
+    "utf8",
+  );
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
   assert.match(
     release,
@@ -115,6 +123,12 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(release, /check-registry-packages\.mjs/u);
   assert.match(release, /WATCHBOUND_EXPECTED_NATIVE_SHA256/u);
   assert.match(release, /watchbound-approved-native/u);
+  assert.equal(
+    release.match(
+      /echo "RUSTFLAGS=--remap-path-prefix=\$cargo_home=\/watchbound\/cargo-home" >> "\$GITHUB_ENV"/gu,
+    )?.length,
+    2,
+  );
   assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
   assert.doesNotMatch(release, /workflow_dispatch/u);
   assert.doesNotMatch(ci, /workflow_dispatch/u);
@@ -138,6 +152,14 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(plugin, /"publish"/u);
   assert.match(plugin, /"--provenance"/u);
   assert.doesNotMatch(plugin, /NPM_TOKEN|NODE_AUTH_TOKEN/u);
+  assert.match(
+    recordNativeBuild,
+    /rustFlags: requiredEnvironment\("RUSTFLAGS"\)/u,
+  );
+  assert.match(
+    compareNativeBuilds,
+    /--remap-path-prefix=\$\{manifest\.isolation\.cargoHome\}=\/watchbound\/cargo-home/u,
+  );
 });
 
 test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {

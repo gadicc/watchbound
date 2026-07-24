@@ -61,7 +61,11 @@ for (const field of [
   );
 }
 
-assert.equal(left.observedSha256, right.observedSha256);
+assert.equal(
+  left.observedSha256,
+  right.observedSha256,
+  `independent native binary digests differ: ${left.manifest.builder}=${left.observedSha256}, ${right.manifest.builder}=${right.observedSha256}`,
+);
 assert.equal(
   left.binary.equals(right.binary),
   true,
@@ -137,6 +141,11 @@ function validateBuild(build, label, sourceSha, version) {
   );
   assert.equal(manifest.release.profile, "release", `${label} profile`);
   assert.equal(manifest.buildEnvironment.cargoIncremental, "0");
+  assert.equal(
+    manifest.buildEnvironment.rustFlags,
+    `--remap-path-prefix=${manifest.isolation.cargoHome}=/watchbound/cargo-home`,
+    `${label} Cargo source path remapping`,
+  );
   assert.equal(manifest.buildEnvironment.sourceDateEpoch, "0");
   assert.equal(manifest.buildEnvironment.timezone, "UTC");
   assert.equal(

@@ -1,13 +1,11 @@
 # Release and registry runbook
 
-Status: the `0.0.1` bootstrap is published to npm and JSR. The `1.0.0`
-async-callback release passed its source and independent-builder gates and both
-exact npm packages are published with OIDC provenance. Recovery run
-`30105778464` subsequently published JSR `1.0.0` with provenance, but its
-Node-route smoke exposed that JSR's npm-compatibility manifest normalization
-removes Watchbound's custom delivery field. The immutable JSR version is
-therefore affected and must be yanked; `1.0.1` is the corrected lockstep
-candidate. Supervised-overflow evidence remains a separate gate.
+Status: `1.0.1` is the verified current release on npm and JSR, its GitHub tag
+targets source commit `744cd8f`, and its GitHub Release retains both package
+tarballs, reproducibility evidence, registry publication evidence, and npm and
+JSR Node-route lifecycle smokes. The affected immutable JSR `1.0.0` is yanked;
+both npm `1.0.0` packages remain available and unchanged. Supervised-overflow
+evidence remains a separate gate.
 
 ## What CI does
 
@@ -130,12 +128,12 @@ real pnpm package location before locating the native dependency. Immediate
 JSR visibility checks read the registry's exact package metadata directly, so
 they do not depend on Deno's client-side dependency-age policy or CLI version.
 
-The `v1.0.1` partial-publication recovery is deliberately separate from normal
+The `v1.0.1` partial-publication recovery was deliberately separate from normal
 semantic release because the correct immutable tag and npm packages already
-exist. Its one-time controller pins the original source commit, release run,
-plan, independently reproduced native binary, package integrities, and partial
-publication ledger; it can publish only the missing JSR version and create the
-missing GitHub Release.
+existed. Its one-time controller pinned the original source commit, release
+run, plan, independently reproduced native binary, package integrities, and
+partial publication ledger; it could publish only the missing JSR version and
+create the missing GitHub Release.
 
 Its first dispatch, run `30117474624`, failed before any registry mutation
 because package rehearsal correctly rejected release evidence from `744cd8f`
@@ -151,6 +149,14 @@ run `30118226669` verified all three registry versions as existing and passed
 the installed npm lifecycle smoke, then exposed that the smoke child resolved
 its relative evidence path from a temporary project. Registry smoke evidence
 paths are now made absolute before changing working directories.
+
+Qualified finalization run `30118613707` verified every registry identity as
+existing, passed both supported lifecycle smokes with retained install locks,
+created the GitHub Release on the existing `v1.0.1` tag, and retained the
+complete recovery ledger. JSR `1.0.0` was then yanked: exact or locked requests
+remain possible, while semver and npm-compatibility resolution select `1.0.1`.
+The one-time `v1.0.1` recovery workflow and controller are retired and cannot
+be dispatched or reused.
 
 An intentional maintainer merge or push to `main` is the human publication
 authorization boundary. There is no protected GitHub environment, temporary

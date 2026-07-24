@@ -246,13 +246,18 @@ test("JSR publication restores only the exact prepared native tarball", () => {
   ]]);
 });
 
-test("the spent v1.0.0 recovery cannot be dispatched again", () => {
-  assert.equal(
-    fs.existsSync(
-      path.join(workspaceRoot, ".github/workflows/recover-jsr-v1.yml"),
-    ),
-    false,
-  );
+test("spent JSR recoveries cannot be dispatched or reused", () => {
+  for (const relativePath of [
+    ".github/workflows/recover-jsr-v1.yml",
+    ".github/workflows/recover-jsr-v1-0-1.yml",
+    "scripts/recover-jsr-v1-0-1.mjs",
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(workspaceRoot, relativePath)),
+      false,
+      `${relativePath} must be retired`,
+    );
+  }
 });
 
 test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {

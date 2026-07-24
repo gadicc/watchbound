@@ -4,7 +4,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { setImmediate: immediate } = require("node:timers/promises");
 const { setTimeout: delay } = require("node:timers/promises");
 const binding = require("../../index.js");
 
@@ -35,8 +34,7 @@ async function main() {
     );
     token.cancel();
 
-    await immediate();
-    await immediate();
+    binding.__watchboundTestOnlySynchronizeDispatcher();
     assert.equal(
       settled,
       false,

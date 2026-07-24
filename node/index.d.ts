@@ -47,6 +47,11 @@ export declare function createEstablishmentCancellation(): NativeEstablishmentCa
  */
 export declare function __watchboundTestOnlyCreateThreadpoolBlocker(): __WatchboundTestOnlyThreadpoolBlocker
 
+/**
+ * @internal Unsupported deterministic integration-test seam. Not product API.
+ */
+export declare function __watchboundTestOnlySynchronizeDispatcher(): void
+
 export declare function deliveryDiagnostics(): JsDeliveryDiagnostics
 
 /**

@@ -46,6 +46,69 @@ record.
    disposal request. Calling `subscription.dispose()` later returns the same
    promise and exposes the result to an explicit joiner.
 
+## Delivery/lifecycle release-blocker investigation
+
+The 2026-07-24 qualification investigation separated two unrelated flakes.
+Neither was callback loss or an unbalanced product lifecycle.
+
+### Dispatcher-entry readiness
+
+The exact Node 24.18.0
+`node/test/fixtures/uv-threadpool-cancellation.cjs` process failed 7 of 200
+direct repetitions in the primary reproduction and 55 of 1,000 in an
+independent repetition. Every failure reported one active thread-safe function
+but zero dispatcher threads while the only libuv worker was blocked.
+
+This was a truthful but previously unsynchronized diagnostic state.
+`ensure_dispatcher()` publishes a successfully spawned `JoinHandle` and marks
+the internal dispatcher lifecycle `Running`; the spawned thread increments the
+process diagnostic only when it later enters its managed body. Thread-safe
+function creation can occur between those points. JavaScript immediates have no
+happens-before relationship with that Rust OS thread. The unpublished
+registration keeps the dispatcher alive, so delayed entry did not lose a batch
+or weaken joined cleanup.
+
+The binding now publishes actual dispatcher entry under the environment mutex
+after incrementing the entered-thread diagnostic. An unsupported hidden test
+seam waits on that condition, and the fixture uses it before retaining its
+exact resource assertion. Product establishment still requires only successful
+thread creation; the diagnostic still counts only threads that have actually
+entered. Timing delays, accepting either zero or one, incrementing the counter
+from the spawning thread, and changing synchronous establishment to wait for
+OS scheduling were rejected.
+
+### Process-global callback diagnostic
+
+The Rust failure was parallel-test contamination. The node library suite failed
+104 of 300 primary repetitions, and the exact workspace command failed 38 of
+100 independent repetitions. Each reported test passed 100 of 100 primary
+isolated repetitions, while the node library passed 100 of 100 repetitions
+with one test thread. Failures occurred both above and below the captured
+baseline; paired failures were complementary.
+
+Admission increments both its delivery-local count and the process-global
+diagnostic before publishing the pending callback. Failed wakeup rolls both
+back. Completion and abandonment share the same in-flight-ID-gated
+`finish_delivery()` path, so exactly one contender decrements them. The failing
+tests nevertheless captured a process-global baseline while another test could
+legitimately enter or leave that interval.
+
+The three unit tests that directly mutate and assert this one global diagnostic
+now share a test-only scoped mutex from baseline through balance. Their
+delivery-local assertions remain intact, and successful admission additionally
+asserts the isolated global `+1` state. No production counter changed and the
+rest of the Rust suite remains parallel. Resetting the atomic, weakening
+equality, polling for an eventual value, or serializing the entire suite were
+rejected.
+
+Post-fix qualification repeated the exact Node fixture in 1,000 fresh
+Node 24.18.0 processes and the normally parallel Rust node-library suite in
+1,000 fresh test processes with no failures. The deterministic paused-entry
+regression, `cargo test --workspace`, the exact Node 24.18.0 node tests,
+`pnpm test`, `pnpm check`, and the ordinary 25-cycle `pnpm test:soak` gate also
+passed. No forced-overflow, benchmark-recording, publication, or consumer
+integration command was run.
+
 ## Deliberately deferred
 
 - No Watchbound-owned detached callback mode. Consumer-owned fire-and-forget

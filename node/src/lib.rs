@@ -612,6 +612,14 @@ pub fn delivery_diagnostics() -> JsDeliveryDiagnostics {
     }
 }
 
+#[napi(js_name = "__watchboundTestOnlySynchronizeDispatcher")]
+pub fn synchronize_dispatcher_test(env: Env) -> Result<()> {
+    let environment = delivery::environment_for(&env).map_err(|error| sync_error(&env, error))?;
+    environment
+        .synchronize_dispatcher_entry()
+        .map_err(|error| sync_error(&env, error))
+}
+
 #[napi]
 pub fn complete_delivery(
     env: Env,

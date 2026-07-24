@@ -118,10 +118,17 @@ struct EnvironmentInner {
     registrations: BTreeMap<u64, RegistrationRecord>,
     dispatcher_round: FairRound,
     dispatcher_lifecycle: DispatcherLifecycle,
+    dispatcher_entered: bool,
     dispatcher_thread: Option<JoinHandle<()>>,
     cleanup_round: FairRound,
     cleanup_lifecycle: DispatcherLifecycle,
     cleanup_thread: Option<JoinHandle<()>>,
+}
+
+#[cfg(test)]
+struct DispatcherEntryGate {
+    reached: Arc<std::sync::Barrier>,
+    release: Arc<std::sync::Barrier>,
 }
 
 pub(crate) struct EnvironmentRecord {
@@ -131,6 +138,8 @@ pub(crate) struct EnvironmentRecord {
     changed: Condvar,
     #[cfg(test)]
     fail_next_dispatcher_spawn: AtomicBool,
+    #[cfg(test)]
+    dispatcher_entry_gate: Mutex<Option<DispatcherEntryGate>>,
 }
 
 #[derive(Clone, Copy)]
@@ -168,6 +177,7 @@ impl Drop for ManagedThreadExit {
             let mut inner = lock_unpoisoned(&environment.inner);
             match self.kind {
                 ManagedThreadKind::Dispatcher => {
+                    inner.dispatcher_entered = false;
                     inner.dispatcher_lifecycle = DispatcherLifecycle::Stopped;
                 }
                 ManagedThreadKind::Cleanup => {
@@ -200,6 +210,7 @@ impl EnvironmentRecord {
                 registrations: BTreeMap::new(),
                 dispatcher_round: FairRound::default(),
                 dispatcher_lifecycle: DispatcherLifecycle::Stopped,
+                dispatcher_entered: false,
                 dispatcher_thread: None,
                 cleanup_round: FairRound::default(),
                 cleanup_lifecycle: DispatcherLifecycle::Stopped,
@@ -208,6 +219,8 @@ impl EnvironmentRecord {
             changed: Condvar::new(),
             #[cfg(test)]
             fail_next_dispatcher_spawn: AtomicBool::new(false),
+            #[cfg(test)]
+            dispatcher_entry_gate: Mutex::new(None),
         }
     }
 
@@ -390,6 +403,7 @@ impl EnvironmentRecord {
                             inner.dispatcher_thread.take()
                         } else {
                             inner.dispatcher_round = FairRound::default();
+                            debug_assert!(!inner.dispatcher_entered);
                             inner.dispatcher_lifecycle = DispatcherLifecycle::Starting;
                             None
                         }
@@ -435,10 +449,45 @@ impl EnvironmentRecord {
         }
     }
 
+    pub(crate) fn synchronize_dispatcher_entry(&self) -> NodeResult<()> {
+        self.synchronize_dispatcher_entry_with(|| {})
+    }
+
+    fn synchronize_dispatcher_entry_with(&self, before_wait: impl FnOnce()) -> NodeResult<()> {
+        let mut before_wait = Some(before_wait);
+        let mut inner = lock_unpoisoned(&self.inner);
+        while !inner.dispatcher_entered {
+            match inner.dispatcher_lifecycle {
+                DispatcherLifecycle::Starting | DispatcherLifecycle::Running => {}
+                DispatcherLifecycle::Stopped | DispatcherLifecycle::Stopping => {
+                    return Err(NodeErrorDetails::internal(
+                        Operation::Subscribe,
+                        "Node delivery dispatcher stopped before entry synchronization",
+                    ));
+                }
+            }
+            if let Some(before_wait) = before_wait.take() {
+                before_wait();
+            }
+            inner = self
+                .changed
+                .wait(inner)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        Ok(())
+    }
+
     fn dispatcher_loop(self: Arc<Self>) {
+        #[cfg(test)]
+        if let Some(gate) = lock_unpoisoned(&self.dispatcher_entry_gate).take() {
+            gate.reached.wait();
+            gate.release.wait();
+        }
         let _thread_exit = ManagedThreadExit::new(&self, ManagedThreadKind::Dispatcher);
         {
             let mut inner = lock_unpoisoned(&self.inner);
+            inner.dispatcher_entered = true;
+            self.changed.notify_all();
             while inner.dispatcher_lifecycle == DispatcherLifecycle::Starting {
                 inner = self
                     .changed
@@ -1736,6 +1785,10 @@ mod tests {
     use watchbound_engine::{Coverage, RootAttachment, RootIdentity, RootState};
 
     static CLEANUP_SPAWN_TEST_LOCK: Mutex<()> = Mutex::new(());
+    // These unit tests intentionally assert a process-global diagnostic around
+    // a local mutation. Isolate only that baseline-to-balance interval so a
+    // parallel test cannot contribute a truthful callback of its own.
+    static OUTSTANDING_CALLBACK_DIAGNOSTICS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_registration(active: bool) -> RegistrationRecord {
         RegistrationRecord {
@@ -1773,6 +1826,61 @@ mod tests {
         assert_eq!(error.operation, Operation::Subscribe);
         let inner = lock_unpoisoned(&environment.inner);
         assert!(inner.registrations.is_empty());
+        assert_eq!(inner.dispatcher_lifecycle, DispatcherLifecycle::Stopped);
+        assert!(inner.dispatcher_thread.is_none());
+    }
+
+    #[test]
+    fn dispatcher_entry_synchronization_waits_for_managed_thread_entry() {
+        let environment = Arc::new(EnvironmentRecord::new(12));
+        environment.mark_running();
+        let registration_id = 1;
+        {
+            let mut inner = lock_unpoisoned(&environment.inner);
+            let mut registration = test_registration(false);
+            registration.pending_establishment = true;
+            inner.registrations.insert(registration_id, registration);
+        }
+
+        let reached = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        *lock_unpoisoned(&environment.dispatcher_entry_gate) = Some(DispatcherEntryGate {
+            reached: Arc::clone(&reached),
+            release: Arc::clone(&release),
+        });
+        environment.ensure_dispatcher().unwrap();
+        reached.wait();
+        assert!(!lock_unpoisoned(&environment.inner).dispatcher_entered);
+
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::sync_channel(0);
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let waiter_environment = Arc::clone(&environment);
+        let waiter = std::thread::spawn(move || {
+            let synchronized = waiter_environment
+                .synchronize_dispatcher_entry_with(|| waiting_tx.send(()).unwrap())
+                .is_ok();
+            result_tx.send(synchronized).unwrap();
+        });
+        waiting_rx.recv().unwrap();
+        let premature_result = match result_rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(false),
+        };
+        release.wait();
+        let synchronized = premature_result.unwrap_or_else(|| result_rx.recv().unwrap());
+        waiter.join().unwrap();
+        assert!(
+            premature_result.is_none(),
+            "entry synchronization returned while the managed thread was paused before entry"
+        );
+        assert!(synchronized);
+        assert!(lock_unpoisoned(&environment.inner).dispatcher_entered);
+
+        environment.remove(registration_id);
+        environment.join_dispatcher_if_inactive().unwrap();
+        let inner = lock_unpoisoned(&environment.inner);
+        assert!(!inner.dispatcher_entered);
         assert_eq!(inner.dispatcher_lifecycle, DispatcherLifecycle::Stopped);
         assert!(inner.dispatcher_thread.is_none());
     }
@@ -1990,6 +2098,7 @@ mod tests {
 
     #[test]
     fn dispatcher_fallback_stays_live_until_an_outstanding_callback_is_quiescent() {
+        let _diagnostics_test = lock_unpoisoned(&OUTSTANDING_CALLBACK_DIAGNOSTICS_TEST_LOCK);
         let environment = Arc::new(EnvironmentRecord::new(29));
         environment.mark_running();
         let delivery = DeliveryState::new(&environment);
@@ -2011,6 +2120,7 @@ mod tests {
         };
         assert!(delivery.try_admit_with(batch, || Status::Ok));
         assert_eq!(delivery.outstanding_callbacks(), 1);
+        assert_eq!(diagnostics().outstanding_callbacks, outstanding_before + 1);
 
         let coordination_error =
             NodeErrorDetails::internal(Operation::Dispose, "injected cleanup coordinator failure");
@@ -2067,6 +2177,7 @@ mod tests {
 
     #[test]
     fn delivery_acknowledgement_is_environment_scoped_and_exactly_once() {
+        let _diagnostics_test = lock_unpoisoned(&OUTSTANDING_CALLBACK_DIAGNOSTICS_TEST_LOCK);
         let environment = Arc::new(EnvironmentRecord::new(30));
         environment.mark_running();
         let other_environment = Arc::new(EnvironmentRecord::new(31));
@@ -2106,6 +2217,7 @@ mod tests {
             false,
         ));
         assert_eq!(delivery.outstanding_callbacks(), 1);
+        assert_eq!(diagnostics().outstanding_callbacks, outstanding_before + 1);
         assert_eq!(delivery.callback_errors(), 0);
 
         assert!(complete_delivery(environment.id(), delivery_id, true, true,));
@@ -2179,6 +2291,7 @@ mod tests {
 
     #[test]
     fn unexpected_non_ok_wake_balances_credit_and_closes_without_relocking_barrier() {
+        let _diagnostics_test = lock_unpoisoned(&OUTSTANDING_CALLBACK_DIAGNOSTICS_TEST_LOCK);
         let environment = Arc::new(EnvironmentRecord::new(17));
         environment.mark_running();
         let delivery = DeliveryState::new(&environment);

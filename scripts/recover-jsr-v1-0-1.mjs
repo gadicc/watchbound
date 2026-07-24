@@ -24,6 +24,7 @@ const allowedControllerDelta = [
   ".github/workflows/recover-jsr-v1-0-1.yml",
   "docs/releasing.md",
   "js/test/package-contract.test.js",
+  "scripts/check-registry-packages.mjs",
   "scripts/recover-jsr-v1-0-1.mjs",
   "scripts/semantic-release-watchbound.mjs",
 ].sort();

@@ -12,6 +12,7 @@ const workspaceRoot = path.resolve(
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const evidencePath = path.resolve(options.evidence);
 const projectRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), `watchbound-registry-${options.route}-`),
 );
@@ -52,7 +53,7 @@ try {
     "--route",
     options.route,
     "--evidence",
-    options.evidence,
+    evidencePath,
   ]);
   augmentEvidenceWithInstallLock();
 } catch (error) {
@@ -148,7 +149,6 @@ function writeJson(destination, value) {
 }
 
 function augmentEvidenceWithInstallLock() {
-  const evidencePath = path.resolve(options.evidence);
   const lockPath = path.join(
     projectRoot,
     options.route === "npm" ? "package-lock.json" : "pnpm-lock.yaml",
@@ -165,7 +165,6 @@ function augmentEvidenceWithInstallLock() {
 }
 
 function retainFailureEvidence(error) {
-  const evidencePath = path.resolve(options.evidence);
   if (fs.existsSync(evidencePath)) return;
   const lockPath = path.join(
     projectRoot,

@@ -1,0 +1,197 @@
+name: Recover JSR v1.0.1
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type RECOVER_JSR_1_0_1_FROM_RUN_30116055532
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: watchbound-recover-jsr-v1-0-1
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    name: Recover exact missing JSR v1.0.1
+    if: github.repository == 'gadicc/watchbound'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CARGO_INCREMENTAL: "0"
+      SOURCE_DATE_EPOCH: "0"
+      TZ: UTC
+    steps:
+      - name: Require the exact recovery confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ inputs.confirm }}' = RECOVER_JSR_1_0_1_FROM_RUN_30116055532
+
+      - name: Check out the reviewed recovery controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert controller and immutable release identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse 'v1.0.1^{commit}')" = 744cd8f8d5de4301e148f08e9f3adba230629fd5
+
+      - name: Download the original release plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-release-plan-1
+          path: ${{ runner.temp }}/watchbound-original-plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: 30116055532
+
+      - name: Download the independently approved native artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-1
+          path: ${{ runner.temp }}/watchbound-approved-native
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: 30116055532
+
+      - name: Download the original partial-publication evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-release-evidence-1
+          path: ${{ runner.temp }}/watchbound-original-evidence
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: 30116055532
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.3.0
+        with:
+          node-version: 24.18.0
+          architecture: x64
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Set up exact Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+
+      - name: Normalize embedded Cargo source paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
+
+      - name: Enable exact package-manager versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(pnpm --version)" = 10.33.2
+          npm install --global npm@11.18.0
+
+      - name: Set up exact Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.6.7
+
+      - name: Install the recovery controller from the lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify npm artifacts and publish only missing JSR v1.0.1
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+          WATCHBOUND_CANONICAL_NATIVE_PATH: ${{ runner.temp }}/watchbound-approved-native/watchbound.linux-x64-gnu.node
+          WATCHBOUND_EXPECTED_NATIVE_SHA256: e5cd3e2e66693df59e62df7cb0a5d48a20dfb794393ca4aaa25021a5abebb6e0
+          WATCHBOUND_INDEPENDENT_REPRODUCIBILITY: ${{ runner.temp }}/watchbound-approved-native/independent-reproducibility.json
+          WATCHBOUND_ORIGINAL_PUBLICATION_LEDGER: ${{ runner.temp }}/watchbound-original-evidence/publication-ledger.json
+          WATCHBOUND_ORIGINAL_RELEASE_PLAN: ${{ runner.temp }}/watchbound-original-plan/release-plan.json
+          WATCHBOUND_PLANNED_VERSION: 1.0.1
+          WATCHBOUND_REPRODUCIBLE_OUTPUT: ${{ runner.temp }}/watchbound-original-evidence/same-runner-reproducibility.json
+        run: node scripts/recover-jsr-v1-0-1.mjs
+
+      - name: Smoke exact npm package
+        run: |
+          node scripts/check-registry-packages.mjs \
+            --route npm \
+            --version 1.0.1 \
+            --native-sha256 e5cd3e2e66693df59e62df7cb0a5d48a20dfb794393ca4aaa25021a5abebb6e0 \
+            --evidence dist/evidence/npm-registry-smoke.json
+
+      - name: Smoke exact JSR package through Node
+        run: |
+          node scripts/check-registry-packages.mjs \
+            --route jsr-node \
+            --version 1.0.1 \
+            --native-sha256 e5cd3e2e66693df59e62df7cb0a5d48a20dfb794393ca4aaa25021a5abebb6e0 \
+            --evidence dist/evidence/jsr-node-registry-smoke.json
+
+      - name: Create the missing GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.1 --repo gadicc/watchbound >/dev/null 2>&1; then
+            gh release view v1.0.1 --repo gadicc/watchbound
+          else
+            gh release create v1.0.1 \
+              --repo gadicc/watchbound \
+              --verify-tag \
+              --title v1.0.1 \
+              --generate-notes \
+              "dist/tarballs/gadicc-watchbound-node-1.0.1.tgz#Inspected npm package" \
+              "dist/tarballs/watchbound-1.0.1.tgz#Inspected npm package" \
+              "${{ runner.temp }}/watchbound-original-evidence/SHA256SUMS#SHA-256 package checksums" \
+              "${{ runner.temp }}/watchbound-original-evidence/release-metadata.json#Release build metadata" \
+              "${{ runner.temp }}/watchbound-original-evidence/watchbound-1.0.1.cdx.json#CycloneDX 1.6 SBOM" \
+              "${{ runner.temp }}/watchbound-original-evidence/same-runner-reproducibility.json#Native reproducibility evidence" \
+              "${{ runner.temp }}/watchbound-original-evidence/independent-reproducibility.json#Native reproducibility evidence" \
+              "dist/evidence/publication-ledger.json#Registry publication ledger" \
+              "dist/evidence/npm-registry-smoke.json#npm registry lifecycle smoke" \
+              "dist/evidence/jsr-node-registry-smoke.json#JSR Node lifecycle smoke"
+          fi
+
+      - name: Verify recovered public state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v1.0.1^{commit}')" = 744cd8f8d5de4301e148f08e9f3adba230629fd5
+          gh release view v1.0.1 --repo gadicc/watchbound --json tagName,url,assets
+          node --input-type=module -e '
+            import { jsrPackageExists } from "./scripts/semantic-release-watchbound.mjs";
+            if (!await jsrPackageExists("jsr:@gadicc/watchbound@1.0.1")) {
+              throw new Error("JSR 1.0.1 is not visible");
+            }
+          '
+
+      - name: Retain complete recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-jsr-v1-0-1-recovery-evidence-${{ github.run_attempt }}
+          path: |
+            dist/evidence
+            ${{ runner.temp }}/watchbound-original-plan
+            ${{ runner.temp }}/watchbound-original-evidence
+            ${{ runner.temp }}/watchbound-approved-native/independent-reproducibility.json
+          if-no-files-found: warn
+          retention-days: 90

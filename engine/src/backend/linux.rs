@@ -940,6 +940,11 @@ impl SubscriptionState {
             attachment: RootAttachment::Attached,
             loss_evidence: None,
         };
+        let exclusions = options
+            .initial_exclusions
+            .iter()
+            .map(|prefix| root.join(prefix))
+            .collect();
         Self {
             id,
             root: root.clone(),
@@ -963,7 +968,7 @@ impl SubscriptionState {
             next_sequence: 1,
             exclusion_generation: 0,
             selection_generation: 0,
-            exclusions: BTreeSet::new(),
+            exclusions,
             exclusion_update: None,
             reconciliation: None,
             root_recovery: None,
@@ -1622,7 +1627,11 @@ impl Worker {
                             "a topology transaction is already in progress for this subscription",
                         ))
                     } else {
-                        validate_exclusion_prefixes(&state.root, prefixes)
+                        validate_exclusion_prefixes(
+                            &state.root,
+                            prefixes,
+                            Operation::ReplaceExclusions,
+                        )
                     };
                     match validation {
                         Err(error) => {
@@ -2430,6 +2439,11 @@ impl Worker {
                     continue;
                 };
                 directories += 1;
+                if state.is_excluded(&directory) {
+                    state.remove_deferred_subtree(&directory);
+                    state.topology_jobs.push_front(job);
+                    continue;
+                }
                 let allow_new_native_watch = job.promotion_root.is_none();
                 match self.open_topology_directory(
                     &mut state,
@@ -3389,6 +3403,7 @@ impl Worker {
             .expect("an establishment topology job must own its acknowledgement");
         let result = if !state.watched_paths.contains_key(&state.root)
             && !state.deferred_directories.contains_key(&state.root)
+            && !state.is_excluded(&state.root)
         {
             Err(WatchboundError::new(
                 ErrorCode::RootUnavailable,
@@ -4397,16 +4412,17 @@ fn recoverable_uncertainty(reason: UncertainReason) -> bool {
     )
 }
 
-fn validate_exclusion_prefixes(
+pub(crate) fn validate_exclusion_prefixes(
     root: &Path,
     prefixes: Vec<PathBuf>,
+    operation: Operation,
 ) -> WatchboundResult<BTreeSet<PathBuf>> {
     let mut absolute = BTreeSet::new();
     for prefix in prefixes {
         if prefix.is_absolute() {
             return Err(WatchboundError::new(
                 ErrorCode::InvalidArgument,
-                Operation::ReplaceExclusions,
+                operation,
                 format!(
                     "exclusion prefix must be root-relative: {}",
                     prefix.display()
@@ -4416,7 +4432,7 @@ fn validate_exclusion_prefixes(
         if prefix.as_os_str().as_bytes().contains(&0) {
             return Err(WatchboundError::new(
                 ErrorCode::InvalidArgument,
-                Operation::ReplaceExclusions,
+                operation,
                 "exclusion prefix contains NUL",
             ));
         }
@@ -4430,7 +4446,7 @@ fn validate_exclusion_prefixes(
                 | Component::Prefix(_) => {
                     return Err(WatchboundError::new(
                         ErrorCode::InvalidArgument,
-                        Operation::ReplaceExclusions,
+                        operation,
                         format!(
                             "exclusion prefix is not a normalized root-relative path: {}",
                             prefix.display()
@@ -4442,7 +4458,7 @@ fn validate_exclusion_prefixes(
         if normalized.as_os_str().as_bytes() != prefix.as_os_str().as_bytes() {
             return Err(WatchboundError::new(
                 ErrorCode::InvalidArgument,
-                Operation::ReplaceExclusions,
+                operation,
                 format!("exclusion prefix is not normalized: {}", prefix.display()),
             ));
         }

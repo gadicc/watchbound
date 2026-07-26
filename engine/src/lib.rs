@@ -350,6 +350,9 @@ pub struct ReconciliationResult {
 /// Per-subscription tuning. No application-specific watch limit is implied.
 #[derive(Clone, Debug)]
 pub struct SubscriptionOptions {
+    /// Exact normalized root-relative directory prefixes excluded during
+    /// initial establishment at exclusion generation zero.
+    pub initial_exclusions: Vec<PathBuf>,
     pub watch_limit: Option<usize>,
     pub batch_window: Duration,
     pub max_batch_paths: usize,
@@ -359,6 +362,7 @@ pub struct SubscriptionOptions {
 impl Default for SubscriptionOptions {
     fn default() -> Self {
         Self {
+            initial_exclusions: Vec::new(),
             watch_limit: None,
             batch_window: Duration::from_millis(10),
             max_batch_paths: 1_024,
@@ -407,6 +411,7 @@ pub struct Capabilities {
     pub moved_in_tree_discovery: bool,
     pub explicit_watch_limits: bool,
     pub overflow_reporting: bool,
+    pub initial_exclusions: bool,
     pub dynamic_exclusions: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
@@ -527,6 +532,7 @@ impl Engine {
             moved_in_tree_discovery: true,
             explicit_watch_limits: true,
             overflow_reporting: true,
+            initial_exclusions: true,
             dynamic_exclusions: true,
             reconciliation: true,
             root_replacement_recovery: true,
@@ -616,6 +622,13 @@ impl Engine {
             Ok(root) => root,
             Err(error) => return Err(commit_pre_runtime_failure(&cancellation.shared, error)),
         };
+        if let Err(error) = backend::linux::validate_exclusion_prefixes(
+            &root,
+            options.initial_exclusions.clone(),
+            Operation::Subscribe,
+        ) {
+            return Err(commit_pre_runtime_failure(&cancellation.shared, error));
+        }
         self.begin_subscribe_admitted_root(root, options, cancellation)
     }
 

@@ -344,6 +344,37 @@ test("native exclusion replacement preserves byte prefixes and generation bounda
   }
 });
 
+test("native initial exclusions preserve byte prefixes at generation zero", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-initial-exclusions-"));
+  let subscription;
+  try {
+    const batches = [];
+    const relative = Buffer.from([0x68, 0x69, 0x64, 0x64, 0x65, 0x6e, 0xff]);
+    const directory = Buffer.concat([Buffer.from(`${root}${path.sep}`), relative]);
+    fs.mkdirSync(Buffer.concat([directory, Buffer.from(`${path.sep}deep`)]), {
+      recursive: true,
+    });
+    subscription = await binding.subscribe(
+      root,
+      { initialExclusions: [relative], batchWindowMs: 8 },
+      (batch) => batches.push(batch),
+    );
+
+    assert.equal(binding.capabilities().initialExclusions, true);
+    assert.equal(subscription.exclusionGeneration, 0n);
+    assert.equal(subscription.stats().watchedDirectories, 1);
+    fs.writeFileSync(
+      Buffer.concat([directory, Buffer.from(`${path.sep}deep${path.sep}ignored`)]),
+      "ignored",
+    );
+    await delay(30);
+    assert.equal(batches.length, 0);
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("native reconciliation commits coverage, generation, and a root invalidation", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-reconcile-"));
   let subscription;

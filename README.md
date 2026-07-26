@@ -21,13 +21,15 @@ guard; registry packages are created only in controlled generated trees. The
 establishment and shared-delivery contract tracked as the private `0.2.0`
 revision. It reports `target-pending-clean-ci`; later exact-commit CI qualified
 that implementation baseline, but the immutable bootstrap metadata was not
-rewritten. The `1.0.0` source adds promise-aware callbacks, callback
+rewritten. The `1.0.0` source added promise-aware callbacks, callback
 cancellation context, binding API 3, and capability schema 3. Its source and
 npm packages qualified, but its JSR Node route exposed a normalized-manifest
-incompatibility. The corrected `1.0.1` candidate retains the same public
-contract. Its metadata declares `supported`, but that declaration becomes
-truthful only when the exact candidate commit passes both support lanes; until
-then it is a release candidate, not a qualified release.
+incompatibility. The corrected `1.0.1` package is the current qualified
+release. The `1.1.0` source candidate adds generation-zero
+`initialExclusions` and lowers the Node 24 floor to 24.15 for Electron 42. Its
+`supported` declaration becomes truthful for that widened floor only when the
+exact candidate commit passes both support lanes; until then it is a release
+candidate, not a qualified release.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits to decide whether a release is
@@ -137,6 +139,13 @@ Once `subscribe()` resolves, aborting that signal is a no-op and callers use
 until native success or rollback completes; queued work may therefore delay
 cancellation settlement.
 
+Subscription options may also include `initialExclusions`, an array of exact
+normalized root-relative directory prefixes. These exclusions are installed at
+generation zero before topology traversal, so excluded subtrees are neither
+opened nor assigned logical or native watches during establishment. The empty
+prefix excludes the root. Later `replaceExclusions()` calls advance the
+generation and can re-include any prefix.
+
 Batch callbacks receive a stable frozen context with an `AbortSignal` and
 idempotent `stop(): void`. Explicit disposal aborts that signal and joins an
 already-admitted Promise-like callback; `stop()` requests the same disposal
@@ -157,8 +166,8 @@ consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own a native source build
 and joined-disposal lifecycle. The intended maintained target is only Ubuntu
 24.04, Linux 6.8+ in that support line, x86_64, glibc 2.39, and Node
-`>=24.18.0 <25`, built from source under trusted stable local roots. The
-corrected `1.0.1` declaration is effective only after its exact commit passes
+`>=24.15.0 <25`, built from source under trusted stable local roots. The
+`1.1.0` declaration is effective only after its exact commit passes
 both support lanes. WSL,
 network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, other distributions or architectures, and all
@@ -173,7 +182,9 @@ directories. A cancellable, bounded, invalidation-oriented watcher could fit
 such a preview if the consumer accepts root rescans and explicit partial or
 uncertain coverage. The historical 1,001- and 10,001-directory tmpfs trials do
 not predict that repository's startup, memory, watch count, or cancellation
-latency. This feasibility note does not authorize Codex Desktop integration.
+latency. A later maintainer decision authorized an opt-in Codex Desktop Linux
+integration against the `1.1.0` candidate; this observation still provides no
+performance or release evidence for that integration.
 
 ## Evidence boundaries
 
@@ -206,7 +217,7 @@ inotify backend.
 | Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout; the earlier contract is published as the one-target `0.0.1` npm/JSR bootstrap. The corrected `1.0.1` async candidate qualifies its `supported` declaration only when its exact commit passes both Ubuntu 24.04 lanes and the independent-build comparison | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout; `1.0.1` is the qualified one-target npm/JSR release. The `1.1.0` candidate qualifies its wider Node floor and `supported` declaration only when its exact commit passes both Ubuntu 24.04 lanes and the independent-build comparison | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -292,7 +303,7 @@ and the complete caveats.
 
 ## Build and test
 
-The manifests intentionally admit only Node `>=24.18.0 <25`, Linux x64, and
+The manifests intentionally admit only Node `>=24.15.0 <25`, Linux x64, and
 glibc. The maintained target is Ubuntu 24.04 with Linux 6.8+, glibc
 2.39, Rust 1.88+, pnpm 10.33.2, `build-essential`, and a working C linker; see
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI

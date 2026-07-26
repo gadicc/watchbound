@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - lane: floor
-            node-version: 24.18.0
+            node-version: 24.15.0
             node-check-latest: false
             rust-toolchain: 1.88.0
           - lane: moving
@@ -106,7 +106,7 @@ jobs:
           cargo --version
 
           if test "${{ matrix.lane }}" = floor; then
-            test "$(node --version)" = v24.18.0
+            test "$(node --version)" = v24.15.0
             rustc --version | grep -Eq '^rustc 1\.88\.0 '
           else
             node -e 'if (process.versions.node.split(".")[0] !== "24") process.exit(1)'

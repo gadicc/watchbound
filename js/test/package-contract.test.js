@@ -20,7 +20,7 @@ test("private package manifests match the narrow maintained source-build target"
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
   const { version } = root;
-  assert.equal(version, "1.0.1");
+  assert.equal(version, "1.1.0");
 
   assert.equal(wrapper.name, "watchbound");
   assert.equal(native.name, "@gadicc/watchbound-node");
@@ -30,7 +30,7 @@ test("private package manifests match the narrow maintained source-build target"
     assert.equal(manifest.license, "MIT");
     assert.equal(manifest.author, "Gadi Cohen <dragon@wastelands.net>");
     assert.match(manifest.repository.url, /github\.com\/gadicc\/watchbound/u);
-    assert.deepEqual(manifest.engines, { node: ">=24.18.0 <25" });
+    assert.deepEqual(manifest.engines, { node: ">=24.15.0 <25" });
     assert.equal(manifest.scripts?.preinstall, undefined);
     assert.equal(manifest.scripts?.install, undefined);
     assert.equal(manifest.scripts?.postinstall, undefined);

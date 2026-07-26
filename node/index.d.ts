@@ -75,6 +75,7 @@ export interface JsCapabilities {
   movedInTreeDiscovery: boolean
   explicitWatchLimits: boolean
   overflowReporting: boolean
+  initialExclusions: boolean
   dynamicExclusions: boolean
   reconciliation: boolean
   rootReplacementRecovery: boolean
@@ -191,6 +192,7 @@ export interface JsSubscriptionDefaults {
 }
 
 export interface JsSubscriptionOptions {
+  initialExclusions?: Array<Buffer>
   watchLimit?: number
   batchWindowMs?: number
   maxBatchPaths?: number

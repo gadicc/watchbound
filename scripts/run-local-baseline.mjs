@@ -120,11 +120,11 @@ function assertSupportedNode() {
   assert.equal(
     major,
     24,
-    `local baseline requires Node >=24.18.0 <25, found ${process.version}`,
+    `local baseline requires Node >=24.15.0 <25, found ${process.version}`,
   );
   assert.ok(
-    minor >= 18,
-    `local baseline requires Node >=24.18.0 <25, found ${process.version}`,
+    minor >= 15,
+    `local baseline requires Node >=24.15.0 <25, found ${process.version}`,
   );
 }
 

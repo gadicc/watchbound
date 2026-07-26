@@ -4,11 +4,11 @@ Status: the historical private `0.1.0` revision and the implementation baseline
 carried by the public `0.0.1` bootstrap have exact-commit clean-CI evidence
 recorded below. The immutable bootstrap still reports
 `target-pending-clean-ci`. The `1.0.0` async-callback source passed both release
-lanes and commits a `supported` declaration. The `1.0.1` packaging correction
-retains this intended target, but is not recognized until both lanes qualify
-its exact commit. It is
-not included in `0.0.1`. The registry package bundles only the exact native
-target below; it does not broaden this matrix.
+lanes, and the corrected `1.0.1` package is the qualified current release. The
+`1.1.0` source candidate adds generation-zero initial exclusions and lowers the
+Node 24 floor to 24.15; that wider target is not recognized until both lanes
+qualify its exact commit. The registry package bundles only the exact native
+target declared by its version; it does not broaden this matrix.
 
 ## Qualified and intended target
 
@@ -20,21 +20,23 @@ The target is deliberately narrow:
 | Kernel | Linux 6.8 or newer within the Ubuntu 24.04 support line |
 | C library | glibc 2.39 |
 | Architecture | x86_64 only |
-| Node.js | `>=24.18.0 <25` |
+| Node.js | `>=24.15.0 <25` |
 | Node-API | 6, as an implementation ABI floor rather than a broader support claim |
 | Rust | 1.88 or newer for source builds |
 | Native toolchain | Ubuntu `build-essential` and a working C linker |
 | Package manager | pnpm 10.33.2 |
 | TypeScript validation | TypeScript 6.0.3 |
 
-Support means that a clean controlled source build, native load, tests,
-ordinary conformance, TypeScript fixtures, and environment teardown passed on
-this exact class of host. It does not extend beyond the table.
+Support for a released version means that a clean controlled source build,
+native load, tests, ordinary conformance, TypeScript fixtures, and environment
+teardown passed on its exact declared host. The `1.1.0` Node 24.15 floor remains
+prospective until that candidate's exact-commit gates pass. Support does not
+extend beyond the table.
 
 Historical capability schema version 1 mirrors this table with `supported` for
 the qualified `0.1.0` build. Capability schemas 2 and 3 retain the table, with
-schema 3 adding callback-completion lifecycle facts; the corrected `1.0.1`
-candidate declares `supported` subject to its exact-SHA qualification. The
+schema 3 adding callback-completion lifecycle facts; the `1.1.0` candidate
+declares `supported` subject to its exact-SHA qualification. The
 adjacent `capabilities.runtime`
 section reports the platform, architecture, kernel, libc, Node, and Node-API
 facts observed in the process that loaded the native binary. Those facts are
@@ -45,11 +47,11 @@ change support status or scope.
 
 The qualified model remains Linux-only. Workspace capabilities describe a
 controlled source build. Generated registry packages truthfully describe a
-bundled native package for this same single target. No corrected `1.0.1`
-package may be published unless its commit passes both lanes. No other
+bundled native package for this same single target. No `1.1.0` package may be
+published unless its commit passes both lanes. No other
 distribution, libc, architecture, Node major, or operating system is implied.
 
-The checked-in CI definition has a floor lane for Node 24.18.0 and Rust 1.88.0
+The checked-in CI definition has a floor lane for Node 24.15.0 and Rust 1.88.0
 and a moving lane for the latest Node 24 and stable Rust, both on GitHub's x64
 Ubuntu 24.04 runner. Each lane asserts the target host, performs the controlled
 source build, and runs TypeScript, tests, repository checks, bounded soak/root
@@ -86,8 +88,9 @@ passed both lanes in [CI run 30038218924](https://github.com/gadicc/watchbound/a
 bootstrap implementation baseline, but cannot rewrite the immutable `0.0.1`
 capability value. Release run `30103706249` qualified the exact `1.0.0`
 async-callback source and independent native artifact. The corrected `1.0.1`
-package must independently pass the same lanes before its committed
-`supported` value is recognized.
+package subsequently passed its release gates and is the current qualified
+release. The `1.1.0` source candidate must independently pass the same lanes
+before its wider Node-floor `supported` value is recognized.
 
 The exact commit changing the declared status to `supported` is subject to the
 same two-lane gate. Landing it is not by itself qualification; maintainer
@@ -123,8 +126,8 @@ the native module from its checked-in Rust source, verifies native/wrapper
 contract identity, and then runs the ordinary gate. Runtime installation does
 not silently download, select, or fall back to a prebuild.
 
-All three source package manifests remain private at `1.0.1`, declare MIT licensing
-and Node `>=24.18.0 <25`, and the wrapper/native manifests declare Linux, x64,
+All three source package manifests remain private at `1.1.0`, declare MIT licensing
+and Node `>=24.15.0 <25`, and the wrapper/native manifests declare Linux, x64,
 and glibc. The wrapper depends on the native workspace package by its package
 name rather than reaching across the repository by relative path.
 

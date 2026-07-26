@@ -241,7 +241,10 @@ function inspectCapabilities(): void {
     | "controlled-source-build"
     | "bundled-native-package" = capabilities.build.delivery;
   const prebuilt: boolean = capabilities.build.prebuilt;
-  const nodeRange: ">=24.18.0 <25" = capabilities.support.nodeRange;
+  const nodeRange: ">=24.15.0 <25" = capabilities.support.nodeRange;
+  const initialExclusions: boolean = capabilities.features.initialExclusions;
+  const initialExclusionGeneration: 0 =
+    capabilities.options.subscription.initialExclusions.exclusionGeneration;
   const supportStatus: "pending" | "ready" = (() => {
     switch (capabilities.support.status) {
       case "target-pending-clean-ci":
@@ -280,6 +283,8 @@ function inspectCapabilities(): void {
   void bindingApi;
   void callbackCompletion;
   void callbackMaxInFlight;
+  void initialExclusions;
+  void initialExclusionGeneration;
   void targetTriple;
   void delivery;
   void prebuilt;
@@ -415,6 +420,7 @@ async function usePublicApi(): Promise<void> {
     "/tmp/watchbound-types",
     callback,
     {
+      initialExclusions: ["ignored", new Uint8Array([0x62, 0x75, 0x69, 0x6c, 0x64])],
       watchLimit: 4_096,
       batchWindowMs: 10,
       maxBatchPaths: 1_024,

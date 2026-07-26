@@ -76,6 +76,94 @@ fn wait_for_path(subscription: &Subscription, expected: &Path) -> watchbound_eng
 }
 
 #[test]
+fn initial_exclusions_prune_establishment_at_generation_zero() {
+    let _serial = serial();
+    let root = TestDir::new("initial-exclusions");
+    let visible = root.path().join("visible");
+    let hidden = root.path().join("hidden");
+    fs::create_dir_all(visible.join("deep")).unwrap();
+    fs::create_dir_all(hidden.join("deep")).unwrap();
+    let mut configured = options();
+    configured.initial_exclusions = vec![PathBuf::from("hidden")];
+
+    let subscription = Engine::new().subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.initial_coverage(), &Coverage::Complete);
+    assert_eq!(subscription.exclusion_generation(), 0);
+    assert_eq!(subscription.stats().watched_directories, 3);
+
+    fs::write(hidden.join("deep/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    let changed = visible.join("deep/changed");
+    fs::write(&changed, b"changed").unwrap();
+    assert_eq!(
+        wait_for_path(&subscription, &changed).exclusion_generation,
+        0
+    );
+
+    subscription.replace_exclusions(1, Vec::new()).unwrap();
+    assert_eq!(
+        wait_for_path(&subscription, &hidden).exclusion_generation,
+        1
+    );
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn initial_root_exclusion_establishes_without_watches_and_can_be_removed() {
+    let _serial = serial();
+    let root = TestDir::new("initial-root-exclusion");
+    let child = root.path().join("child");
+    fs::create_dir_all(&child).unwrap();
+    let mut configured = options();
+    configured.initial_exclusions = vec![PathBuf::new()];
+
+    let subscription = Engine::new().subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.initial_coverage(), &Coverage::Complete);
+    assert_eq!(subscription.exclusion_generation(), 0);
+    assert_eq!(subscription.stats().watched_directories, 0);
+
+    fs::write(child.join("ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    subscription.replace_exclusions(1, Vec::new()).unwrap();
+    assert_eq!(
+        wait_for_path(&subscription, root.path()).exclusion_generation,
+        1
+    );
+    assert_eq!(subscription.stats().watched_directories, 2);
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn invalid_initial_exclusions_fail_before_runtime_acquisition() {
+    let _serial = serial();
+    let root = TestDir::new("invalid-initial-exclusions");
+    let engine = Engine::new();
+    let mut configured = options();
+    configured.initial_exclusions = vec![PathBuf::from("../outside")];
+
+    let error = match engine.subscribe(root.path(), configured) {
+        Ok(subscription) => {
+            subscription.dispose().unwrap();
+            panic!("invalid initial exclusions unexpectedly established")
+        }
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), ErrorCode::InvalidArgument);
+    assert_eq!(error.operation(), Operation::Subscribe);
+    assert_eq!(engine.runtime_stats(), Default::default());
+}
+
+#[test]
 fn generation_zero_is_visible_on_initial_state_and_batches() {
     let _serial = serial();
     let root = TestDir::new("exclusion-generation-zero");

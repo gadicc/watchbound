@@ -8,7 +8,10 @@ artifact upload, or consumer integration. The maintainer separately approved
 the `0.0.1` npm/JSR bootstrap. Semantic-release is wired to `main`, but later
 publication still requires an explicit maintainer merge or push, a
 release-worthy Conventional Commit, and completion of the distribution gates
-below. Bootstrap publication does not authorize consumer integration.
+below. Bootstrap publication does not itself authorize consumer integration.
+The maintainer has since separately authorized the opt-in Codex Desktop Linux
+integration recorded in `docs/architecture.md`; it remains gated on the exact
+`1.1.0` release qualification and consumer-side artifact pinning.
 
 ## Ownership
 
@@ -25,10 +28,12 @@ per-environment delivery. The public registry line reset with a `0.0.1`
 bootstrap package containing that revision; later public versions are owned by
 semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
 although a later exact commit qualified its implementation baseline. The
-corrected `1.0.1` source candidate retains promise-aware callbacks, callback
-cancellation context, binding API 3, and capability schema 3. It commits a
-`supported` declaration that becomes effective only when its exact commit
-passes both qualification lanes. The repository targets the narrow host in
+corrected `1.0.1` package is the current release. The `1.1.0` source candidate
+adds generation-zero initial exclusions and a Node 24.15 floor while retaining
+promise-aware callbacks, binding API 3, and capability schema 3. Its
+`supported` declaration for the widened floor becomes effective only when its
+exact commit passes both qualification lanes. The repository targets the narrow
+host in
 `support-matrix.md`; bootstrap publication must not imply a broader
 compatibility promise.
 

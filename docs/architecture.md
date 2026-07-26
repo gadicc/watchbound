@@ -8,13 +8,18 @@ plus explicit identity-policy-gated root replacement recovery, cancellable
 establishment, bounded per-environment native-to-Node delivery, and
 promise-aware serialized callbacks. The earlier contract is published as the
 `0.0.1` npm/JSR bootstrap. The `1.0.0` callback source qualified and was
-published, but its JSR Node route exposed a packaging incompatibility; the
-corrected `1.0.1` candidate requires its own exact-commit qualification. No
-product integration has been authorized.
+published, but its JSR Node route exposed a packaging incompatibility. The
+corrected `1.0.1` package is qualified, while the `1.1.0` initial-exclusion and
+Node-floor candidate requires its own exact-commit qualification. An opt-in
+Codex Desktop Linux integration has now been authorized and implemented against
+local candidate artifacts; it must not merge or ship until the exact `1.1.0`
+release artifacts pass qualification and are pinned by that consumer.
 
-The subsequent consumer/API audit recommends a maintained unpublished package,
-conditional on named ownership and a narrow support target, but explicitly
-does not authorize packaging, publishing, prebuilds, or integration. See
+The subsequent consumer/API audit originally recommended a maintained
+unpublished package, conditional on named ownership and a narrow support
+target. That historical decision did not authorize packaging, publishing,
+prebuilds, or integration; the later `1.0.x` releases and the authorized Codex
+integration supersede those portions without widening the support target. See
 `docs/consumer-api-stabilization.md`.
 
 ## Decision
@@ -422,7 +427,7 @@ and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded the
 single native binary, not evidence that the host is supported. The separate
-`support` section declares `supported` for corrected `1.0.1`; that declaration
+`support` section declares `supported` for `1.1.0`; that declaration
 becomes effective only when the same exact commit is qualified for the narrow
 controlled source-build target in `support-matrix.md`. Matching facts do not
 widen that fixed target and nonmatching facts do not broaden it.
@@ -493,8 +498,11 @@ of that name is created. Redundant duplicate or descendant prefixes are folded
 to their equivalent minimal set. There is no filesystem canonicalization and no
 UTF-8 conversion.
 
-Generation zero denotes the initial empty exclusion set. A requested generation
-may skip values but must be greater than the committed value. Duplicate, stale,
+Generation zero denotes the exclusion set supplied by
+`SubscriptionOptions.initialExclusions`, which defaults to empty. The set is
+validated before runtime acquisition and applied before establishment
+traversal. A requested generation may skip values but must be greater than the
+committed value. Duplicate, stale,
 and lower values fail with `WATCHBOUND_INVALID_ARGUMENT`; a second call while
 one transaction is active fails with
 `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`. Failed validation or a rejected
@@ -809,8 +817,8 @@ conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
 The intended maintained target is the narrow Ubuntu 24.04, Linux
-6.8+, x86_64, glibc 2.39, Node `>=24.18.0 <25` controlled source build on
-trusted stable local roots in `docs/support-matrix.md`. The corrected `1.0.1`
+6.8+, x86_64, glibc 2.39, Node `>=24.15.0 <25` controlled source build on
+trusted stable local roots in `docs/support-matrix.md`. The `1.1.0`
 declaration is effective only after exact-commit release qualification. WSL, network filesystems,
 Filesystem in Userspace (FUSE), overlay filesystems, unusual container mounts,
 musl, other distributions and architectures, and non-Linux platforms are
@@ -825,8 +833,10 @@ resource use, and this repository retains no mapping from those calls to unique
 paths or directories. The first-milestone 1,001- and 10,001-directory tmpfs
 measurements cannot be extrapolated to that repository, persistent storage,
 Electron UI latency, or cancellation time. Cancellable establishment and
-bounded delivery make the transient preview shape worth evaluating, but this
-record does not authorize Codex Desktop integration.
+bounded delivery made the transient preview shape worth evaluating. The later
+maintainer decision recorded at the start of this document authorizes the
+opt-in Codex integration, without turning these historical measurements into
+performance or release evidence for it.
 
 ## Binding decision
 

@@ -44,7 +44,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.15.0
           architecture: x64
           package-manager-cache: false
 
@@ -135,7 +135,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.15.0
           architecture: x64
           package-manager-cache: false
 
@@ -157,7 +157,7 @@ jobs:
           test "$(uname -s)" = Linux
           test "$(uname -m)" = x86_64
           test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.39"
-          test "$(node --version)" = v24.18.0
+          test "$(node --version)" = v24.15.0
 
       - name: Enable isolated pinned pnpm
         shell: bash
@@ -297,7 +297,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.15.0
           architecture: x64
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
@@ -389,7 +389,7 @@ jobs:
       - name: Set up exact supported Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.15.0
           architecture: x64
           package-manager-cache: false
 
@@ -402,7 +402,7 @@ jobs:
           test "$VERSION_ID" = 24.04
           test "$(uname -m)" = x86_64
           test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.39"
-          test "$(node --version)" = v24.18.0
+          test "$(node --version)" = v24.15.0
 
       - name: Enable exact package-manager versions
         shell: bash

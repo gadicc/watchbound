@@ -29,7 +29,7 @@ selected package version exports the capability.
 
 Treat the maintained target as deliberately narrow. At the time represented by
 this skill it is Ubuntu 24.04, Linux 6.8 or newer in that support line, x64,
-glibc 2.39, and Node `>=24.18.0 <25`. Treat WSL, network filesystems, FUSE,
+glibc 2.39, and Node `>=24.15.0 <25`. Treat WSL, network filesystems, FUSE,
 overlay filesystems, musl, other distributions or architectures, and
 non-Linux hosts as unqualified unless the selected package explicitly says
 otherwise.
@@ -89,6 +89,7 @@ const subscription = await subscribe(
   },
   {
     signal: establishmentAbortController.signal,
+    initialExclusions: [".git", "node_modules"],
     watchLimit: 50_000,
     maxBatchPaths: 2_048,
     outputQueueCapacity: 8,
@@ -104,6 +105,12 @@ try {
 
 Treat those option values as examples. Read accepted bounds and defaults from
 `capabilities.options` for the selected build.
+
+Use `initialExclusions` when excluded directories are already known before
+subscription. Prefixes are exact normalized root-relative directory paths, not
+globs or basenames, and are applied before the generation-zero topology scan.
+An empty prefix excludes the root. Watchbound does not discover Git ignores or
+application policy; consumers must compute and update that complete prefix set.
 
 Check `initialCoverage` immediately after establishment. Use ordered callback
 batches as the authoritative JavaScript observation boundary.

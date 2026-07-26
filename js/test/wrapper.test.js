@@ -332,6 +332,60 @@ test("wrapper replaces exclusions atomically and validates its representation", 
   }
 });
 
+test("wrapper applies exact exclusions during initial establishment", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-initial-exclusions-"));
+  const visible = path.join(root, "visible");
+  const hidden = path.join(root, "hidden");
+  fs.mkdirSync(path.join(visible, "deep"), { recursive: true });
+  fs.mkdirSync(path.join(hidden, "deep"), { recursive: true });
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await subscribe(root, (batch) => batches.push(batch), {
+      initialExclusions: ["hidden"],
+      batchWindowMs: 8,
+    });
+
+    assert.equal(capabilities.features.initialExclusions, true);
+    assert.equal(subscription.exclusionGeneration, 0n);
+    assert.equal(subscription.stats().watchedDirectories, 3);
+    fs.writeFileSync(path.join(hidden, "deep", "ignored"), "ignored");
+    await delay(30);
+    assert.equal(batches.length, 0);
+
+    const changed = path.join(visible, "deep", "changed");
+    fs.writeFileSync(changed, "changed");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(changed)),
+      "visible change was not delivered after initial exclusion establishment",
+    );
+    assert.ok(batches.every((batch) => batch.exclusionGeneration === 0n));
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wrapper rejects malformed initial exclusions before establishment", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-invalid-initial-exclusions-"));
+  try {
+    await assert.rejects(
+      subscribe(root, () => {}, { initialExclusions: null }),
+      /exclusion prefixes must be an array/u,
+    );
+    await assert.rejects(
+      subscribe(root, () => {}, { initialExclusions: [42] }),
+      /each exclusion prefix must be a string or Uint8Array/u,
+    );
+    await assert.rejects(
+      subscribe(root, () => {}, { initialExclusions: ["../outside"] }),
+      /normalized/u,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("wrapper reconciles in place under the committed exclusion generation", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-reconcile-"));
   let subscription;

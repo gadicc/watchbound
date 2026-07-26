@@ -3,9 +3,9 @@
 Status: selected for controlled source builds and the one-target public
 bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
 baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
-source qualified; the corrected `1.0.1` package declares `supported`, with that
-declaration effective only after the exact candidate commit passes both clean
-support lanes and the independent-builder comparison.
+source qualified, and the corrected `1.0.1` package is the current release.
+The `1.1.0` source candidate adds generation-zero initial exclusions and a
+Node 24.15 floor; that widened target requires exact-commit qualification.
 
 ## Choice
 
@@ -97,7 +97,7 @@ The one native binary loaded into the process exposes metadata schema version 1:
 native and engine versions, binding API version 3, Node-API 6, target triple,
 and build profile. Its raw capability schema is version 3 and also provides
 establishment-cancellation, shared-delivery, and callback-completion facts
-alongside feature flags,
+alongside feature flags, including generation-zero initial exclusions,
 Rust subscription defaults, the shared positive-`u32` option bounds, process
 budgeting, and shared-native-watch support. The wrapper combines those values
 with its own version, runtime facts, the approved support target, automatic
@@ -108,7 +108,7 @@ JSON-serializable. Under `schemaVersion: 3`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
-The corrected `1.0.1` metadata declares `support.status: "supported"`; the
+The `1.1.0` metadata declares `support.status: "supported"`; the
 release workflow qualifies that exact status-bearing commit, so no later
 status-only commit is required. Current process facts never broaden the fixed
 target.
@@ -163,6 +163,12 @@ The engine captures `initial_coverage` and `initial_root_state` in one
 establishment acknowledgement. Node exposes them as `initialCoverage` and
 `initialRootState`, and the JavaScript wrapper normalizes them into its immutable
 sequence-zero, exclusion-generation-zero, root-generation-zero baseline.
+
+The wrapper accepts `initialExclusions` as exact string or `Uint8Array`
+prefixes and encodes them into raw Node `Buffer` values. Native validation
+occurs before runtime acquisition; the engine applies the complete set before
+opening topology directories, so excluded subtrees consume no establishment
+watches. The set is part of the sequence-zero baseline.
 
 The wrapper accepts `signal?: AbortSignal` for establishment only. After pure
 argument validation it creates one native single-bind cancellation token,

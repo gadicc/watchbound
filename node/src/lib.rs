@@ -232,6 +232,7 @@ fn sync_error(env: &Env, error: NodeErrorDetails) -> Error {
 
 #[napi(object)]
 pub struct JsSubscriptionOptions {
+    pub initial_exclusions: Option<Vec<Buffer>>,
     pub watch_limit: Option<f64>,
     pub batch_window_ms: Option<f64>,
     pub max_batch_paths: Option<f64>,
@@ -258,6 +259,12 @@ impl JsSubscriptionOptions {
             .map(|value| positive_u32_option(value, "outputQueueCapacity", Operation::Subscribe))
             .transpose()?;
         Ok(SubscriptionOptions {
+            initial_exclusions: self
+                .initial_exclusions
+                .unwrap_or_default()
+                .into_iter()
+                .map(|prefix| PathBuf::from(std::ffi::OsString::from_vec(prefix.to_vec())))
+                .collect(),
             watch_limit: watch_limit.map(|value| value as usize),
             batch_window: batch_window_ms.map_or(defaults.batch_window, |value| {
                 Duration::from_millis(u64::from(value))
@@ -529,6 +536,7 @@ pub struct JsCapabilities {
     pub moved_in_tree_discovery: bool,
     pub explicit_watch_limits: bool,
     pub overflow_reporting: bool,
+    pub initial_exclusions: bool,
     pub dynamic_exclusions: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
@@ -561,6 +569,7 @@ pub fn capabilities() -> JsCapabilities {
         moved_in_tree_discovery: capabilities.moved_in_tree_discovery,
         explicit_watch_limits: capabilities.explicit_watch_limits,
         overflow_reporting: capabilities.overflow_reporting,
+        initial_exclusions: capabilities.initial_exclusions,
         dynamic_exclusions: capabilities.dynamic_exclusions,
         reconciliation: capabilities.reconciliation,
         root_replacement_recovery: capabilities.root_replacement_recovery,

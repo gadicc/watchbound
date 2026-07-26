@@ -68,7 +68,7 @@ const commonMetadata = {
   },
   license: "MIT",
   engines: {
-    node: ">=24.18.0 <25",
+    node: ">=24.15.0 <25",
   },
   os: ["linux"],
   cpu: ["x64"],

@@ -202,16 +202,9 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
               "prefixes must be an array of strings or Uint8Array values",
             );
           }
-          const encoded = invokeWatchbound(
+          const encoded = encodeExclusionPrefixes(
+            prefixes,
             "replace-exclusions",
-            () => prefixes.map((prefix) => {
-              if (typeof prefix === "string") return Buffer.from(prefix);
-              if (prefix instanceof Uint8Array) return Buffer.from(prefix);
-              throw invalidArgumentError(
-                "replace-exclusions",
-                "each exclusion prefix must be a string or Uint8Array",
-              );
-            }),
           );
           return invokeWatchbound(
             "replace-exclusions",
@@ -255,12 +248,19 @@ function readSubscriptionOption(options, name) {
 }
 
 function copyNativeSubscriptionOptions(options) {
+  let initialExclusions;
+  let hasInitialExclusions = false;
+  const nativeOptions = {};
   try {
-    const nativeOptions = {};
     for (const key of Reflect.ownKeys(options)) {
       if (key === "automaticReconciliation") continue;
       const descriptor = Object.getOwnPropertyDescriptor(options, key);
       if (!descriptor?.enumerable) continue;
+      if (key === "initialExclusions") {
+        initialExclusions = options[key];
+        hasInitialExclusions = true;
+        continue;
+      }
       Object.defineProperty(nativeOptions, key, {
         value: options[key],
         configurable: true,
@@ -268,13 +268,39 @@ function copyNativeSubscriptionOptions(options) {
         writable: true,
       });
     }
-    return nativeOptions;
   } catch {
     throw invalidArgumentError(
       "subscribe",
       "subscription option properties could not be read",
     );
   }
+  if (hasInitialExclusions && initialExclusions !== undefined) {
+    nativeOptions.initialExclusions = encodeExclusionPrefixes(
+      initialExclusions,
+      "subscribe",
+    );
+  }
+  return nativeOptions;
+}
+
+function encodeExclusionPrefixes(prefixes, operation) {
+  if (!Array.isArray(prefixes)) {
+    throw invalidArgumentError(
+      operation,
+      "exclusion prefixes must be an array of strings or Uint8Array values",
+    );
+  }
+  return invokeWatchbound(
+    operation,
+    () => prefixes.map((prefix) => {
+      if (typeof prefix === "string") return Buffer.from(prefix);
+      if (prefix instanceof Uint8Array) return Buffer.from(prefix);
+      throw invalidArgumentError(
+        operation,
+        "each exclusion prefix must be a string or Uint8Array",
+      );
+    }),
+  );
 }
 
 function createNativeCallback(weakCallbackHolder, resolvedRoot) {

@@ -73,6 +73,14 @@ The final cleanup retry does not replace an already authoritative native error
 or cancellation result. A substitute that lies about removal can retain a
 no-op listener that the wrapper cannot forcibly detach.
 
+`initialExclusions` is copied and exact-byte encoded during the same
+synchronous preparation. The complete prefix set is validated before runtime
+acquisition and installed at exclusion generation zero before any topology
+directory is opened. Excluded subtrees therefore consume neither logical
+interests nor native watches during establishment. The empty prefix excludes
+the root without making that root unavailable; a later exclusion replacement
+can re-include it.
+
 The terminal order and race rules are:
 
 1. JavaScript representation and numeric-option errors precede the initial
@@ -199,7 +207,7 @@ has these top-level sections:
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Manifest-derived delivery: source workspaces report `controlled-source-build` and `prebuilt: false`; generated registry packages report `bundled-native-package` and `prebuilt: true`. Both include build profile, target triple, Node-API 6, and Rust 1.88 minimum. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.18.0 <25`, Rust 1.88+, pnpm 10.33.2 target under trusted stable local roots, plus the same manifest-derived delivery identity. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; corrected `1.0.1` emits `supported`, effective only after that exact commit passes the release qualification gates. |
+| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.15.0 <25`, Rust 1.88+, pnpm 10.33.2 target under trusted stable local roots, plus the same manifest-derived delivery identity. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; `1.1.0` emits `supported`, effective for its wider Node floor only after that exact commit passes the release qualification gates. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, single-credit admission, and callback completion/error/disposal/teardown policy. |
@@ -209,7 +217,7 @@ The exact identity leaves are `versions.{wrapper,native,engine,bindingApi}`,
 `runtime.{platform,architecture,kernel,libc:{family,version},node:{version,api}}`.
 Feature booleans are `recursive`, `movedInTreeDiscovery`,
 `explicitWatchLimits`, `processNativeWatchBudget`, `sharedNativeWatches`,
-`overflowReporting`, `dynamicExclusions`, `reconciliation`,
+`overflowReporting`, `initialExclusions`, `dynamicExclusions`, `reconciliation`,
 `automaticReconciliation`, `rootReplacementRecovery`, `exactPathBytes`,
 `orderedBatches`, `observedState`, `cancellableEstablishment`, and
 `sharedNodeDelivery`.
@@ -221,6 +229,9 @@ only from the exact-commit clean CI recorded in `support-matrix.md`.
 Positive JavaScript options crossing the native boundary share bounds 1 through
 `2^32 - 1`. `options.engine.nativeWatchBudget` defaults to `null`, has scope
 `process-runtime`, and accounts `unique-native-watches`;
+`options.subscription.initialExclusions` defaults to `[]`, accepts exact-byte
+normalized root-relative directory prefixes, and is committed at exclusion
+generation zero during subscription establishment;
 `options.subscription.watchLimit` defaults to `null`, has scope `subscription`,
 and accounts `logical-directories`. Other subscription defaults are 10 ms
 `batchWindowMs`, 1,024 `maxBatchPaths`, and 64 queued batches.
@@ -409,10 +420,14 @@ by the acknowledgement. `exclusion_generation()` reports the last acknowledged
 value. The Node proof exposes the same operation asynchronously with `Buffer`
 prefixes and bigint generations. The JavaScript wrapper accepts strings or
 `Uint8Array`s and exposes a live bigint `exclusionGeneration` getter. The
-wrapper reports this as `capabilities.features.dynamicExclusions`; the Rust and
-raw Node capability records expose the corresponding native feature.
+wrapper reports initial establishment filtering as
+`capabilities.features.initialExclusions` and later replacement as
+`capabilities.features.dynamicExclusions`; the Rust and raw Node capability
+records expose the corresponding native features.
 
-Each call supplies the complete replacement set. Prefixes are normalized,
+`SubscriptionOptions.initialExclusions` supplies the complete generation-zero
+set before traversal. Each later call supplies the complete replacement set.
+Prefixes are normalized,
 root-relative directory namespaces and are compared using exact Linux bytes.
 The empty prefix denotes the root; `.` is non-normal and rejected. Absolute,
 parent-traversing, repeated-separator, trailing-separator, and NUL-containing
@@ -655,8 +670,8 @@ the more useful contract for those needs when its public loss and resource
 model is acceptable.
 
 The intended maintained target is limited to the controlled Ubuntu
-24.04, Linux 6.8+, x86_64, glibc 2.39, Node `>=24.18.0 <25` source build under
-trusted stable local roots. Corrected `1.0.1` declares `supported`, effective
+24.04, Linux 6.8+, x86_64, glibc 2.39, Node `>=24.15.0 <25` source build under
+trusted stable local roots. The `1.1.0` candidate declares `supported`, effective
 only after that exact commit passes both clean support lanes and the
 independent-builder comparison. Node-API compatibility or successful loading does
 not widen that matrix. WSL, network filesystems, Filesystem in Userspace

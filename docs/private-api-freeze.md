@@ -2,11 +2,12 @@
 
 Status: the private `0.2.0` contract is carried by the published public `0.0.1`
 bootstrap. Its later documentation commit passed both support lanes, although
-the immutable bootstrap still emits `target-pending-clean-ci`. The prospective
-`1.0.0` source candidate postdates that package: it adds the promise-aware
-callback contract, binding API 3, and capability schema 3, and remains
-unpublished. It declares `supported`; that declaration is effective only after
-the same exact commit passes the release qualification gates.
+the immutable bootstrap still emits `target-pending-clean-ci`. Releases
+`1.0.0` and `1.0.1` added and then corrected the promise-aware callback
+contract. The `1.1.0` source candidate adds generation-zero initial exclusions
+and widens the declared Node 24 range down to 24.15. Its `supported`
+declaration for that target is effective only after the exact commit passes the
+release qualification gates.
 
 The exact private `0.1.0` freeze and its support declaration remain the
 historical first qualified baseline.
@@ -40,6 +41,12 @@ native attempt. Later cancellation removes attempt-owned interests and watches,
 preserves shared peers, joins final runtime shutdown when applicable, and
 rejects with non-retryable `WATCHBOUND_OPERATION_CANCELLED`. Once subscribe
 resolves, abort is a no-op and explicit disposal owns the established lifetime.
+
+`SubscriptionOptions.initialExclusions` supplies the complete initial set of
+exact normalized root-relative directory prefixes. It is validated before
+runtime acquisition and committed at exclusion generation zero before topology
+traversal, so excluded directories are not opened or watched during
+establishment. The empty prefix excludes the root.
 
 ## Observation and callback authority
 
@@ -122,8 +129,8 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; the corrected `1.0.1` candidate
-emits `supported`. Exhaustive narrowing fixtures compile in the
+`target-pending-clean-ci` and `supported`; the `1.1.0` candidate emits
+`supported`. Exhaustive narrowing fixtures compile in the
 ordinary gate. Capability schema 3 and binding API 3 expose cancellation,
 shared-delivery, and promise-aware callback-completion facts; loader metadata
 remains schema 1.
@@ -153,7 +160,7 @@ enter afterward.
 
 The intended maintained target remains a controlled source build on Ubuntu 24.04
 x86_64, Linux 6.8 or newer within that support line, glibc 2.39, Node
-`>=24.18.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
+`>=24.15.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
 pnpm 10.33.2, and a working Ubuntu C toolchain under trusted stable local roots.
 The status-bearing candidate commit must itself pass both clean support lanes
 and independent-builder comparison; the target description or a successful

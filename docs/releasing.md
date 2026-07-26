@@ -14,7 +14,7 @@ parallel on GitHub's Ubuntu 24.04 x64 runner:
 
 | Lane | Node | Rust | Purpose |
 | --- | --- | --- | --- |
-| floor | 24.18.0 | 1.88.0 | Exact minimum supported toolchain |
+| floor | 24.15.0 | 1.88.0 | Exact minimum supported toolchain |
 | moving | latest 24.x | latest stable | Early warning inside the declared ranges |
 
 Both lanes assert Ubuntu 24.04, Linux x86_64, glibc 2.39, the kernel floor,
@@ -232,7 +232,7 @@ action `npm publish`. Verify both relationships with
 `npm trust list <package>`, require 2FA, and disallow token publishing.
 
 npm trusted publishing requires npm 11.5.1+ and Node 22.14.0+. The workflow
-pins Node 24.18.0 and npm 11.18.0. Publisher fields are exact and
+pins Node 24.15.0 and npm 11.18.0. Publisher fields are exact and
 case-sensitive, and both published manifests identify the public
 `https://github.com/gadicc/watchbound` repository.
 

@@ -302,6 +302,11 @@ export type RootRecoveryResult =
 
 /** Options for establishing a recursive subscription. */
 export interface SubscriptionOptions {
+  /**
+   * Exact normalized root-relative directory prefixes excluded during initial
+   * establishment at exclusion generation zero.
+   */
+  initialExclusions?: readonly (string | Uint8Array)[];
   /** Maximum logical directories covered by this subscription. */
   watchLimit?: number;
   /** Milliseconds used to coalesce native events into a batch. */
@@ -491,7 +496,7 @@ export interface Capabilities {
     };
     readonly architecture: "x64";
     readonly libc: { readonly family: "glibc"; readonly version: "2.39" };
-    readonly nodeRange: ">=24.18.0 <25";
+    readonly nodeRange: ">=24.15.0 <25";
     readonly rustMinimum: "1.88";
     readonly packageManager: "pnpm@10.33.2";
     readonly delivery: WatchboundPackageDelivery;
@@ -505,6 +510,7 @@ export interface Capabilities {
     readonly processNativeWatchBudget: boolean;
     readonly sharedNativeWatches: boolean;
     readonly overflowReporting: boolean;
+    readonly initialExclusions: boolean;
     readonly dynamicExclusions: boolean;
     readonly reconciliation: boolean;
     readonly automaticReconciliation: boolean;
@@ -524,6 +530,7 @@ export interface Capabilities {
       >;
     };
     readonly subscription: {
+      readonly initialExclusions: InitialExclusionsOptionCapability;
       readonly watchLimit: NullableIntegerOptionCapability<
         "subscription",
         "logical-directories"
@@ -572,6 +579,22 @@ export interface Capabilities {
     readonly deliveryDispatcherWorkQuantum: 64;
     readonly deliveryDispatcherPollMilliseconds: 5;
   };
+}
+
+/** Metadata for subscribe-time exact directory-prefix exclusions. */
+export interface InitialExclusionsOptionCapability {
+  /** Accepted option form. */
+  readonly type: "directory-prefix-array";
+  /** Default initial exclusion set. */
+  readonly default: readonly [];
+  /** Lifecycle phase that consumes the option. */
+  readonly scope: "subscription-establishment";
+  /** Prefix comparison preserves exact Linux path bytes. */
+  readonly matching: "exact-bytes";
+  /** Prefixes must be normalized and relative to the watched root. */
+  readonly paths: "normalized-root-relative";
+  /** Initial exclusions are committed at generation zero. */
+  readonly exclusionGeneration: 0;
 }
 
 /** Default, minimum, and maximum values for an integer option. */

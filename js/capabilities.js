@@ -22,6 +22,7 @@ export function buildCapabilities(native, metadata) {
   if (
     native.cancellableEstablishment !== true ||
     native.sharedNodeDelivery !== true ||
+    native.initialExclusions !== true ||
     native.nativeCallbackQueueCapacity !== 1 ||
     native.deliveryDispatcherScope !== "node-environment" ||
     native.deliveryAdmission !== "single-credit" ||
@@ -69,7 +70,7 @@ export function buildCapabilities(native, metadata) {
       },
       architecture: "x64",
       libc: { family: "glibc", version: "2.39" },
-      nodeRange: ">=24.18.0 <25",
+      nodeRange: ">=24.15.0 <25",
       rustMinimum: "1.88",
       packageManager: "pnpm@10.33.2",
       delivery: WRAPPER_DELIVERY,
@@ -82,6 +83,7 @@ export function buildCapabilities(native, metadata) {
       processNativeWatchBudget: native.processNativeWatchBudget,
       sharedNativeWatches: native.sharedNativeWatches,
       overflowReporting: native.overflowReporting,
+      initialExclusions: native.initialExclusions,
       dynamicExclusions: native.dynamicExclusions,
       reconciliation: native.reconciliation,
       automaticReconciliation: true,
@@ -103,6 +105,14 @@ export function buildCapabilities(native, metadata) {
         ),
       },
       subscription: {
+        initialExclusions: {
+          type: "directory-prefix-array",
+          default: [],
+          scope: "subscription-establishment",
+          matching: "exact-bytes",
+          paths: "normalized-root-relative",
+          exclusionGeneration: 0,
+        },
         watchLimit: nullableIntegerOption(
           "subscription",
           "logical-directories",

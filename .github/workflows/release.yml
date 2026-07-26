@@ -3,6 +3,27 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact lowercase 40-character candidate commit SHA
+        required: true
+        type: string
+      scenario:
+        description: Run exactly one forced-overflow qualification scenario
+        required: true
+        type: choice
+        options:
+          - overflow-reconciliation
+          - automatic-overflow-reconciliation
+      attempt:
+        description: Positive scenario attempt; retries require a reviewed new dispatch
+        required: true
+        type: string
+      acknowledgement:
+        description: Type I ACKNOWLEDGE FORCED OVERFLOW <scenario> ATTEMPT <n>
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,8 +33,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  plan:
-    name: Plan exact candidate
+  release-plan:
+    name: Plan exact release candidate
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -66,17 +88,112 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  qualification-plan:
+    name: Plan exact read-only qualification
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      qualify: ${{ steps.plan.outputs.qualify }}
+      will-release: ${{ steps.plan.outputs.will-release }}
+      version: ${{ steps.plan.outputs.version }}
+      source-sha: ${{ steps.plan.outputs.source-sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+      source: ${{ steps.matrix.outputs.source }}
+      build: ${{ steps.matrix.outputs.build }}
+      qualification: ${{ steps.matrix.outputs.qualification }}
+      registry: ${{ steps.matrix.outputs.registry }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Validate one-shot forced-overflow approval
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          SCENARIO: ${{ inputs.scenario }}
+          ATTEMPT: ${{ inputs.attempt }}
+          ACKNOWLEDGEMENT: ${{ inputs.acknowledgement }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node scripts/validate-overflow-dispatch.mjs \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --workflow-sha "$WORKFLOW_SHA" \
+            --checked-out-sha "$(git rev-parse HEAD)" \
+            --scenario "$SCENARIO" \
+            --attempt "$ATTEMPT" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --acknowledgement "$ACKNOWLEDGEMENT" \
+            --output "$RUNNER_TEMP/qualification-dispatch.json"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - id: matrix
+        run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
+      - id: plan
+        run: >-
+          node scripts/plan-release.mjs
+          --mode qualification
+          --output "$RUNNER_TEMP/qualification-plan.json"
+          --github-output "$GITHUB_OUTPUT"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-qualification-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/qualification-dispatch.json
+            ${{ runner.temp }}/qualification-plan.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  plan:
+    name: Select exact candidate plan
+    needs: [release-plan, qualification-plan]
+    if: >-
+      always() &&
+      (needs.release-plan.result == 'success' ||
+      needs.qualification-plan.result == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      qualify: ${{ needs.release-plan.outputs.qualify || needs.qualification-plan.outputs.qualify }}
+      will-release: ${{ needs.release-plan.outputs.will-release || needs.qualification-plan.outputs.will-release }}
+      version: ${{ needs.release-plan.outputs.version || needs.qualification-plan.outputs.version }}
+      source-sha: ${{ needs.release-plan.outputs.source-sha || needs.qualification-plan.outputs.source-sha }}
+      tag: ${{ needs.release-plan.outputs.tag || needs.qualification-plan.outputs.tag }}
+      source: ${{ needs.release-plan.outputs.source || needs.qualification-plan.outputs.source }}
+      build: ${{ needs.release-plan.outputs.build || needs.qualification-plan.outputs.build }}
+      qualification: ${{ needs.release-plan.outputs.qualification || needs.qualification-plan.outputs.qualification }}
+      registry: ${{ needs.release-plan.outputs.registry || needs.qualification-plan.outputs.registry }}
+    steps:
+      - run: echo "Selected the successful exact-candidate plan."
+
   tests:
     name: Qualify exact release source
     needs: plan
+    if: github.event_name == 'push' || needs.plan.outputs.qualify == 'true'
     uses: ./.github/workflows/ci.yml
+    with:
+      candidate_sha: ${{ needs.plan.outputs.source-sha }}
     permissions:
       contents: read
 
   repro-build:
     name: Reproduce ${{ matrix.target }} (${{ matrix.builder }})
     needs: plan
-    if: needs.plan.outputs.will-release == 'true'
+    if: needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -154,7 +271,7 @@ jobs:
   repro-compare:
     name: Compare independent ${{ matrix.target }} outputs
     needs: [plan, repro-build]
-    if: needs.plan.outputs.will-release == 'true'
+    if: needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -195,7 +312,7 @@ jobs:
   aggregate:
     name: Aggregate reproducible target matrix
     needs: [plan, repro-compare]
-    if: needs.plan.outputs.will-release == 'true'
+    if: needs.plan.outputs.qualify == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -227,7 +344,7 @@ jobs:
   release-distro:
     name: Release artifact ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
     needs: [plan, aggregate]
-    if: needs.plan.outputs.will-release == 'true'
+    if: needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -270,7 +387,7 @@ jobs:
   release-electron:
     name: Release Codex Electron (${{ matrix.target }})
     needs: [plan, aggregate]
-    if: needs.plan.outputs.will-release == 'true'
+    if: needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
@@ -317,12 +434,8 @@ jobs:
   release-overflow:
     name: Supervised overflow gate (${{ matrix.target }})
     needs: [plan, aggregate]
-    if: needs.plan.outputs.will-release == 'true'
-    runs-on:
-      - "${{ matrix.overflowRunner[0] }}"
-      - "${{ matrix.overflowRunner[1] }}"
-      - "${{ matrix.overflowRunner[2] }}"
-      - "${{ matrix.overflowRunner[3] }}"
+    if: needs.plan.outputs.qualify == 'true'
+    runs-on: ${{ matrix.overflowRunner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -347,22 +460,57 @@ jobs:
         with:
           name: watchbound-approved-native-matrix-${{ github.run_attempt }}
           path: ${{ runner.temp }}/approved-matrix
-      - name: Run the explicitly acknowledged release-only overflow scenarios
+      - name: Record preflight and run the approved overflow scenario
         shell: bash
+        env:
+          QUALIFICATION_SCENARIOS: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario || 'overflow-reconciliation,automatic-overflow-reconciliation' }}
+          QUALIFICATION_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.attempt || github.run_attempt }}
         run: |
           set -euo pipefail
+          evidence_root="$RUNNER_TEMP/release-overflow-${{ matrix.target }}"
+          mkdir -p "$evidence_root"
           cp "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" node/
-          node benches/conformance.mjs \
-            --adapter watchbound \
-            --scenarios overflow-reconciliation,automatic-overflow-reconciliation \
-            --allow-forced-overflow --strict --pretty \
-            --output "$RUNNER_TEMP/release-overflow-${{ matrix.target }}.json" --quiet
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          IFS=',' read -r -a scenarios <<< "$QUALIFICATION_SCENARIOS"
+          for scenario in "${scenarios[@]}"; do
+            scenario_root="$evidence_root/$scenario"
+            report="$scenario_root/conformance.json"
+            mkdir -p "$scenario_root"
+            node scripts/record-overflow-preflight.mjs \
+              --canonical-dir "$RUNNER_TEMP/approved-matrix" \
+              --target "${{ matrix.target }}" \
+              --scenario "$scenario" \
+              --attempt "$QUALIFICATION_ATTEMPT" \
+              --report "$report" \
+              --output "$scenario_root/preflight.json"
+            node benches/conformance.mjs \
+              --adapter watchbound \
+              --scenario "$scenario" \
+              --runs 1 \
+              --allow-forced-overflow --strict --pretty \
+              --output "$report" --quiet
+          done
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-release-overflow-${{ matrix.target }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/release-overflow-${{ matrix.target }}.json
-          if-no-files-found: error
+          name: watchbound-release-overflow-${{ matrix.target }}-${{ github.event_name == 'workflow_dispatch' && inputs.scenario || 'release-suite' }}-attempt-${{ github.event_name == 'workflow_dispatch' && inputs.attempt || github.run_attempt }}
+          path: ${{ runner.temp }}/release-overflow-${{ matrix.target }}
+          if-no-files-found: warn
           retention-days: 90
+
+  qualification-verified:
+    name: Manual qualification verified
+    needs: [plan, tests, aggregate, release-distro, release-electron, release-overflow]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          CANDIDATE_SHA: ${{ needs.plan.outputs.source-sha }}
+          SCENARIO: ${{ inputs.scenario }}
+          ATTEMPT: ${{ inputs.attempt }}
+        run: >-
+          echo "Qualified $CANDIDATE_SHA $SCENARIO attempt $ATTEMPT
+          on native x64 and ARM64."
 
   release:
     name: Publish exact qualified target matrix

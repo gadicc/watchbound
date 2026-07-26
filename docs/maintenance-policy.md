@@ -89,8 +89,10 @@ Type declarations are checked by compiled consumer fixtures. Source-build and
 loader changes additionally exercise clean build/load, unsupported-platform,
 version-mismatch, and environment-teardown behavior.
 
-Forced overflow remains a supervised milestone/release gate. It is never an
-automatic per-commit test and requires fresh quiet-host confirmation.
+Forced overflow remains a supervised milestone/release gate and is never an
+automatic per-commit test. Local performance-bearing runs require fresh
+quiet-host confirmation; hosted release qualification is correctness-only,
+one scenario per guarded dispatch, with non-authoritative timings.
 
 ## Release and distribution gates
 

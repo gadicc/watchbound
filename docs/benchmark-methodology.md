@@ -259,18 +259,20 @@ and task baselines. It does not attempt to fill the inotify queue.
 
 These deterministic callback-block/backpressure checks are not evidence that a
 real inotify queue overflow was induced or recovered. The forced-overflow run
-below remains separately gated on explicit quiet-host preparation.
+remains separately gated. Local execution requires explicit host preparation;
+release correctness qualification uses the guarded hosted workflow described
+below.
 
 All three heavy scenarios are removed by `--quick`. Selecting any one otherwise
 fails during option parsing unless `--allow-forced-overflow` is present, before
 capability probes or trials are spawned. The flag is only an acknowledgement;
-the operator must still obtain explicit confirmation that the host is quiet
-and prepared. The dedicated command is `pnpm test:overflow-reconciliation`.
+it does not grant another attempt or establish the execution environment. The
+dedicated local command is `pnpm test:overflow-reconciliation`.
 It was not executed while the scenario was implemented. A later explicitly
 confirmed targeted run passed; its raw artifact and retained first-attempt
 bookkeeping failure are recorded in `docs/benchmark-results.md`. The automatic
-counterpart is `pnpm test:automatic-overflow-reconciliation` and has the same
-host-confirmation requirement; its confirmed artifacts are recorded there too.
+counterpart is `pnpm test:automatic-overflow-reconciliation`; its confirmed
+artifacts are recorded there too.
 The clean-source confirmation was one separately authorized targeted trial,
 retained as correctness evidence regardless of outcome. Its preflight, source
 commit and digest, native artifact hash, induction evidence, complete check
@@ -278,50 +280,26 @@ result, resource restoration, and environmental caveats are recorded with the
 raw identity. A completed targeted run does not authorize a retry or any other
 command containing `--allow-forced-overflow`.
 
-For the prospective stable release, use a clean source-only checkout of the
-exact candidate SHA on a prepared native x64 or ARM64 runner with Node 24.15.0,
-Rust 1.88.0, and pnpm 10.33.2. Install from the frozen lockfile and require the
-canonical addon's SHA-256 to equal the independent-builder comparison before
-any overflow command. Retain the checkout/build transcript,
-source digest, addon hash, tool versions, inotify limits, temporary-filesystem
-identity, free blocks/inodes, `vmstat 1 5`, `/proc/pressure` samples, load,
-governor, and the list of other active I/O-heavy work.
-Possible future Docker, dedicated-runner, and bounded quiet-host polling designs
-are recorded in
-[`overflow-runner-strategy.md`](overflow-runner-strategy.md); none changes the
-current supported-host or supervision requirements.
+For the prospective stable release, dispatch `.github/workflows/release.yml`
+against the exact candidate ref. The workflow requires the entered SHA to equal
+both the selected workflow ref and checked-out commit, builds each native addon
+twice, byte-compares the builders, and runs the selected scenario against that
+canonical artifact on native GitHub-hosted Ubuntu 24.04 x64 and ARM64 runners.
+It records the source and addon hashes, tool/runner identity, inotify limits,
+filesystem state, `vmstat 1 5`, `/proc/pressure`, load, governor, and active
+processes. Hosted timings are explicitly non-authoritative.
 
-Then stop. Approval must name the SHA, version, addon hash, scenario, attempt
-number, and output path. Run the manual mode once:
+Dispatch `overflow-reconciliation` once, retain and review both architectures,
+then make a separate dispatch for `automatic-overflow-reconciliation`.
+Approval is encoded by the exact SHA, selected scenario, positive scenario
+attempt, and acknowledgement text. GitHub reruns are rejected. A reviewed
+retry is a new dispatch with an incremented scenario attempt; neither failure
+nor completion authorizes it or the other scenario by itself. The complete
+operator sequence is in
+[`overflow-runner-strategy.md`](overflow-runner-strategy.md).
 
-```sh
-node benches/conformance.mjs \
-  --adapter watchbound \
-  --scenario overflow-reconciliation \
-  --runs 1 \
-  --allow-forced-overflow \
-  --strict \
-  --output benches/results/v1.0.0-<candidate-sha>-overflow-reconciliation-attempt-1.json \
-  --quiet
-```
-
-Recheck host state and stop for a second explicit approval before the automatic
-mode:
-
-```sh
-node benches/conformance.mjs \
-  --adapter watchbound \
-  --scenario automatic-overflow-reconciliation \
-  --runs 1 \
-  --allow-forced-overflow \
-  --strict \
-  --output benches/results/v1.0.0-<candidate-sha>-automatic-overflow-reconciliation-attempt-1.json \
-  --quiet
-```
-
-Retain and hash every outcome, including failures. Neither completion nor
-failure authorizes a retry or the other scenario. Archive the unchanged private
-reports under `artifact-archival.md`; any public derivative remains separately
+Retain every outcome, including failures. Archive unchanged private reports
+under `artifact-archival.md`; any public derivative remains separately
 approval-gated.
 
 Final correctness run, including the I/O-heavy forced-overflow case, after the

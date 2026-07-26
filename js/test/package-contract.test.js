@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "../../scripts/install-jsr-native.mjs";
 import { jsrPackageExists } from "../../scripts/semantic-release-watchbound.mjs";
+import { validateOverflowDispatch } from "../../scripts/validate-overflow-dispatch.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -104,6 +105,7 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
       package: target.package,
       qualification: target.qualification,
       runner: target.runner,
+      overflowRunner: target.overflowRunner,
     })),
     [
       {
@@ -112,6 +114,7 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
         package: "@gadicc/watchbound-node-linux-x64-gnu",
         qualification: "target-pending-clean-ci",
         runner: "ubuntu-22.04",
+        overflowRunner: "ubuntu-24.04",
       },
       {
         id: "linux-arm64-gnu",
@@ -119,14 +122,11 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
         package: "@gadicc/watchbound-node-linux-arm64-gnu",
         qualification: "target-pending-clean-ci",
         runner: "ubuntu-22.04-arm",
+        overflowRunner: "ubuntu-24.04-arm",
       },
     ],
   );
   assert.equal(matrix.qualificationLanes.length, 7);
-  assert.deepEqual(matrix.targets.map(({ overflowRunner }) => overflowRunner), [
-    ["self-hosted", "linux", "x64", "watchbound-overflow"],
-    ["self-hosted", "linux", "arm64", "watchbound-overflow"],
-  ]);
   assert.deepEqual(matrix.codexRuntime, {
     electron: "42.3.0",
     node: "24.15.0",
@@ -142,7 +142,7 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
   );
 });
 
-test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
+test("manual qualification is read-only while semantic release stays push-only", () => {
   const release = fs.readFileSync(
     path.join(workspaceRoot, ".github/workflows/release.yml"),
     "utf8",
@@ -175,11 +175,32 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     path.join(workspaceRoot, "scripts/ci-matrix.mjs"),
     "utf8",
   );
+  const overflowPreflight = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/record-overflow-preflight.mjs"),
+    "utf8",
+  );
   const flake = fs.readFileSync(path.join(workspaceRoot, "flake.nix"), "utf8");
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
   assert.match(
     release,
-    /^  plan:\n    name: Plan exact candidate\n    runs-on: ubuntu-24\.04\n    timeout-minutes: 15\n    permissions:\n      # semantic-release verifies push access even when dryRun is enabled\.\n      contents: write$/mu,
+    /^  workflow_dispatch:\n    inputs:\n      candidate_sha:/mu,
+  );
+  assert.match(release, /^      scenario:\n[\s\S]*?type: choice\n[\s\S]*?- overflow-reconciliation\n[\s\S]*?- automatic-overflow-reconciliation/mu);
+  assert.match(release, /^      attempt:/mu);
+  assert.match(release, /^      acknowledgement:/mu);
+  assert.match(release, /^  release-plan:/mu);
+  assert.match(release, /^      contents: write$/mu);
+  assert.match(release, /^  qualification-plan:/mu);
+  assert.match(release, /^      contents: read$/mu);
+  assert.match(release, /validate-overflow-dispatch\.mjs/u);
+  assert.match(release, /qualification-dispatch\.json/u);
+  assert.match(release, /--mode qualification/u);
+  assert.match(release, /ref: \$\{\{ inputs\.candidate_sha \}\}/u);
+  assert.match(release, /github\.run_attempt/u);
+  assert.match(release, /^  plan:\n    name: Select exact candidate plan/mu);
+  assert.match(
+    release,
+    /if: github\.event_name == 'push' \|\| needs\.plan\.outputs\.qualify == 'true'/u,
   );
   assert.match(release, /github\.event_name == 'push'/u);
   assert.match(release, /github\.ref == 'refs\/heads\/main'/u);
@@ -195,6 +216,7 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(release, /^  release-distro:$/mu);
   assert.match(release, /^  release-electron:$/mu);
   assert.match(release, /^  release-overflow:$/mu);
+  assert.match(release, /^  qualification-verified:$/mu);
   assert.match(release, /^  registry-smoke:$/mu);
   assert.match(release, /compare-native-builds\.mjs/u);
   assert.match(release, /aggregate-native-builds\.mjs/u);
@@ -205,7 +227,12 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(release, /glibc 2\.35/u);
   assert.match(release, /check-electron-asar\.mjs/u);
   assert.match(release, /overflow-reconciliation,automatic-overflow-reconciliation/u);
-  assert.match(release, /matrix\.overflowRunner\[3\]/u);
+  assert.match(release, /^    runs-on: \$\{\{ matrix\.overflowRunner \}\}$/mu);
+  assert.match(release, /inputs\.scenario/u);
+  assert.match(release, /--runs 1/u);
+  assert.match(release, /record-overflow-preflight\.mjs/u);
+  assert.match(release, /if: always\(\)[\s\S]*?watchbound-release-overflow-/u);
+  assert.doesNotMatch(release, /self-hosted/u);
   assert.equal(
     release.match(
       /echo "RUSTFLAGS=--remap-path-prefix=\$cargo_home=\/watchbound\/cargo-home" >> "\$GITHUB_ENV"/gu,
@@ -213,9 +240,10 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     2,
   );
   assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
-  assert.doesNotMatch(release, /workflow_dispatch/u);
   assert.doesNotMatch(release, /^\s*- uses: [^\s]+@v\d+(?:\.\d+)*\s*$/mu);
   assert.doesNotMatch(ci, /workflow_dispatch/u);
+  assert.match(ci, /^  workflow_call:\n    inputs:\n      candidate_sha:/mu);
+  assert.match(ci, /inputs\.candidate_sha \|\| github\.sha/u);
   assert.match(ci, /^  push:\n    branches-ignore: \[main\]$/mu);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.source\)/u);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.qualification\)/u);
@@ -264,6 +292,12 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(ciMatrix, /matrix\.qualificationLanes/u);
   assert.match(ciMatrix, /\["builder-a", "builder-b"\]/u);
   assert.match(ciMatrix, /runner: target\.runner/u);
+  assert.match(overflowPreflight, /watchbound-overflow-qualification-preflight/u);
+  assert.match(overflowPreflight, /independent-reproducibility\.json/u);
+  assert.match(overflowPreflight, /max_queued_events/u);
+  assert.match(overflowPreflight, /\/proc\/pressure/u);
+  assert.match(overflowPreflight, /correctness/u);
+  assert.match(overflowPreflight, /non-authoritative/u);
   assert.match(flake, /eachSystem \[ "x86_64-linux" "aarch64-linux" \]/u);
   assert.match(flake, /electron-v\$\{matrix\.codexRuntime\.electron\}-linux-/u);
   assert.match(flake, /target\.codexElectron\.sha256SRI/u);
@@ -271,6 +305,63 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(flake, /generate-nix-package\.mjs/u);
   assert.match(flake, /asar pack/u);
   assert.doesNotMatch(flake, /npm (?:install|ci)/u);
+});
+
+test("overflow dispatch validation rejects workflow reruns and ambiguous approval", () => {
+  const candidateSha = "a".repeat(40);
+  assert.deepEqual(
+    validateOverflowDispatch({
+      candidateSha,
+      workflowSha: candidateSha,
+      checkedOutSha: candidateSha,
+      scenario: "overflow-reconciliation",
+      attempt: "1",
+      runAttempt: "1",
+      acknowledgement: "I ACKNOWLEDGE FORCED OVERFLOW overflow-reconciliation ATTEMPT 1",
+    }),
+    {
+      candidateSha,
+      scenario: "overflow-reconciliation",
+      attempt: 1,
+    },
+  );
+
+  for (const overrides of [
+    { runAttempt: "2" },
+    { attempt: "0" },
+    { scenario: "reconciliation" },
+    { acknowledgement: "yes" },
+    { workflowSha: "b".repeat(40) },
+    { checkedOutSha: "b".repeat(40) },
+  ]) {
+    assert.throws(
+      () => validateOverflowDispatch({
+        candidateSha,
+        workflowSha: candidateSha,
+        checkedOutSha: candidateSha,
+        scenario: "overflow-reconciliation",
+        attempt: "1",
+        runAttempt: "1",
+        acknowledgement: "I ACKNOWLEDGE FORCED OVERFLOW overflow-reconciliation ATTEMPT 1",
+        ...overrides,
+      }),
+      /qualification|candidate|scenario|attempt|acknowledgement/iu,
+    );
+  }
+
+  assert.equal(
+    validateOverflowDispatch({
+      candidateSha,
+      workflowSha: candidateSha,
+      checkedOutSha: candidateSha,
+      scenario: "automatic-overflow-reconciliation",
+      attempt: "2",
+      runAttempt: "1",
+      acknowledgement:
+        "I ACKNOWLEDGE FORCED OVERFLOW automatic-overflow-reconciliation ATTEMPT 2",
+    }).attempt,
+    2,
+  );
 });
 
 test("JSR existence checks exact registry metadata without Deno policy", async () => {

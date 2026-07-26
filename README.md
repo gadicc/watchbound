@@ -395,10 +395,12 @@ wrapper's bounded automatic policy; the third exercises explicit direct and
 ancestor replacement recovery on the original subscription. The first two use
 deterministic native-to-JavaScript consumer backpressure; the third uses
 ordinary temporary-directory replacement. None induces a real inotify queue
-overflow. The I/O-heavy forced-overflow
-scenarios are removed by `--quick` and require both explicit quiet-host
-confirmation and the `--allow-forced-overflow` acknowledgement. The flag is a
-safety interlock, not evidence that the host is ready.
+overflow. The I/O-heavy forced-overflow scenarios are removed by `--quick` and
+require the `--allow-forced-overflow` acknowledgement. Local runs additionally
+require explicit host preparation. Exact-candidate release qualification uses
+the guarded GitHub-hosted x64/ARM64 workflow, records host context, and treats
+timings as non-authoritative. The flag is a safety interlock, not permission
+for another attempt.
 
 `pnpm test:soak` runs 25 bounded lifecycle cycles without inducing overflow
 or recording benchmark evidence. It covers deferred promotion, exclusion

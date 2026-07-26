@@ -6,11 +6,14 @@ preparation, not blanket permission to publish.
 
 ## Fail-closed release boundary
 
-Only a push to `main` can enter `.github/workflows/release.yml`. The planning
-job computes the semantic-release decision without changing versions. Expensive
-native jobs run only when the exact commit would release. The custom plugin
-then requires the planned version to equal the already committed lockstep npm,
-JSR, Cargo, and lockfile version.
+Only a push to `main` can enter the publication path in
+`.github/workflows/release.yml`. The write-capable planning job computes the
+semantic-release decision without changing versions. A separate manual
+dispatch path can run exact-candidate qualification with repository-read
+permission only; it cannot satisfy the publication job's independent event,
+ref, or semantic-release guards. The custom plugin requires the planned
+release version to equal the already committed lockstep npm, JSR, Cargo, and
+lockfile version.
 
 The plugin refuses preparation unless every matrix target is checked in as
 `supported`. Both `1.2.0` targets are currently
@@ -31,9 +34,9 @@ For each x64 and ARM64 registry target, the release workflow:
    distro lane on the same native architecture;
 6. runs the canonical package from `app.asar`/`app.asar.unpacked` under exact
    Electron 42.3.0 and Node 24.15.0;
-7. runs the explicitly acknowledged, I/O-heavy forced-overflow and automatic
-   overflow-reconciliation scenarios against the canonical artifact on a
-   prepared self-hosted runner labeled `watchbound-overflow`; and
+7. runs the I/O-heavy forced-overflow and automatic overflow-reconciliation
+   scenarios against the canonical artifact on native GitHub-hosted Ubuntu
+   24.04 x64 and ARM64 runners as correctness-only evidence; and
 8. relies on the reusable CI workflow for full semantics and locked Nix source
    closures on x64 and ARM64.
 
@@ -46,6 +49,22 @@ No mismatch or missing target has a waiver path.
 Cross-compilation and QEMU-only execution cannot satisfy a target. Container
 lanes provide distro userspace evidence but share the runner kernel; kernel
 floor evidence must be recorded separately and truthfully.
+
+## Supervised hosted overflow qualification
+
+The Release workflow's `workflow_dispatch` mode reuses the complete canonical
+artifact pipeline without enabling publication. It accepts an exact candidate
+SHA, one scenario, a positive scenario-attempt number, and a typed
+acknowledgement. The SHA must equal both the workflow ref selected in GitHub
+and the checked-out commit. GitHub workflow reruns are rejected; an explicitly
+reviewed retry is a new dispatch with an incremented scenario attempt.
+
+Dispatch `overflow-reconciliation` first. Review the full run and both native
+overflow artifacts before separately dispatching
+`automatic-overflow-reconciliation`. Each scenario runs once per native
+architecture. Preflight and conformance evidence is uploaded even when the
+gate fails. See [`overflow-runner-strategy.md`](overflow-runner-strategy.md)
+for the exact inputs, acknowledgement, interpretation, and retention policy.
 
 ## Publication ordering and partial failure
 
@@ -68,18 +87,18 @@ npm publication uses trusted publishing and provenance. JSR publication uses
 its GitHub OIDC relationship. The workflow has no npm/JSR token. Semantic
 release creates the tag and GitHub release only in the normal main-push path.
 
-## New-package bootstrap
+## Registry bootstrap and trusted publication
 
-The two target package names do not yet exist. Their one-time package creation
-requires separate explicit maintainer approval and interactive registry
-authority. Create only the exact reviewed version with a non-default bootstrap
-dist-tag, do not create a semantic-release Git tag, and verify the resulting
-registry integrity before enabling ordinary OIDC release. This branch does not
-perform that bootstrap.
+The x64 and ARM64 npm target names were bootstrapped with the inert
+`0.0.0-bootstrap.0` version. npm required the first version to receive the
+`latest` tag; both bootstrap versions are deprecated and also carry the
+`bootstrap` tag. Do not depend on them.
 
-Configure npm trusted-publisher relationships for the `release.yml` workflow
-and JSR package authorization before an ordinary release. Keep the repository,
-workflow filename, branch, and environment constraints exact.
+All four npm package routes use the trusted publisher for repository
+`gadicc/watchbound` and workflow `release.yml`; JSR authorizes the same GitHub
+workflow for `@gadicc/watchbound`. Ordinary release publication uses OIDC and
+has no npm or JSR token. Keep the repository, workflow filename, branch, and
+environment constraints exact.
 
 ## Post-publication verification
 

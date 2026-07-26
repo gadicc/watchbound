@@ -83,3 +83,8 @@ commit must complete:
 
 A workflow definition, cross-build, QEMU-only result, local x64 pass, or a later
 distribution loading the ELF is insufficient on its own.
+
+The forced-overflow item is correctness-only and can be satisfied by the
+guarded Release workflow dispatch on native GitHub-hosted Ubuntu 24.04 x64 and
+ARM64 runners. Its timings are non-authoritative; see
+[`overflow-runner-strategy.md`](overflow-runner-strategy.md).

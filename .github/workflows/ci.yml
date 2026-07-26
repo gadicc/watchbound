@@ -5,6 +5,11 @@ on:
   push:
     branches-ignore: [main]
   workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact source SHA supplied by the release qualification caller
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - id: matrix
@@ -44,14 +49,14 @@ jobs:
       - name: Check out the exact clean source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - name: Reject checked-in native artifacts
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha || github.sha }}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files -- 'node/*.node' 'node/*.so')"
           test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
@@ -132,7 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -166,7 +171,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -218,7 +223,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -273,7 +278,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0

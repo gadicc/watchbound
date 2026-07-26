@@ -66,11 +66,14 @@ source revision.
 
 ## Handoff blockers
 
-- x64 and ARM64 target statuses are still pending clean CI.
-- No native ARM64 artifact or evidence was produced on this x64 workstation.
-- Nix is not installed locally; both locked Nix checks await CI.
-- Kernel 5.15, all distro lanes, and supervised release overflow evidence await
-  exact-commit runners.
-- The new npm target names need approved one-time registry bootstrap.
+- x64 and ARM64 target statuses remain pending exact-candidate qualification.
+- The guarded hosted workflow has not yet produced canonical x64/ARM64
+  overflow evidence for the status-bearing commit.
+- The final candidate must rerun source, reproducibility, distro, Electron, and
+  locked Nix lanes; earlier green CI does not transfer across a changed SHA.
+- Kernel 5.15 floor evidence remains separate from hosted Ubuntu 24.04
+  overflow correctness evidence.
+- The npm target-name bootstrap is complete, but no official `1.2.0` package
+  has been published.
 - Publication, official integrity values, and Codex repository edits were
   explicitly outside this task's authority.

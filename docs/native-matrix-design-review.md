@@ -48,10 +48,10 @@ Resolved findings:
 - Made registry publication target-first and reject loader/wrapper states with
   missing target versions; exact existing npm integrity and metadata are
   rechecked.
-- Added release-artifact distro and Electron ASAR jobs plus release-only
-  canonical overflow jobs restricted to prepared `watchbound-overflow`
-  self-hosted runners instead of relying on ordinary source-build artifacts;
-  every runner label is expanded explicitly from the checked-in target matrix.
+- Added release-artifact distro and Electron ASAR jobs plus canonical overflow
+  jobs on native GitHub-hosted Ubuntu 24.04 x64/ARM64 runners instead of relying
+  on ordinary source-build artifacts; the checked-in target matrix selects each
+  exact runner label and the timings are explicitly non-authoritative.
 - Corrected Nix CI to assert the native runner system and build the locked
   current-system flake without updating its lock, and pinned the Nix installer
   action to an exact reviewed commit.

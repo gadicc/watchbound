@@ -44,12 +44,10 @@ export function validateNativeMatrix(matrix) {
     assert.ok(["x64", "arm64"].includes(target.architecture));
     assert.match(target.rustTarget, /^(?:x86_64|aarch64)-unknown-linux-gnu$/u);
     assert.equal(target.libc, "glibc");
-    assert.deepEqual(target.overflowRunner, [
-      "self-hosted",
-      "linux",
-      target.architecture,
-      "watchbound-overflow",
-    ]);
+    assert.equal(
+      target.overflowRunner,
+      target.architecture === "x64" ? "ubuntu-24.04" : "ubuntu-24.04-arm",
+    );
     assert.equal(target.binary, `watchbound.${target.id}.node`);
     assert.equal(
       target.package,

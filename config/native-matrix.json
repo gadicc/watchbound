@@ -32,7 +32,7 @@
       "binary": "watchbound.linux-x64-gnu.node",
       "package": "@gadicc/watchbound-node-linux-x64-gnu",
       "runner": "ubuntu-22.04",
-      "overflowRunner": ["self-hosted", "linux", "x64", "watchbound-overflow"],
+      "overflowRunner": "ubuntu-24.04",
       "nixSystem": "x86_64-linux",
       "codexElectron": {
         "archiveArchitecture": "x64",
@@ -62,7 +62,7 @@
       "binary": "watchbound.linux-arm64-gnu.node",
       "package": "@gadicc/watchbound-node-linux-arm64-gnu",
       "runner": "ubuntu-22.04-arm",
-      "overflowRunner": ["self-hosted", "linux", "arm64", "watchbound-overflow"],
+      "overflowRunner": "ubuntu-24.04-arm",
       "nixSystem": "aarch64-linux",
       "codexElectron": {
         "archiveArchitecture": "arm64",

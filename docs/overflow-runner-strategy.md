@@ -1,111 +1,126 @@
 # Forced-overflow runner strategy
 
-Status: the release workflow now routes x64 and ARM64 canonical-artifact
-overflow jobs only to prepared self-hosted runners carrying the
-`watchbound-overflow` label. Provisioning, quiet-host confirmation, and active
-supervision remain operator responsibilities; a label alone is not evidence.
-The policy in [`benchmark-methodology.md`](benchmark-methodology.md) remains
-authoritative.
+Status: exact-candidate forced-overflow qualification runs on GitHub-hosted
+Ubuntu 24.04 x64 and ARM64 virtual machines. This is native-architecture
+correctness evidence, not benchmark evidence. The workflow records host state
+and treats all timings as non-authoritative.
 
-## Recommendation
+## Why hosted runners are sufficient here
 
-Use a dedicated baseline-compatible x64 or ARM64 VM/bare-metal self-hosted
-runner for qualifying forced-overflow evidence. Keep GitHub-hosted runners for
-ordinary CI, independent clean builds, and quick benchmark functionality
-smoke.
+The two forced-overflow scenarios are pass/fail conformance gates. A passing
+trial must prove that the helper genuinely exceeded the kernel queue, the
+native overflow counter advanced, coverage became explicitly uncertain with
+`event-overflow`, delivery drained, the intended reconciliation path ran, a
+post-recovery sentinel arrived, and all resources were restored. Neighboring
+host activity can delay the helper or make a trial fail, but it cannot satisfy
+those semantic checks and create a false pass.
 
-An Ubuntu 24.04 Docker container can be useful as a non-qualifying packaging
-and compatibility check, but it is not an Ubuntu host:
+Dedicated bare metal or a quiet self-hosted VM is still preferable before
+recording publishable latency, throughput, or resource ranges. It is not
+required for this correctness-only release gate. An Ubuntu container is not a
+replacement for either hosted lane because it shares its host kernel and
+architecture.
 
-- it shares the host kernel, inotify configuration, CPU, memory, and I/O
-  contention;
-- on the current development machine it would still use the CachyOS kernel
-  rather than the supported Ubuntu kernel line; and
-- its working tree is normally overlay-backed unless the operator deliberately
-  supplies another filesystem.
-
-Docker can therefore catch distribution userspace, libc, dependency, build,
-install, and import failures. It must not be presented as support
-qualification, quiet-host performance evidence, or a substitute for the
-supported host.
-
-| Execution environment | Useful for | Qualifying overflow evidence |
+| Environment | Correctness qualification | Performance evidence |
 | --- | --- | --- |
-| GitHub-hosted Ubuntu 24.04 | CI, clean builds, ordinary conformance, quick benchmark smoke | No: neighboring host activity and readiness are not controlled |
-| Ubuntu 24.04 container on another host | Ubuntu/glibc packaging and install smoke | No: host kernel, inotify limits, contention, and usually filesystem remain different |
-| Dedicated Ubuntu 24.04 VM or bare-metal self-hosted runner | Exact-candidate supervised conformance | Yes, after identity, filesystem, quietness, and supervision checks pass |
+| GitHub-hosted `ubuntu-24.04` x64 | Yes | No |
+| GitHub-hosted `ubuntu-24.04-arm` ARM64 | Yes | No |
+| Ubuntu container on another host | No; shared host kernel | No |
+| Prepared dedicated native host | Yes | Yes, after a separate quiet-host gate |
 
-## Proposed quiet-host gate
+## Manual qualification workflow
 
-A future checker should poll measured activity rather than trust a fixed sleep.
-Run the exact-candidate build first, allow an initial five-second cooldown, then
-sample once per second for at most 60 seconds. Proceed only after ten
-consecutive samples pass. If no quiet window appears, fail without starting the
-overflow helper.
+The Release workflow has a guarded `workflow_dispatch` mode. A manual run has
+repository-read permission only. It cannot receive the publication job's
+write or OIDC permissions, and the publication job separately requires a
+`push` event on `main` plus a positive semantic-release plan.
 
-The first implementation can use these conservative starting thresholds; they
-must be validated on the eventual runner before becoming policy:
+For each dispatch:
 
-| Signal | Proposed quiet condition |
-| --- | --- |
-| CPU busy | Below 20% during each sample |
-| CPU I/O wait | Below 2% during each sample |
-| Runnable queue | No sustained queue above the runner's expected idle level |
-| Block devices | No request in flight and no material read/write burst |
-| Swap | No swap-in or swap-out |
-| I/O PSI | `full` is zero and `some` is below 1% |
-| Memory PSI | `full` is zero |
+1. In GitHub Actions, open **Release** and select the exact candidate ref in
+   **Run workflow**. For the current process this should be the reviewed `dev`
+   tip.
+2. Enter that ref's full lowercase 40-character SHA as `candidate_sha`. The
+   planner rejects the dispatch unless the selected workflow ref, entered SHA,
+   and checked-out SHA are identical.
+3. Select exactly one scenario: `overflow-reconciliation` first, or
+   `automatic-overflow-reconciliation` only after reviewing the first run.
+4. Enter the positive attempt number for that scenario.
+5. Type the acknowledgement exactly as
+   `I ACKNOWLEDGE FORCED OVERFLOW <scenario> ATTEMPT <n>`, substituting the
+   selected scenario and attempt.
+6. Monitor both native target jobs and retain their artifacts regardless of
+   outcome.
 
-Load averages should be retained as context, not used alone as the gate: their
-decay makes them a poor signal for a newly quiet machine. Record the raw
-`/proc/stat`, `/proc/diskstats`, `/proc/pressure/{cpu,io,memory}`, swap, load,
-governor, active-process summary, filesystem identity, space/inodes, and
-inotify limits for every sample window.
+The equivalent CLI form for the first scenario is:
 
-The retained preflight JSON should also name:
+```sh
+gh workflow run release.yml \
+  --ref dev \
+  -f candidate_sha=FULL_40_CHARACTER_DEV_SHA \
+  -f scenario=overflow-reconciliation \
+  -f attempt=1 \
+  -f 'acknowledgement=I ACKNOWLEDGE FORCED OVERFLOW overflow-reconciliation ATTEMPT 1'
+```
 
-- exact Git SHA and source-input digest;
-- package version and intended scenario;
-- native artifact path, byte count, and SHA-256;
-- Node, Rust, pnpm, kernel, distribution, glibc, and runner identity;
-- cooldown, polling interval, maximum wait, consecutive-pass requirement, and
-  thresholds; and
-- the final pass/fail decision with every observed sample.
+The workflow refuses GitHub's **Re-run jobs** path because it changes
+`github.run_attempt`. If review authorizes a retry, create a new dispatch with
+the incremented scenario attempt and matching acknowledgement. Failure or
+completion never authorizes a retry or the other scenario by itself.
 
-## Supervision and ordering
+Run the scenarios in two dispatches:
 
-Quiet-host automation does not replace supervision. The operator sequence
-remains:
+1. `overflow-reconciliation`, attempt 1;
+2. inspect both x64 and ARM64 evidence and the overall run; then
+3. `automatic-overflow-reconciliation`, attempt 1.
 
-1. verify the supported host, clean exact candidate, pinned toolchains, and
-   independently approved native digest;
-2. build, cool down, and pass the bounded quiet-host poll;
-3. stop for approval naming SHA, version, native hash, scenario, attempt, and
-   output path;
-4. run the manual-reconciliation overflow scenario once and retain every
-   outcome;
-5. poll host quietness again;
-6. stop for a second approval; and
-7. run the automatic-reconciliation scenario once.
+## What the shared pipeline does
 
-Neither failure nor completion authorizes a retry or the other scenario.
+Qualification mode reuses the release pipeline rather than accepting an
+ordinary CI binary:
 
-## Possible future automation
+1. validate the one-shot dispatch and create a non-release qualification plan;
+2. run the reusable full CI workflow against the same exact SHA;
+3. build each target twice in isolated Ubuntu 22.04 builders;
+4. byte-compare and aggregate the canonical x64 and ARM64 addons;
+5. exercise the canonical artifacts in every distro and Electron lane; and
+6. run the one selected overflow scenario once on each native Ubuntu 24.04
+   hosted architecture.
 
-If a dedicated runner becomes available, keep overflow evidence in a separate
-operator-triggered workflow or host-side command. A workflow must target
-explicit labels such as `self-hosted`, `linux`, `x64`, `ubuntu-24.04`, and
-`watchbound-quiet`, with no GitHub-hosted fallback. It should upload the private
-preflight and conformance artifacts even on failure, but must not publish
-packages or broaden the `main`-push release authorization boundary.
+A normal release push uses the same canonical artifact path and runs both
+overflow scenarios before publication. Monitoring is useful operationally,
+but the safety boundary is the checked-in event, permission, exact-SHA, and
+dependency guards.
 
-Adding such an operator-triggered workflow would be a deliberate exception to
-the repository's current no-manual-dispatch configuration and requires a new
-maintainer decision. Until then, use the documented host-side supervised
-commands.
+## Retained evidence
 
-An optional Docker smoke could instead be automatic and non-gating. Pin the
-Ubuntu image by digest, use isolated container-owned caches and build output,
-prefer a container tmpfs for bounded filesystem checks, and label every result
-as container compatibility evidence rather than host qualification or
-performance data.
+The qualification-plan artifact contains the validated dispatch approval and
+non-release plan. Each target's overflow artifact contains a preflight and, if
+the scenario started, its raw conformance report. Upload runs even after a
+failed preflight or scenario. Retention is 90 days.
+
+The preflight verifies and records:
+
+- exact Git SHA, package version, Cargo and pnpm lock hashes;
+- independent-comparison record hash and canonical addon SHA-256/size;
+- native architecture, Ubuntu 24.04, kernel, glibc, Node, and runner identity;
+- inotify limits, filesystem/mount identity, blocks and inodes;
+- load, memory, `vmstat`, CPU/I/O/memory pressure, governor, and process state;
+- scenario, scenario-attempt number, intended report path, and the explicit
+  correctness-only/non-authoritative-timing classification.
+
+Raw reports can contain absolute temporary paths and detailed host state.
+Treat GitHub artifacts as private evidence and follow
+[`artifact-archival.md`](artifact-archival.md) before creating any committed or
+public derivative.
+
+## Interpreting outcomes
+
+A green job is native correctness evidence for the exact SHA, architecture,
+canonical artifact hash, scenario, and attempt recorded in its files. It is
+not a performance result and does not transfer to a changed commit or binary.
+
+A red job is retained evidence, not an automatic product failure. Classify
+whether the failure is semantic, infrastructure, or environmental, and review
+the artifact before authorizing a new dispatch. Never use a GitHub rerun to
+erase or silently replace the first outcome.

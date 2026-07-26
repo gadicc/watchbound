@@ -4,12 +4,18 @@ Status: the `1.2.0` multi-target work is an unpublished candidate. Its target
 status is `target-pending-clean-ci`. The current qualified registry release is
 still `1.0.1` under its historical Ubuntu 24.04 x64 contract.
 
+Candidate `ecc593a87a006affa19868f31f488968ba723cc4` completed the native
+x64/ARM64 source, reproducibility, distro, Electron, Nix, and both supervised
+overflow scenarios. Its canonical ELFs require at most `GLIBC_2.34`. The
+remaining baseline gap is genuine kernel 5.15 execution; see
+[`qualification-evidence-2026-07-26.md`](qualification-evidence-2026-07-26.md).
+
 ## Candidate target contract
 
 | Target | Package | Buildable | Candidate baseline | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; local source build and exact Codex Electron ASAR smoke passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Pending exact clean CI/release matrix |
-| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; native runner, package, loader, release, Electron, and Nix paths are defined | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Pending native ARM64 evidence |
+| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Pending exact kernel-floor and promotion run |
+| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Pending exact kernel-floor and promotion run |
 
 “Buildable” describes implemented build and packaging paths. It is not a
 support claim. `supported` becomes true only when the exact runtime matches a
@@ -17,28 +23,29 @@ target whose checked-in status is `supported` and the corresponding
 exact-commit evidence is complete.
 
 The oldest candidate distro baseline is Ubuntu 22.04: kernel 5.15 and glibc
-2.35. ELF symbol inspection is authoritative for the artifact ABI. The local
-x64 development artifact currently requires no symbol newer than
-`GLIBC_2.34`; it was not built on the clean baseline and is not ARM64 or
-release qualification.
+2.35. ELF symbol inspection is authoritative for the artifact ABI. Both
+independently reproduced candidate artifacts require no symbol newer than
+`GLIBC_2.34`.
 
 ## Runtime lanes
 
 | Lane | x64 | ARM64 | Meaning before green exact evidence |
 | --- | --- | --- | --- |
-| Ubuntu 22.04 pinned / baseline builder | Pending | Pending | Candidate ABI and oldest distro lane |
-| Ubuntu 24.04 pinned | Pending | Pending | Codex advertised Debian-family lane |
-| Debian 12 pinned | Pending | Pending | Codex advertised Debian-family lane |
-| Fedora 42 pinned | Pending | Pending | Codex advertised RPM lane |
-| Arch `base-devel` pinned | Pending | Not in Codex lane | Codex advertised pacman lane |
-| openSUSE Tumbleweed pinned | Pending | Pending | Representative current advertised openSUSE RPM lane |
-| locked Nix closure | Pending | Pending | Source-built Nix package and exact Electron closure |
-| Electron 42.3.0 / Node 24.15.0 ASAR | Local pass, CI pending | Pending | Exact Codex host-runtime boundary |
+| Ubuntu 22.04 pinned / baseline builder | Passed at `ecc593a` | Passed at `ecc593a` | Candidate ABI and oldest distro userspace lane |
+| Ubuntu 24.04 pinned | Passed at `ecc593a` | Passed at `ecc593a` | Codex advertised Debian-family lane |
+| Debian 12 pinned | Passed at `ecc593a` | Passed at `ecc593a` | Codex advertised Debian-family lane |
+| Fedora 42 pinned | Passed at `ecc593a` | Passed at `ecc593a` | Codex advertised RPM lane |
+| Arch `base-devel` pinned | Passed at `ecc593a` | Not in Codex lane | Codex advertised pacman lane |
+| openSUSE Tumbleweed pinned | Passed at `ecc593a` | Passed at `ecc593a` | Representative current advertised openSUSE RPM lane |
+| locked Nix closure | Passed at `ecc593a` | Passed at `ecc593a` | Source-built Nix package and exact Electron closure |
+| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `ecc593a` | Passed at `ecc593a` | Exact Codex host-runtime boundary |
+| Ubuntu 22.04 / kernel 5.15 QEMU component | Pending exact run | Pending exact run | Kernel floor only; native runners separately prove architecture |
 
-The images and Nix inputs are pinned in `config/native-matrix.json` and
-`flake.lock`. A container changes userspace, not the host kernel, so kernel 5.15
-support still requires genuine kernel evidence; an image label alone cannot
-establish it.
+The images, official kernel/initrd hashes, and Nix inputs are pinned in
+`config/native-matrix.json` and `flake.lock`. A container changes userspace,
+not the host kernel. The kernel component therefore boots the real pinned
+5.15 kernel under QEMU and labels that result as kernel-floor evidence only;
+native x64/ARM64 runners remain mandatory target evidence.
 
 ## Advertised, recognized, and qualified are different
 
@@ -78,8 +85,9 @@ commit must complete:
 3. every applicable pinned distro lane;
 4. exact Electron ASAR lanes on both architectures;
 5. locked Nix source closure on both systems;
-6. canonical-artifact forced-overflow/reconciliation evidence;
-7. package/evidence/provenance gates and maintainer review.
+6. pinned kernel-5.15 package/lifecycle evidence on both architectures;
+7. canonical-artifact forced-overflow/reconciliation evidence;
+8. package/evidence/provenance gates and maintainer review.
 
 A workflow definition, cross-build, QEMU-only result, local x64 pass, or a later
 distribution loading the ELF is insufficient on its own.

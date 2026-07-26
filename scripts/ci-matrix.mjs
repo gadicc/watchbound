@@ -37,6 +37,20 @@ const qualification = matrix.qualificationLanes
       image: lane.image,
     };
   }));
+const kernel = matrix.targets.map((target) => {
+  const baseline = matrix.kernelBaselineQualification;
+  const artifactSet = baseline.artifacts[target.architecture];
+  assert.ok(artifactSet, `kernel baseline omits ${target.architecture}`);
+  return {
+    target: target.id,
+    architecture: target.architecture,
+    runner: target.runner,
+    binary: target.binary,
+    image: baseline.image,
+    kernelRelease: baseline.kernelRelease,
+    qemuPackage: artifactSet.qemuPackage,
+  };
+});
 const nix = matrix.targets.map((target) => ({
   target: target.id,
   architecture: target.architecture,
@@ -51,7 +65,7 @@ const registry = matrix.targets.flatMap((target) => ["npm", "jsr-node"].map((rou
   binary: target.binary,
 })));
 
-const outputs = { source, build, qualification, nix, registry };
+const outputs = { source, build, qualification, kernel, nix, registry };
 if (options["github-output"]) {
   const destination = path.resolve(options["github-output"]);
   fs.appendFileSync(

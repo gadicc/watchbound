@@ -152,6 +152,7 @@ jobs:
       source: ${{ steps.matrix.outputs.source }}
       build: ${{ steps.matrix.outputs.build }}
       qualification: ${{ steps.matrix.outputs.qualification }}
+      kernel: ${{ steps.matrix.outputs.kernel }}
       registry: ${{ steps.matrix.outputs.registry }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -453,6 +454,65 @@ jobs:
             --target "${{ matrix.target }}" \
             --evidence "$RUNNER_TEMP/release-electron-${{ matrix.target }}.json"
 
+  release-kernel-baseline:
+    name: Release kernel 5.15 (${{ matrix.target }}, QEMU component)
+    needs: [plan, aggregate]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.kernel) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - name: Install the architecture-native QEMU system emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            "${{ matrix.qemuPackage }}" e2fsprogs
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+      - name: Exercise the canonical package on a real pinned 5.15 kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" node/
+          WATCHBOUND_NATIVE_ARTIFACTS_DIR="$RUNNER_TEMP/approved-matrix" pnpm package:prepare
+          node scripts/pack-prepared-packages.mjs --target "${{ matrix.target }}"
+          node_root="$(dirname "$(dirname "$(command -v node)")")"
+          node scripts/run-kernel-baseline-qualification.mjs \
+            --target "${{ matrix.target }}" \
+            --image "${{ matrix.image }}" \
+            --node-root "$node_root" \
+            --evidence "$RUNNER_TEMP/release-kernel-${{ matrix.target }}.json"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-release-kernel-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-kernel-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
   release-overflow:
     name: Supervised overflow gate (${{ matrix.target }})
     needs: [plan, aggregate]
@@ -525,7 +585,7 @@ jobs:
 
   qualification-verified:
     name: Manual qualification verified
-    needs: [plan, tests, aggregate, release-distro, release-electron, release-overflow]
+    needs: [plan, tests, aggregate, release-distro, release-electron, release-kernel-baseline, release-overflow]
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
@@ -534,6 +594,7 @@ jobs:
       needs.aggregate.result == 'success' &&
       needs.release-distro.result == 'success' &&
       needs.release-electron.result == 'success' &&
+      needs.release-kernel-baseline.result == 'success' &&
       needs.release-overflow.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -548,7 +609,7 @@ jobs:
 
   release:
     name: Publish exact qualified target matrix
-    needs: [plan, tests, aggregate, release-distro, release-electron, release-overflow]
+    needs: [plan, tests, aggregate, release-distro, release-electron, release-kernel-baseline, release-overflow]
     if: >-
       always() &&
       github.event_name == 'push' &&
@@ -558,6 +619,7 @@ jobs:
       needs.aggregate.result == 'success' &&
       needs.release-distro.result == 'success' &&
       needs.release-electron.result == 'success' &&
+      needs.release-kernel-baseline.result == 'success' &&
       needs.release-overflow.result == 'success' &&
       needs.plan.outputs.will-release == 'true'
     runs-on: ubuntu-22.04

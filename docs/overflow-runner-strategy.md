@@ -84,7 +84,9 @@ ordinary CI binary:
 3. build each target twice in isolated Ubuntu 22.04 builders;
 4. byte-compare and aggregate the canonical x64 and ARM64 addons;
 5. exercise the canonical artifacts in every distro and Electron lane; and
-6. run the one selected overflow scenario once on each native Ubuntu 24.04
+6. exercise the canonical packages on the pinned real kernel-5.15 QEMU
+   component while retaining native runners as the architecture evidence; and
+7. run the one selected overflow scenario once on each native Ubuntu 24.04
    hosted architecture.
 
 A normal release push uses the same canonical artifact path and runs both

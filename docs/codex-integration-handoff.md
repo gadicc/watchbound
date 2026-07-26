@@ -1,7 +1,9 @@
 # Codex Desktop Linux handoff
 
-Status: pre-publication and pre-qualification. Do not enable or pin this
-candidate in Codex yet. The sibling repository was not modified.
+Status: pre-publication and pending final kernel-floor/promotion qualification.
+The native/distro/Electron/Nix and supervised-overflow basis is green, but do
+not enable or pin this candidate in Codex yet. The sibling repository was not
+modified.
 
 ## Package and loader contract
 

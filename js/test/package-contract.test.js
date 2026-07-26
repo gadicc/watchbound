@@ -98,6 +98,27 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
     kernelMinimum: "5.15",
     glibcMaximum: "2.35",
   });
+  assert.equal(
+    matrix.kernelBaselineQualification.classification,
+    "qemu-kernel-floor-component",
+  );
+  assert.equal(matrix.kernelBaselineQualification.kernelSeries, "5.15");
+  assert.equal(
+    matrix.kernelBaselineQualification.kernelRelease,
+    "5.15.0-185-generic",
+  );
+  assert.equal(
+    matrix.kernelBaselineQualification.image,
+    matrix.qualificationLanes[0].image,
+  );
+  for (const architecture of ["x64", "arm64"]) {
+    const artifacts = matrix.kernelBaselineQualification.artifacts[architecture];
+    assert.match(artifacts.qemuSystem, /^qemu-system-(?:x86_64|aarch64)$/u);
+    for (const artifact of [artifacts.kernel, artifacts.initrd]) {
+      assert.match(artifact.url, /release-20260705\/unpacked/u);
+      assert.match(artifact.sha256, /^[0-9a-f]{64}$/u);
+    }
+  }
   assert.deepEqual(
     matrix.targets.map((target) => ({
       id: target.id,
@@ -179,6 +200,10 @@ test("manual qualification is read-only while semantic release stays push-only",
     path.join(workspaceRoot, "scripts/record-overflow-preflight.mjs"),
     "utf8",
   );
+  const kernelBaseline = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/run-kernel-baseline-qualification.mjs"),
+    "utf8",
+  );
   const selectReleasePlan = fs.readFileSync(
     path.join(workspaceRoot, "scripts/select-release-plan.mjs"),
     "utf8",
@@ -227,6 +252,7 @@ test("manual qualification is read-only while semantic release stays push-only",
     aggregate: ["plan", "repro-compare"],
     "release-distro": ["plan", "aggregate"],
     "release-electron": ["plan", "aggregate"],
+    "release-kernel-baseline": ["plan", "aggregate"],
     "release-overflow": ["plan", "aggregate"],
     "qualification-verified": [
       "plan",
@@ -234,6 +260,7 @@ test("manual qualification is read-only while semantic release stays push-only",
       "aggregate",
       "release-distro",
       "release-electron",
+      "release-kernel-baseline",
       "release-overflow",
     ],
     release: [
@@ -242,6 +269,7 @@ test("manual qualification is read-only while semantic release stays push-only",
       "aggregate",
       "release-distro",
       "release-electron",
+      "release-kernel-baseline",
       "release-overflow",
     ],
     "registry-smoke": ["plan", "release"],
@@ -282,6 +310,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /^  aggregate:$/mu);
   assert.match(release, /^  release-distro:$/mu);
   assert.match(release, /^  release-electron:$/mu);
+  assert.match(release, /^  release-kernel-baseline:$/mu);
   assert.match(release, /^  release-overflow:$/mu);
   assert.match(release, /^  qualification-verified:$/mu);
   assert.match(release, /^  registry-smoke:$/mu);
@@ -293,6 +322,8 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /ubuntu-22\.04/u);
   assert.match(release, /glibc 2\.35/u);
   assert.match(release, /check-electron-asar\.mjs/u);
+  assert.match(release, /run-kernel-baseline-qualification\.mjs/u);
+  assert.match(release, /needs\.release-kernel-baseline\.result == 'success'/u);
   assert.match(release, /overflow-reconciliation,automatic-overflow-reconciliation/u);
   assert.match(release, /^    runs-on: \$\{\{ matrix\.overflowRunner \}\}$/mu);
   assert.match(release, /inputs\.scenario/u);
@@ -314,8 +345,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(ci, /^  push:\n    branches-ignore: \[main\]$/mu);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.source\)/u);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.qualification\)/u);
+  assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.kernel\)/u);
   assert.match(ci, /check-electron-asar\.mjs/u);
   assert.match(ci, /run-distro-qualification\.mjs/u);
+  assert.match(ci, /run-kernel-baseline-qualification\.mjs/u);
   assert.match(ci, /nix flake check --no-update-lock-file/u);
   assert.doesNotMatch(ci, /^\s*- uses: [^\s]+@v\d+(?:\.\d+)*\s*$/mu);
 
@@ -357,6 +390,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   assert.match(aggregateNativeBuilds, /watchbound-independent-native-matrix-comparison/u);
   assert.match(ciMatrix, /matrix\.qualificationLanes/u);
+  assert.match(ciMatrix, /matrix\.kernelBaselineQualification/u);
   assert.match(ciMatrix, /\["builder-a", "builder-b"\]/u);
   assert.match(ciMatrix, /runner: target\.runner/u);
   assert.match(overflowPreflight, /watchbound-overflow-qualification-preflight/u);
@@ -365,6 +399,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(overflowPreflight, /\/proc\/pressure/u);
   assert.match(overflowPreflight, /correctness/u);
   assert.match(overflowPreflight, /non-authoritative/u);
+  assert.match(kernelBaseline, /watchbound-kernel-baseline-qualification/u);
+  assert.match(kernelBaseline, /architectureEvidence/u);
+  assert.match(kernelBaseline, /not provided by this QEMU lane/u);
+  assert.match(kernelBaseline, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed/u);
   assert.match(selectReleasePlan, /watchbound-release-plan/u);
   assert.match(selectReleasePlan, /plan\.sourceSha/u);
   assert.match(selectReleasePlan, /git", \["rev-parse", "HEAD"\]/u);

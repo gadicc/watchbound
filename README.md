@@ -29,7 +29,9 @@ release. The unpublished `1.2.0` source candidate keeps generation-zero
 `initialExclusions`, targets Node `>=24.15.0 <25` for Electron 42, and adds an
 architecture-neutral loader with exact x64 and ARM64 GNU/Linux target packages.
 Both new targets report `target-pending-clean-ci`; they are buildable candidates,
-not qualified releases.
+not qualified releases. The native/distro/Electron/Nix and supervised-overflow
+basis is green; promotion still requires the exact kernel-5.15 component and a
+green status-bearing commit.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits to decide whether a release is
@@ -314,7 +316,8 @@ and the complete caveats.
 The manifests intentionally admit only Node `>=24.15.0 <25` and Linux glibc.
 The unpublished candidate defines native x64 and ARM64 packages with a kernel
 5.15/glibc 2.35 candidate baseline, Rust 1.88+, pnpm 10.33.2, and a working C
-toolchain; both targets remain pending the exact matrix. See
+toolchain; both targets remain pending the exact kernel-floor and promotion
+matrix. See
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
 floor, not a broader support claim. See the
 [release runbook](docs/releasing.md) for artifact validation, registry

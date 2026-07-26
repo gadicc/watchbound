@@ -74,6 +74,8 @@ For each registry native artifact, release qualification requires:
   handshake, and resource teardown;
 - callback serialization, cancellation, initial and dynamic exclusions,
   reconciliation, root recovery, and joined disposal;
+- checksum-pinned Ubuntu 22.04 kernel-5.15 execution under bounded QEMU as a
+  kernel-floor component, combined with separate native architecture evidence;
 - release-only, explicitly acknowledged forced-overflow and automatic
   overflow-reconciliation runs for the canonical target artifact;
 - CycloneDX 1.6 SBOM, checksums, release/build metadata, npm/JSR provenance,
@@ -81,7 +83,9 @@ For each registry native artifact, release qualification requires:
 
 Cross-compilation can demonstrate that source compiles. It cannot qualify a
 target. ARM64 execution uses a native ARM64 runner. Container distro lanes use
-the matching native host; they are not QEMU qualification.
+the matching native host. The separate QEMU lane proves only that the exact
+package semantics run on the pinned 5.15 kernel; it never substitutes for the
+native target lanes.
 
 ## Nix boundary
 

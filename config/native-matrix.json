@@ -12,6 +12,44 @@
     "kernelMinimum": "5.15",
     "glibcMaximum": "2.35"
   },
+  "kernelBaselineQualification": {
+    "classification": "qemu-kernel-floor-component",
+    "distribution": "ubuntu",
+    "version": "22.04",
+    "kernelSeries": "5.15",
+    "kernelRelease": "5.15.0-185-generic",
+    "image": "docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7",
+    "artifacts": {
+      "x64": {
+        "qemuSystem": "qemu-system-x86_64",
+        "qemuPackage": "qemu-system-x86",
+        "machine": "q35",
+        "console": "ttyS0",
+        "kernel": {
+          "url": "https://cloud-images.ubuntu.com/releases/server/jammy/release-20260705/unpacked/ubuntu-22.04-server-cloudimg-amd64-vmlinuz-generic",
+          "sha256": "2ff0d20c0e7b3b51d171ad8b647b50cdcd3c9b636ec3bf734d7865d6fa774f06"
+        },
+        "initrd": {
+          "url": "https://cloud-images.ubuntu.com/releases/server/jammy/release-20260705/unpacked/ubuntu-22.04-server-cloudimg-amd64-initrd-generic",
+          "sha256": "1af8d8430cc3e8bb183904c1a16a7086cdfdbf0a99b49800d01f5717d063b0bc"
+        }
+      },
+      "arm64": {
+        "qemuSystem": "qemu-system-aarch64",
+        "qemuPackage": "qemu-system-arm",
+        "machine": "virt",
+        "console": "ttyAMA0",
+        "kernel": {
+          "url": "https://cloud-images.ubuntu.com/releases/server/jammy/release-20260705/unpacked/ubuntu-22.04-server-cloudimg-arm64-vmlinuz-generic",
+          "sha256": "8374d8b931ef126e091364af0df86c62ab0e2a9e03c912425c0fe9ec0c1c1408"
+        },
+        "initrd": {
+          "url": "https://cloud-images.ubuntu.com/releases/server/jammy/release-20260705/unpacked/ubuntu-22.04-server-cloudimg-arm64-initrd-generic",
+          "sha256": "5263de2235609c0b035f2e8de978a804e3c0a2c5cd5faa2e117cffe9db76c04e"
+        }
+      }
+    }
+  },
   "codexRuntime": {
     "electron": "42.3.0",
     "node": "24.15.0",

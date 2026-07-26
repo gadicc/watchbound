@@ -34,10 +34,14 @@ For each x64 and ARM64 registry target, the release workflow:
    distro lane on the same native architecture;
 6. runs the canonical package from `app.asar`/`app.asar.unpacked` under exact
    Electron 42.3.0 and Node 24.15.0;
-7. runs the I/O-heavy forced-overflow and automatic overflow-reconciliation
+7. boots the checksum-pinned Canonical Ubuntu 22.04 kernel 5.15 under bounded
+   QEMU and reruns the offline package, loader, real-delivery, recovery, and
+   joined-disposal smoke on each architecture; this is kernel-floor evidence
+   only and composes with, rather than replaces, native runner evidence;
+8. runs the I/O-heavy forced-overflow and automatic overflow-reconciliation
    scenarios against the canonical artifact on native GitHub-hosted Ubuntu
    24.04 x64 and ARM64 runners as correctness-only evidence; and
-8. relies on the reusable CI workflow for full semantics and locked Nix source
+9. relies on the reusable CI workflow for full semantics and locked Nix source
    closures on x64 and ARM64.
 
 The release job downloads the aggregate, repeats the current-runner build,
@@ -47,8 +51,9 @@ checksums, build metadata, CycloneDX 1.6 SBOM, and reproducibility evidence.
 No mismatch or missing target has a waiver path.
 
 Cross-compilation and QEMU-only execution cannot satisfy a target. Container
-lanes provide distro userspace evidence but share the runner kernel; kernel
-floor evidence must be recorded separately and truthfully.
+lanes provide distro userspace evidence but share the runner kernel. The QEMU
+lane establishes only the real pinned kernel floor and is accepted only in
+combination with the complete native architecture matrix.
 
 ## Supervised hosted overflow qualification
 
@@ -116,7 +121,8 @@ version where appropriate.
 ## Before changing a target to supported
 
 - Ensure the exact status-bearing commit has complete green x64/ARM64 source,
-  reproducibility, distro, Electron, Nix, and supervised overflow evidence.
+  reproducibility, distro, Electron, Nix, pinned kernel-floor, and supervised
+  overflow evidence.
 - Record runner/job URLs, artifact hashes, maximum GLIBC versions, host kernel
   facts, and caveats in a non-release evidence update.
 - Complete both adversarial packaging/release reviews.

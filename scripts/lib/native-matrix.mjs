@@ -22,6 +22,23 @@ export function validateNativeMatrix(matrix) {
   assert.equal(matrix.nodeApiMinimum, 6, "native matrix Node-API floor");
   assert.equal(matrix.releaseBaseline.glibcMaximum, "2.35");
   assert.equal(matrix.releaseBaseline.kernelMinimum, "5.15");
+  const kernelBaseline = matrix.kernelBaselineQualification;
+  assert.equal(kernelBaseline.classification, "qemu-kernel-floor-component");
+  assert.equal(kernelBaseline.distribution, matrix.releaseBaseline.distribution);
+  assert.equal(kernelBaseline.version, matrix.releaseBaseline.version);
+  assert.equal(kernelBaseline.kernelSeries, matrix.releaseBaseline.kernelMinimum);
+  assert.match(kernelBaseline.kernelRelease, /^5\.15\.0-[1-9][0-9]*-generic$/u);
+  assert.match(kernelBaseline.image, /@sha256:[0-9a-f]{64}$/u);
+  for (const architecture of ["x64", "arm64"]) {
+    const artifactSet = kernelBaseline.artifacts[architecture];
+    assert.ok(artifactSet, `kernel baseline omits ${architecture}`);
+    assert.match(artifactSet.qemuSystem, /^qemu-system-(?:x86_64|aarch64)$/u);
+    assert.match(artifactSet.qemuPackage, /^qemu-system-(?:x86|arm)$/u);
+    for (const artifact of [artifactSet.kernel, artifactSet.initrd]) {
+      assert.match(artifact.url, /^https:\/\/cloud-images\.ubuntu\.com\/releases\/server\/jammy\/release-[0-9]{8}\/unpacked\//u);
+      assert.match(artifact.sha256, /^[0-9a-f]{64}$/u);
+    }
+  }
   assert.ok(Array.isArray(matrix.targets) && matrix.targets.length > 0);
   assert.equal(
     new Set(matrix.targets.map(({ id }) => id)).size,

@@ -41,16 +41,6 @@ jobs:
     permissions:
       # semantic-release verifies push access even when dryRun is enabled.
       contents: write
-    outputs:
-      qualify: ${{ steps.plan.outputs.qualify }}
-      will-release: ${{ steps.plan.outputs.will-release }}
-      version: ${{ steps.plan.outputs.version }}
-      source-sha: ${{ steps.plan.outputs.source-sha }}
-      tag: ${{ steps.plan.outputs.tag }}
-      source: ${{ steps.matrix.outputs.source }}
-      build: ${{ steps.matrix.outputs.build }}
-      qualification: ${{ steps.matrix.outputs.qualification }}
-      registry: ${{ steps.matrix.outputs.registry }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -70,8 +60,6 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - id: matrix
-        run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
       - id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -95,16 +83,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    outputs:
-      qualify: ${{ steps.plan.outputs.qualify }}
-      will-release: ${{ steps.plan.outputs.will-release }}
-      version: ${{ steps.plan.outputs.version }}
-      source-sha: ${{ steps.plan.outputs.source-sha }}
-      tag: ${{ steps.plan.outputs.tag }}
-      source: ${{ steps.matrix.outputs.source }}
-      build: ${{ steps.matrix.outputs.build }}
-      qualification: ${{ steps.matrix.outputs.qualification }}
-      registry: ${{ steps.matrix.outputs.registry }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -140,8 +118,6 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - id: matrix
-        run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
       - id: plan
         run: >-
           node scripts/plan-release.mjs
@@ -168,17 +144,40 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      qualify: ${{ needs.release-plan.outputs.qualify || needs.qualification-plan.outputs.qualify }}
-      will-release: ${{ needs.release-plan.outputs.will-release || needs.qualification-plan.outputs.will-release }}
-      version: ${{ needs.release-plan.outputs.version || needs.qualification-plan.outputs.version }}
-      source-sha: ${{ needs.release-plan.outputs.source-sha || needs.qualification-plan.outputs.source-sha }}
-      tag: ${{ needs.release-plan.outputs.tag || needs.qualification-plan.outputs.tag }}
-      source: ${{ needs.release-plan.outputs.source || needs.qualification-plan.outputs.source }}
-      build: ${{ needs.release-plan.outputs.build || needs.qualification-plan.outputs.build }}
-      qualification: ${{ needs.release-plan.outputs.qualification || needs.qualification-plan.outputs.qualification }}
-      registry: ${{ needs.release-plan.outputs.registry || needs.qualification-plan.outputs.registry }}
+      qualify: ${{ steps.select.outputs.qualify }}
+      will-release: ${{ steps.select.outputs.will-release }}
+      version: ${{ steps.select.outputs.version }}
+      source-sha: ${{ steps.select.outputs.source-sha }}
+      tag: ${{ steps.select.outputs.tag }}
+      source: ${{ steps.matrix.outputs.source }}
+      build: ${{ steps.matrix.outputs.build }}
+      qualification: ${{ steps.matrix.outputs.qualification }}
+      registry: ${{ steps.matrix.outputs.registry }}
     steps:
-      - run: echo "Selected the successful exact-candidate plan."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: x64
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ github.event_name == 'workflow_dispatch' && format('watchbound-qualification-plan-{0}-{1}', github.run_id, github.run_attempt) || format('watchbound-release-plan-{0}', github.run_attempt) }}
+          path: ${{ runner.temp }}/selected-plan
+      - id: matrix
+        run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
+      - id: select
+        env:
+          PLAN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'qualification' || 'release' }}
+        run: >-
+          node scripts/select-release-plan.mjs
+          --mode "$PLAN_MODE"
+          --input "$RUNNER_TEMP/selected-plan/$PLAN_MODE-plan.json"
+          --github-output "$GITHUB_OUTPUT"
 
   tests:
     name: Qualify exact release source

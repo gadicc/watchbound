@@ -179,6 +179,10 @@ test("manual qualification is read-only while semantic release stays push-only",
     path.join(workspaceRoot, "scripts/record-overflow-preflight.mjs"),
     "utf8",
   );
+  const selectReleasePlan = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/select-release-plan.mjs"),
+    "utf8",
+  );
   const flake = fs.readFileSync(path.join(workspaceRoot, "flake.nix"), "utf8");
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
   assert.match(
@@ -198,6 +202,21 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /ref: \$\{\{ inputs\.candidate_sha \}\}/u);
   assert.match(release, /github\.run_attempt/u);
   assert.match(release, /^  plan:\n    name: Select exact candidate plan/mu);
+  assert.match(release, /watchbound-qualification-plan-/u);
+  assert.match(release, /actions\/download-artifact@/u);
+  assert.match(release, /select-release-plan\.mjs/u);
+  assert.match(
+    release,
+    /^      qualify: \$\{\{ steps\.select\.outputs\.qualify \}\}$/mu,
+  );
+  assert.match(
+    release,
+    /^      source: \$\{\{ steps\.matrix\.outputs\.source \}\}$/mu,
+  );
+  assert.doesNotMatch(
+    release,
+    /needs\.release-plan\.outputs\.qualify \|\|/u,
+  );
   assert.match(
     release,
     /if: github\.event_name == 'push' \|\| needs\.plan\.outputs\.qualify == 'true'/u,
@@ -298,6 +317,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(overflowPreflight, /\/proc\/pressure/u);
   assert.match(overflowPreflight, /correctness/u);
   assert.match(overflowPreflight, /non-authoritative/u);
+  assert.match(selectReleasePlan, /watchbound-release-plan/u);
+  assert.match(selectReleasePlan, /plan\.sourceSha/u);
+  assert.match(selectReleasePlan, /git", \["rev-parse", "HEAD"\]/u);
+  assert.match(selectReleasePlan, /will-release=/u);
   assert.match(flake, /eachSystem \[ "x86_64-linux" "aarch64-linux" \]/u);
   assert.match(flake, /electron-v\$\{matrix\.codexRuntime\.electron\}-linux-/u);
   assert.match(flake, /target\.codexElectron\.sha256SRI/u);

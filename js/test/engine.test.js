@@ -9,7 +9,20 @@ import {
   createEngine,
   subscribe,
 } from "../index.js";
+import nativeMatrix from "../../config/native-matrix.json" with {
+  type: "json",
+};
 import wrapperPackage from "../package.json" with { type: "json" };
+
+const currentTarget = nativeMatrix.targets.find(
+  (target) =>
+    target.platform === process.platform &&
+    target.architecture === process.arch,
+);
+assert.ok(
+  currentTarget,
+  `native matrix omits the current runtime ${process.platform}/${process.arch}`,
+);
 
 function assertDeeplyFrozen(value, seen = new Set()) {
   if (value === null || typeof value !== "object" || seen.has(value)) return;
@@ -40,17 +53,17 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
     delivery: "controlled-source-build",
     prebuilt: false,
     profile: "release",
-    targetTriple: "x86_64-unknown-linux-gnu",
+    targetTriple: currentTarget.rustTarget,
     nodeApi: 6,
     rustMinimum: "1.88",
     packagedTarget: {
-      id: "linux-x64-gnu",
+      id: currentTarget.id,
       package: null,
-      binary: "watchbound.linux-x64-gnu.node",
+      binary: currentTarget.binary,
       sha256: capabilities.build.packagedTarget.sha256,
-      architecture: "x64",
-      libc: "glibc",
-      qualification: "target-pending-clean-ci",
+      architecture: currentTarget.architecture,
+      libc: currentTarget.libc,
+      qualification: currentTarget.qualification,
     },
   });
   assert.match(capabilities.build.packagedTarget.sha256, /^[0-9a-f]{64}$/u);
@@ -117,10 +130,10 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
   );
   assert.equal(capabilities.support.qualificationLanes.length, 7);
   assert.deepEqual(capabilities.support.currentRuntime, {
-    packagedTargetId: "linux-x64-gnu",
+    packagedTargetId: currentTarget.id,
     runtimeMatchesPackagedTarget: true,
-    qualification: "target-pending-clean-ci",
-    supported: false,
+    qualification: currentTarget.qualification,
+    supported: currentTarget.qualification === "supported",
   });
   assert.deepEqual(
     capabilities.support.intentionallyUnsupported.map(({ target }) => target),

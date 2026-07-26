@@ -106,13 +106,14 @@
           '';
         };
         packageSmoke = pkgs.runCommand "watchbound-nix-package-smoke-${target.id}" {
-          nativeBuildInputs = [ node ];
+          nativeBuildInputs = [ electronRuntime ];
         } ''
           mkdir -p "$TMPDIR/project"
           ln -s ${watchboundPackage}/lib/node_modules "$TMPDIR/project/node_modules"
           native="${watchboundPackage}/lib/node_modules/${target.package}/${target.binary}"
           digest="$(sha256sum "$native" | cut -d ' ' -f 1)"
-          node ${sourceRoot}/scripts/check-installed-package.mjs \
+          test "$(ELECTRON_RUN_AS_NODE=1 electron --version)" = "v${matrix.codexRuntime.node}"
+          ELECTRON_RUN_AS_NODE=1 electron ${sourceRoot}/scripts/check-installed-package.mjs \
             --project "$TMPDIR/project" \
             --wrapper watchbound \
             --version ${rootPackage.version} \

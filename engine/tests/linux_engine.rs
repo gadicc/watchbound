@@ -155,6 +155,12 @@ fn batches_a_file_burst_with_monotonic_sequences() {
     assert_eq!(observed, expected);
     assert!(sequences.len() <= 12, "burst fragmented into {sequences:?}");
     assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
+    let delivered_deadline = Instant::now() + TIMEOUT;
+    while subscription.stats().batches_delivered < sequences.len() as u64
+        && Instant::now() < delivered_deadline
+    {
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert_eq!(
         subscription.stats().batches_delivered,
         sequences.len() as u64

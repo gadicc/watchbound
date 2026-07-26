@@ -219,7 +219,55 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   assert.match(
     release,
-    /if: github\.event_name == 'push' \|\| needs\.plan\.outputs\.qualify == 'true'/u,
+    /if: >-\n      always\(\) &&\n      needs\.plan\.result == 'success' &&\n      \(github\.event_name == 'push' \|\|\n      needs\.plan\.outputs\.qualify == 'true'\)/u,
+  );
+  const cascadeJobs = {
+    "repro-build": ["plan"],
+    "repro-compare": ["plan", "repro-build"],
+    aggregate: ["plan", "repro-compare"],
+    "release-distro": ["plan", "aggregate"],
+    "release-electron": ["plan", "aggregate"],
+    "release-overflow": ["plan", "aggregate"],
+    "qualification-verified": [
+      "plan",
+      "tests",
+      "aggregate",
+      "release-distro",
+      "release-electron",
+      "release-overflow",
+    ],
+    release: [
+      "plan",
+      "tests",
+      "aggregate",
+      "release-distro",
+      "release-electron",
+      "release-overflow",
+    ],
+    "registry-smoke": ["plan", "release"],
+    verified: ["registry-smoke"],
+  };
+  for (const [job, requiredResults] of Object.entries(cascadeJobs)) {
+    const start = release.indexOf(`  ${job}:\n`);
+    assert.notEqual(start, -1, `${job} job exists`);
+    const bodyStart = start + job.length + 4;
+    const nextHeader = release.slice(bodyStart).match(/\n  [a-z0-9-]+:\n/u);
+    const next = nextHeader?.index === undefined
+      ? -1
+      : bodyStart + nextHeader.index;
+    const block = release.slice(start, next === -1 ? undefined : next);
+    assert.match(block, /    if: >-\n      always\(\) &&/u, `${job} breaks the skipped-ancestor cascade`);
+    for (const required of requiredResults) {
+      assert.match(
+        block,
+        new RegExp(`needs\\.${required}\\.result == 'success'`, "u"),
+        `${job} requires ${required} to succeed`,
+      );
+    }
+  }
+  assert.match(
+    release,
+    /needs\.tests\.result == 'success' &&[\s\S]*?needs\.release-overflow\.result == 'success' &&[\s\S]*?needs\.plan\.outputs\.will-release == 'true'/u,
   );
   assert.match(release, /github\.event_name == 'push'/u);
   assert.match(release, /github\.ref == 'refs\/heads\/main'/u);

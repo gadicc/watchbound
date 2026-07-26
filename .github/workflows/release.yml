@@ -182,7 +182,11 @@ jobs:
   tests:
     name: Qualify exact release source
     needs: plan
-    if: github.event_name == 'push' || needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      (github.event_name == 'push' ||
+      needs.plan.outputs.qualify == 'true')
     uses: ./.github/workflows/ci.yml
     with:
       candidate_sha: ${{ needs.plan.outputs.source-sha }}
@@ -192,7 +196,10 @@ jobs:
   repro-build:
     name: Reproduce ${{ matrix.target }} (${{ matrix.builder }})
     needs: plan
-    if: needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -270,7 +277,11 @@ jobs:
   repro-compare:
     name: Compare independent ${{ matrix.target }} outputs
     needs: [plan, repro-build]
-    if: needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.repro-build.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -311,7 +322,11 @@ jobs:
   aggregate:
     name: Aggregate reproducible target matrix
     needs: [plan, repro-compare]
-    if: needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.repro-compare.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -343,7 +358,11 @@ jobs:
   release-distro:
     name: Release artifact ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
     needs: [plan, aggregate]
-    if: needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -386,7 +405,11 @@ jobs:
   release-electron:
     name: Release Codex Electron (${{ matrix.target }})
     needs: [plan, aggregate]
-    if: needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
@@ -433,7 +456,11 @@ jobs:
   release-overflow:
     name: Supervised overflow gate (${{ matrix.target }})
     needs: [plan, aggregate]
-    if: needs.plan.outputs.qualify == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.overflowRunner }}
     timeout-minutes: 45
     strategy:
@@ -499,7 +526,15 @@ jobs:
   qualification-verified:
     name: Manual qualification verified
     needs: [plan, tests, aggregate, release-distro, release-electron, release-overflow]
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      needs.plan.result == 'success' &&
+      needs.tests.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.release-distro.result == 'success' &&
+      needs.release-electron.result == 'success' &&
+      needs.release-overflow.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -515,8 +550,15 @@ jobs:
     name: Publish exact qualified target matrix
     needs: [plan, tests, aggregate, release-distro, release-electron, release-overflow]
     if: >-
+      always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
+      needs.plan.result == 'success' &&
+      needs.tests.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.release-distro.result == 'success' &&
+      needs.release-electron.result == 'success' &&
+      needs.release-overflow.result == 'success' &&
       needs.plan.outputs.will-release == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 50
@@ -587,7 +629,11 @@ jobs:
   registry-smoke:
     name: Registry (${{ matrix.route }}, ${{ matrix.target }})
     needs: [plan, release]
-    if: needs.release.outputs.published == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.release.result == 'success' &&
+      needs.release.outputs.published == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -634,7 +680,9 @@ jobs:
   verified:
     name: Stable target matrix verified
     needs: registry-smoke
-    if: needs.registry-smoke.result == 'success'
+    if: >-
+      always() &&
+      needs.registry-smoke.result == 'success'
     runs-on: ubuntu-24.04
     steps:
       - run: echo "Every exact npm and JSR target route passed."

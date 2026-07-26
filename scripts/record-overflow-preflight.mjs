@@ -9,6 +9,7 @@ import {
   nativeArtifactEntries,
   targetForId,
 } from "./lib/native-matrix.mjs";
+import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -70,11 +71,10 @@ function recordEvidence(destination) {
 
   const rootPackage = readJson(path.join(workspaceRoot, "package.json"));
   const sourceSha = capture("git", ["rev-parse", "HEAD"]);
-  const sourceStatus = capture("git", [
-    "status",
-    "--porcelain=v1",
-    "--untracked-files=all",
-  ]);
+  const candidate = verifyReleaseCandidate(workspaceRoot, {
+    sourceSha,
+    version: rootPackage.version,
+  });
   const comparisonPath = path.join(
     canonicalRoot,
     "independent-reproducibility.json",
@@ -90,13 +90,12 @@ function recordEvidence(destination) {
   const uname = capture("uname", ["-m"]);
   const glibc = capture("getconf", ["GNU_LIBC_VERSION"]);
 
-  check(sourceStatus === "", "qualification source checkout is not clean");
   check(
     JSON.stringify(nativeArtifactEntries(workspaceRoot)) ===
       JSON.stringify([target.binary]),
     "qualification checkout does not contain exactly the intended native artifact",
   );
-  check(comparison.schemaVersion === 1, "canonical matrix schema is not 1");
+  check(comparison.schemaVersion === 2, "canonical matrix schema is not 2");
   check(
     comparison.kind === "watchbound-independent-native-matrix-comparison",
     "canonical matrix kind is invalid",
@@ -108,6 +107,10 @@ function recordEvidence(destination) {
   check(
     comparison.version === rootPackage.version,
     "canonical matrix version differs",
+  );
+  check(
+    JSON.stringify(comparison.candidate) === JSON.stringify(candidate),
+    "canonical matrix candidate materialization differs",
   );
   check(Boolean(comparisonTarget), "canonical matrix target is missing");
   check(
@@ -152,8 +155,9 @@ function recordEvidence(destination) {
 
   destination.source = {
     gitHead: sourceSha,
-    gitDirty: false,
+    gitDirty: candidate.gitDirty,
     version: rootPackage.version,
+    materialization: candidate,
     locks: {
       cargo: sha256(fs.readFileSync(path.join(workspaceRoot, "Cargo.lock"))),
       pnpm: sha256(fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"))),

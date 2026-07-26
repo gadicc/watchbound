@@ -21,7 +21,10 @@ test("private manifests retain source-build development and architecture-neutral
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
   const { version } = root;
-  assert.equal(version, "1.2.0");
+  assert.equal(
+    version,
+    process.env.WATCHBOUND_CANDIDATE_VERSION ?? "0.0.0-development",
+  );
 
   assert.equal(wrapper.name, "watchbound");
   assert.equal(native.name, "@gadicc/watchbound-node");
@@ -81,6 +84,7 @@ test("private manifests retain source-build development and architecture-neutral
     "node scripts/check-registry-packages.mjs",
   );
   assert.equal(root.scripts.release, "semantic-release");
+  assert.match(root.scripts.check, /check:source-version/u);
   assert.equal(root.devDependencies["semantic-release"], "25.0.8");
   for (const crate of ["engine/Cargo.toml", "node/Cargo.toml"]) {
     const source = fs.readFileSync(path.join(workspaceRoot, crate), "utf8");
@@ -180,6 +184,21 @@ test("manual qualification is read-only while semantic release stays push-only",
     path.join(workspaceRoot, "scripts/semantic-release-watchbound.mjs"),
     "utf8",
   );
+  const planRelease = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/plan-release.mjs"),
+    "utf8",
+  );
+  const checkSourceVersion = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/check-source-version.mjs"),
+    "utf8",
+  );
+  const materializeAction = fs.readFileSync(
+    path.join(
+      workspaceRoot,
+      ".github/actions/materialize-release-candidate/action.yml",
+    ),
+    "utf8",
+  );
   const recordNativeBuild = fs.readFileSync(
     path.join(workspaceRoot, "scripts/record-native-build.mjs"),
     "utf8",
@@ -230,6 +249,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /watchbound-qualification-plan-/u);
   assert.match(release, /actions\/download-artifact@/u);
   assert.match(release, /select-release-plan\.mjs/u);
+  assert.match(release, /candidate_version: \$\{\{ needs\.plan\.outputs\.version \}\}/u);
+  assert.match(release, /\.github\/actions\/materialize-release-candidate/u);
+  assert.match(release, /verify-release-candidate\.mjs/u);
   assert.match(
     release,
     /^      qualify: \$\{\{ steps\.select\.outputs\.qualify \}\}$/mu,
@@ -342,6 +364,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.doesNotMatch(ci, /workflow_dispatch/u);
   assert.match(ci, /^  workflow_call:\n    inputs:\n      candidate_sha:/mu);
   assert.match(ci, /inputs\.candidate_sha \|\| github\.sha/u);
+  assert.match(ci, /^      candidate_version:/mu);
+  assert.match(ci, /inputs\.candidate_version != ''/u);
+  assert.match(ci, /\.github\/actions\/materialize-release-candidate/u);
   assert.match(ci, /^  push:\n    branches-ignore: \[main\]$/mu);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.source\)/u);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.qualification\)/u);
@@ -360,6 +385,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(config, /dist\/evidence\/SHA256SUMS/u);
 
   assert.match(plugin, /scripts\/set-release-version\.mjs/u);
+  assert.match(plugin, /assertWorkspaceVersion\(workspaceRoot, SOURCE_VERSION\)/u);
+  assert.match(plugin, /verifyReleaseCandidate/u);
+  assert.doesNotMatch(plugin, /committedVersion/u);
   assert.match(plugin, /pnpm", \["check:reproducible"\]/u);
   assert.match(plugin, /pnpm", \["test:packages"\]/u);
   assert.match(plugin, /installCanonicalNativeMatrix/u);
@@ -384,6 +412,12 @@ test("manual qualification is read-only while semantic release stays push-only",
     recordNativeBuild,
     /rustFlags: requiredEnvironment\("RUSTFLAGS"\)/u,
   );
+  assert.match(recordNativeBuild, /schemaVersion: 2/u);
+  assert.match(recordNativeBuild, /materialization: candidate/u);
+  assert.match(compareNativeBuilds, /schemaVersion: 2/u);
+  assert.match(compareNativeBuilds, /manifest\.source\.materialization/u);
+  assert.match(aggregateNativeBuilds, /schemaVersion: 2/u);
+  assert.match(aggregateNativeBuilds, /candidate,/u);
   assert.match(
     compareNativeBuilds,
     /--remap-path-prefix=\$\{manifest\.isolation\.cargoHome\}=\/watchbound\/cargo-home/u,
@@ -405,9 +439,19 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(kernelBaseline, /installed-package-smoke-helpers\.mjs/u);
   assert.match(kernelBaseline, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed/u);
   assert.match(selectReleasePlan, /watchbound-release-plan/u);
+  assert.match(selectReleasePlan, /plan\.schemaVersion, 2/u);
+  assert.match(selectReleasePlan, /plan\.sourceVersion, SOURCE_VERSION/u);
   assert.match(selectReleasePlan, /plan\.sourceSha/u);
   assert.match(selectReleasePlan, /git", \["rev-parse", "HEAD"\]/u);
   assert.match(selectReleasePlan, /will-release=/u);
+  assert.match(planRelease, /sourceVersion: SOURCE_VERSION/u);
+  assert.match(planRelease, /version: result\.nextRelease\.version/u);
+  assert.doesNotMatch(planRelease, /committed candidate/u);
+  assert.match(checkSourceVersion, /WATCHBOUND_CANDIDATE_VERSION/u);
+  assert.match(checkSourceVersion, /assertCommittedSourceVersion/u);
+  assert.match(checkSourceVersion, /verifyReleaseCandidate/u);
+  assert.match(materializeAction, /WATCHBOUND_CANDIDATE_SHA=.*GITHUB_ENV/su);
+  assert.match(materializeAction, /WATCHBOUND_CANDIDATE_VERSION=.*GITHUB_ENV/su);
   assert.match(flake, /eachSystem \[ "x86_64-linux" "aarch64-linux" \]/u);
   assert.match(flake, /electron-v\$\{matrix\.codexRuntime\.electron\}-linux-/u);
   assert.match(flake, /target\.codexElectron\.sha256SRI/u);
@@ -553,13 +597,13 @@ test("JSR publication can restore the loader and current target without networki
     (...args) => calls.push(args),
     "/tmp/watchbound-jsr",
     [
-      "/tmp/gadicc-watchbound-node-1.2.0.tgz",
-      "/tmp/gadicc-watchbound-node-linux-arm64-gnu-1.2.0.tgz",
+      "/tmp/gadicc-watchbound-node-9.8.7.tgz",
+      "/tmp/gadicc-watchbound-node-linux-arm64-gnu-9.8.7.tgz",
     ],
   );
   assert.deepEqual(calls[0][1].slice(-2), [
-    "/tmp/gadicc-watchbound-node-1.2.0.tgz",
-    "/tmp/gadicc-watchbound-node-linux-arm64-gnu-1.2.0.tgz",
+    "/tmp/gadicc-watchbound-node-9.8.7.tgz",
+    "/tmp/gadicc-watchbound-node-linux-arm64-gnu-9.8.7.tgz",
   ]);
   assert.ok(calls[0][1].includes("--offline"));
 });

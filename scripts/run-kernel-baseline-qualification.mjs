@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
+import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseOptions(process.argv.slice(2));
@@ -17,6 +18,8 @@ assert.ok(artifactSet, `kernel baseline omits ${target.architecture}`);
 assert.equal(options.image, baseline.image, "workflow image differs from the pinned kernel baseline");
 
 const version = readJson(path.join(workspaceRoot, "package.json")).version;
+const sourceSha = capture("git", ["rev-parse", "HEAD"]).trim();
+const candidate = verifyReleaseCandidate(workspaceRoot, { sourceSha, version });
 const packageManifest = readJson(path.join(workspaceRoot, "dist/native-package-manifest.json"));
 const packagedTarget = packageManifest.targets.find(({ id }) => id === target.id);
 assert.ok(packagedTarget, `prepared tree omits ${target.id}`);
@@ -128,9 +131,10 @@ try {
       performance: "non-authoritative",
     },
     source: {
-      gitHead: capture("git", ["rev-parse", "HEAD"]).trim(),
-      gitDirty: capture("git", ["status", "--porcelain=v1", "--untracked-files=all"]).trim() !== "",
+      gitHead: sourceSha,
+      gitDirty: candidate.gitDirty,
       version,
+      materialization: candidate,
     },
     target: {
       id: target.id,

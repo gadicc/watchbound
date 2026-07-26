@@ -191,6 +191,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       candidate_sha: ${{ needs.plan.outputs.source-sha }}
+      candidate_version: ${{ needs.plan.outputs.version }}
     permissions:
       contents: read
 
@@ -241,6 +242,10 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.source-sha }}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - name: Build in the isolated pinned toolchain
         shell: bash
         run: |
@@ -256,7 +261,9 @@ jobs:
           test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
           test "$(node --version)" = v24.15.0
           test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
-          git diff --exit-code -- Cargo.lock pnpm-lock.yaml
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.version }}"
       - name: Record exact build identity
         shell: bash
         run: |
@@ -295,6 +302,10 @@ jobs:
           ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 1
           persist-credentials: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: watchbound-native-${{ matrix.target }}-builder-a-${{ github.run_attempt }}
@@ -338,6 +349,10 @@ jobs:
           ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 1
           persist-credentials: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: watchbound-approved-*-${{ github.run_attempt }}
@@ -381,6 +396,10 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
@@ -402,6 +421,9 @@ jobs:
             --lane "${{ matrix.lane }}" --target "${{ matrix.target }}" \
             --image "${{ matrix.image }}" --node-root "$node_root" \
             --evidence "$RUNNER_TEMP/release-${{ matrix.lane }}-${{ matrix.architecture }}.json"
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.version }}"
 
   release-electron:
     name: Release Codex Electron (${{ matrix.target }})
@@ -428,6 +450,10 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
@@ -453,6 +479,9 @@ jobs:
             --electron "$RUNNER_TEMP/electron/electron" \
             --target "${{ matrix.target }}" \
             --evidence "$RUNNER_TEMP/release-electron-${{ matrix.target }}.json"
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.version }}"
 
   release-kernel-baseline:
     name: Release kernel 5.15 (${{ matrix.target }}, QEMU component)
@@ -479,6 +508,10 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - name: Install the architecture-native QEMU system emulator
         run: |
           sudo apt-get update
@@ -505,6 +538,9 @@ jobs:
             --image "${{ matrix.image }}" \
             --node-root "$node_root" \
             --evidence "$RUNNER_TEMP/release-kernel-${{ matrix.target }}.json"
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.version }}"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -538,6 +574,10 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
       - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
@@ -575,6 +615,9 @@ jobs:
               --allow-forced-overflow --strict --pretty \
               --output "$report" --quiet
           done
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.version }}"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

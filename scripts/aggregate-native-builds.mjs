@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix } from "./lib/native-matrix.mjs";
+import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,6 +17,7 @@ const outputRoot = path.resolve(workspaceRoot, options.output);
 const matrix = loadNativeMatrix(workspaceRoot);
 const version = readJson(path.join(workspaceRoot, "package.json")).version;
 const sourceSha = captureGitHead();
+const candidate = verifyReleaseCandidate(workspaceRoot, { sourceSha, version });
 
 fs.mkdirSync(outputRoot, { recursive: true });
 const targets = matrix.targets.map((target) => {
@@ -26,10 +28,11 @@ const targets = matrix.targets.map((target) => {
   const binaryPath = path.join(targetRoot, target.binary);
   const binary = fs.readFileSync(binaryPath);
   const observedSha256 = crypto.createHash("sha256").update(binary).digest("hex");
-  assert.equal(comparison.schemaVersion, 1);
+  assert.equal(comparison.schemaVersion, 2);
   assert.equal(comparison.kind, "watchbound-independent-native-comparison");
   assert.equal(comparison.sourceSha, sourceSha);
   assert.equal(comparison.version, version);
+  assert.deepEqual(comparison.candidate, candidate);
   assert.equal(comparison.targetId, target.id);
   assert.equal(comparison.target, target.rustTarget);
   assert.equal(comparison.sha256, observedSha256);
@@ -49,10 +52,11 @@ const targets = matrix.targets.map((target) => {
 });
 
 const aggregate = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   kind: "watchbound-independent-native-matrix-comparison",
   sourceSha,
   version,
+  candidate,
   targets,
 };
 const outputPath = path.join(outputRoot, "independent-reproducibility.json");

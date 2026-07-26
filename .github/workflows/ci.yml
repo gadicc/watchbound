@@ -10,6 +10,10 @@ on:
         description: Exact source SHA supplied by the release qualification caller
         required: false
         type: string
+      candidate_version:
+        description: Version selected by semantic-release for exact release qualification
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -66,6 +70,11 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
       - name: Set up pinned Rust and pnpm
         shell: bash
         run: |
@@ -106,7 +115,13 @@ jobs:
           pnpm build:node
           test -f "node/${{ matrix.binary }}"
           test "$(find node -maxdepth 1 -type f -name '*.node' -print | wc -l)" -eq 1
-          git diff --exit-code -- Cargo.lock pnpm-lock.yaml node/index.js node/index.d.ts node/load-native.cjs
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          else
+            git diff --exit-code -- Cargo.lock pnpm-lock.yaml node/index.js node/index.d.ts node/load-native.cjs
+          fi
           pnpm test
           pnpm check
           pnpm test:soak
@@ -122,7 +137,15 @@ jobs:
         with:
           deno-version: v2.6.7
       - name: Rehearse npm and JSR artifacts offline
-        run: pnpm test:packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm test:packages
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
       - name: Retain the target artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -147,6 +170,11 @@ jobs:
           architecture: x64
           check-latest: true
           package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
       - name: Exercise the moving supported tool range
         shell: bash
         run: |
@@ -159,6 +187,11 @@ jobs:
           pnpm build:node
           pnpm test
           pnpm check
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
 
   distro-qualification:
     name: Runtime ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
@@ -180,6 +213,11 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
       - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
@@ -204,6 +242,11 @@ jobs:
             --image "${{ matrix.image }}" \
             --node-root "$node_root" \
             --evidence "$RUNNER_TEMP/watchbound-${{ matrix.lane }}-${{ matrix.architecture }}.json"
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -232,6 +275,11 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
       - name: Install the architecture-native QEMU system emulator
         run: |
           sudo apt-get update
@@ -257,6 +305,11 @@ jobs:
             --image "${{ matrix.image }}" \
             --node-root "$node_root" \
             --evidence "$RUNNER_TEMP/watchbound-kernel-${{ matrix.target }}.json"
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -285,6 +338,11 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
       - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
@@ -310,6 +368,11 @@ jobs:
             --electron "$RUNNER_TEMP/electron/electron" \
             --target "${{ matrix.target }}" \
             --evidence "$RUNNER_TEMP/watchbound-electron-${{ matrix.target }}.json"
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -335,6 +398,16 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
       - name: Build and exercise the locked source closure
         shell: bash
@@ -342,3 +415,8 @@ jobs:
           set -euo pipefail
           test "$(nix eval --impure --raw --expr builtins.currentSystem)" = "${{ matrix.system }}"
           nix flake check --no-update-lock-file --print-build-logs
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi

@@ -1,6 +1,6 @@
 {
   "name": "watchbound",
-  "version": "1.2.0",
+  "version": "0.0.0-development",
   "private": true,
   "description": "Private source workspace for the Watchbound JavaScript wrapper",
   "author": "Gadi Cohen <dragon@wastelands.net>",
@@ -40,6 +40,6 @@
     }
   },
   "dependencies": {
-    "@gadicc/watchbound-node": "workspace:1.2.0"
+    "@gadicc/watchbound-node": "workspace:0.0.0-development"
   }
 }

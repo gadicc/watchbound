@@ -22,21 +22,21 @@ the JavaScript subscription API is otherwise compatible.
 ## Registry coordinates not yet available
 
 Because this task explicitly forbids publication, there are no official
-`1.2.0` tarballs and therefore no truthful npm integrity, npm shasum, registry
+tarballs for the multi-target candidate and therefore no truthful npm integrity, npm shasum, registry
 tarball digest, ARM64 native SHA-256, or official URL to place in Codex's
 artifact manifest. Expected registry URL forms after an approved publication
 are:
 
 ```text
-https://registry.npmjs.org/watchbound/-/watchbound-1.2.0.tgz
-https://registry.npmjs.org/@gadicc/watchbound-node/-/watchbound-node-1.2.0.tgz
-https://registry.npmjs.org/@gadicc/watchbound-node-linux-x64-gnu/-/watchbound-node-linux-x64-gnu-1.2.0.tgz
-https://registry.npmjs.org/@gadicc/watchbound-node-linux-arm64-gnu/-/watchbound-node-linux-arm64-gnu-1.2.0.tgz
+https://registry.npmjs.org/watchbound/-/watchbound-<version>.tgz
+https://registry.npmjs.org/@gadicc/watchbound-node/-/watchbound-node-<version>.tgz
+https://registry.npmjs.org/@gadicc/watchbound-node-linux-x64-gnu/-/watchbound-node-linux-x64-gnu-<version>.tgz
+https://registry.npmjs.org/@gadicc/watchbound-node-linux-arm64-gnu/-/watchbound-node-linux-arm64-gnu-<version>.tgz
 ```
 
 Treat those as coordinates, not existing artifacts. After publication, obtain
 the exact `dist.tarball`, `dist.integrity`, and `dist.shasum` with
-`npm view <package>@1.2.0 --json`; download once, verify integrity, record the
+`npm view <package>@<version> --json`; download once, verify integrity, record the
 tarball SHA-256 and the package-declared/computed native SHA-256, and pin all
 four immutable packages. Never synthesize integrity from a local rehearsal.
 
@@ -70,7 +70,7 @@ source revision.
 
 - Kernel 5.15 floor evidence remains deliberately separate from native Ubuntu
   24.04 overflow correctness evidence; both components are complete.
-- The npm target-name bootstrap is complete, but no official `1.2.0` package
+- The npm target-name bootstrap is complete, but no official candidate package
   has been published.
 - Publication, official integrity values, and Codex repository edits were
   explicitly outside this task's authority.

@@ -9,7 +9,7 @@ establishment, bounded per-environment native-to-Node delivery, and
 promise-aware serialized callbacks. The earlier contract is published as the
 `0.0.1` npm/JSR bootstrap. The `1.0.0` callback source qualified and was
 published, but its JSR Node route exposed a packaging incompatibility. The
-corrected `1.0.1` package is qualified. The unpublished `1.2.0` candidate adds
+corrected `1.0.1` package is qualified. The unpublished multi-target candidate adds
 an architecture-neutral loader and exact x64/ARM64 GNU target packages; both
 are supported by the checked-in source matrix after exact-commit
 qualification. An opt-in Codex Desktop Linux

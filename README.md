@@ -25,7 +25,7 @@ rewritten. The `1.0.0` source added promise-aware callbacks, callback
 cancellation context, binding API 3, and capability schema 3. Its source and
 npm packages qualified, but its JSR Node route exposed a normalized-manifest
 incompatibility. The corrected `1.0.1` package is the current qualified
-release. The unpublished `1.2.0` source candidate keeps generation-zero
+release. The unpublished multi-target source candidate keeps generation-zero
 `initialExclusions`, targets Node `>=24.15.0 <25` for Electron 42, and adds an
 architecture-neutral loader with exact x64 and ARM64 GNU/Linux target packages.
 Both new targets now report `supported` in the source matrix after complete
@@ -34,10 +34,12 @@ supervised overflow qualification. They remain unpublished candidates rather
 than official registry packages.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
-semantic-release uses Conventional Commits to decide whether a release is
-needed and verifies the committed lockstep version across both npm packages,
-JSR, Rust, checksums, and the SBOM. The Release workflow runs only for pushes
-to `main`; pushes to `dev` and other branches run CI but cannot publish.
+semantic-release uses Conventional Commits and release tags as the sole
+published-version authority. Checked-in npm, Cargo, and lockfile versions stay
+at `0.0.0-development`; the Release workflow deterministically materializes
+semantic-release's planned version across every builder, package, checksum,
+and SBOM without committing it. The workflow runs only for pushes to `main`;
+pushes to `dev` and other branches run CI but cannot publish.
 The qualified `1.0.1` registry artifact retains its historical Ubuntu 24.04
 x64 contract. Candidate generated artifacts identify their exact packaged
 target separately from observed runtime and per-target qualification; source
@@ -176,10 +178,10 @@ Watchbound is a poor fit for exact filesystem journals, per-event audit logs,
 consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own native delivery and a
 joined-disposal lifecycle. The published `1.0.1` target remains historically
-narrow. The unpublished `1.2.0` candidate defines x64 and ARM64 GNU/Linux
+narrow. The unpublished multi-target candidate defines x64 and ARM64 GNU/Linux
 packages, a qualified kernel 5.15/glibc 2.35 baseline, and Node
 `>=24.15.0 <25`; both targets are supported by the checked-in source matrix,
-but official `1.2.0` packages have not been published.
+but official packages for that candidate have not been published.
 WSL, network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, ARMv7, and all non-Linux platforms remain
 unqualified or unsupported. See
@@ -228,7 +230,7 @@ inotify backend.
 | Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout; `1.0.1` is the qualified historical one-target npm/JSR release. The unpublished `1.2.0` candidate generates a neutral loader and qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout; `1.0.1` is the qualified historical one-target npm/JSR release. The unpublished multi-target candidate generates a neutral loader and qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -364,7 +366,7 @@ per-target qualification, the legacy single-target support fields,
 features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
 callback queue, single-credit admission, and promise-aware serialized callback
-completion explicitly. Runtime facts do not widen support. The `1.2.0` target
+completion explicitly. Runtime facts do not widen support. The candidate target
 entries are deliberately `supported` after exact-commit native and kernel-floor
 evidence plus both supervised overflow scenarios. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md)

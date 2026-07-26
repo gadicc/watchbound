@@ -1,6 +1,6 @@
 # Native matrix migration
 
-The unpublished `1.2.0` candidate changes generated delivery from one bundled
+The unpublished multi-target candidate changes generated delivery from one bundled
 x64 addon to an architecture-neutral loader plus exact optional target
 packages. Source development still uses `pnpm build:node` and loads the one
 local host artifact.

@@ -6,6 +6,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "./install-jsr-native.mjs";
 import { loadNativeMatrix, targetForRuntime } from "./lib/native-matrix.mjs";
+import {
+  SOURCE_VERSION,
+  assertWorkspaceVersion,
+  verifyReleaseCandidate,
+} from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -13,21 +18,11 @@ const workspaceRoot = path.resolve(
 );
 
 export function prepare(_pluginConfig, { nextRelease }) {
-  const committedVersion = readJson("package.json").version;
-  assertReleaseIdentity(nextRelease.version, committedVersion);
+  assertPlannedVersion(nextRelease.version);
+  assertWorkspaceVersion(workspaceRoot, SOURCE_VERSION);
   assertReleaseTargetsQualified();
   run(process.execPath, ["scripts/set-release-version.mjs", nextRelease.version]);
-  run("git", [
-    "diff",
-    "--exit-code",
-    "--",
-    "package.json",
-    "js/package.json",
-    "node/package.json",
-    "Cargo.toml",
-    "Cargo.lock",
-    "pnpm-lock.yaml",
-  ]);
+  verifyCurrentCandidate(nextRelease.version);
   installCanonicalNativeMatrix();
   run("pnpm", ["check:reproducible"]);
   run("pnpm", ["test:packages"]);
@@ -35,7 +30,9 @@ export function prepare(_pluginConfig, { nextRelease }) {
 
 export async function publish(_pluginConfig, { nextRelease }) {
   const { version } = nextRelease;
-  assertReleaseIdentity(version, readJson("package.json").version);
+  assertPlannedVersion(version);
+  assert.equal(readJson("package.json").version, version);
+  verifyCurrentCandidate(version);
   assertReleaseTargetsQualified();
   const distTag = nextRelease.channel ?? "latest";
   const jsrPackage = `jsr:@gadicc/watchbound@${version}`;
@@ -151,11 +148,13 @@ function installCanonicalNativeMatrix() {
   const comparisonPath = path.join(canonicalRoot, "independent-reproducibility.json");
   const comparison = readJsonAbsolute(comparisonPath);
   const matrix = loadNativeMatrix(workspaceRoot);
+  const candidate = verifyCurrentCandidate(readJson("package.json").version);
   if (
-    comparison.schemaVersion !== 1 ||
+    comparison.schemaVersion !== 2 ||
     comparison.kind !== "watchbound-independent-native-matrix-comparison" ||
     comparison.sourceSha !== capture("git", ["rev-parse", "HEAD"]) ||
-    comparison.version !== readJson("package.json").version
+    comparison.version !== readJson("package.json").version ||
+    JSON.stringify(comparison.candidate) !== JSON.stringify(candidate)
   ) {
     throw new Error("canonical independent native matrix has the wrong identity");
   }
@@ -228,13 +227,17 @@ function publishNpm(descriptor, distTag) {
   ]);
 }
 
-function assertReleaseIdentity(version, committedVersion) {
+function assertPlannedVersion(version) {
   if (process.env.WATCHBOUND_PLANNED_VERSION !== version) {
     throw new Error(`semantic-release version ${version} differs from the planned version`);
   }
-  if (committedVersion !== version) {
-    throw new Error(`semantic-release version ${version} differs from committed ${committedVersion}`);
-  }
+}
+
+function verifyCurrentCandidate(version) {
+  return verifyReleaseCandidate(workspaceRoot, {
+    sourceSha: capture("git", ["rev-parse", "HEAD"]),
+    version,
+  });
 }
 
 async function npmPackageState(specifier) {

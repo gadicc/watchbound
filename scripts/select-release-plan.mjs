@@ -3,6 +3,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  SOURCE_VERSION,
+  assertWorkspaceVersion,
+} from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -10,15 +14,14 @@ const workspaceRoot = path.resolve(
 );
 const options = parseOptions(process.argv.slice(2));
 const plan = JSON.parse(fs.readFileSync(path.resolve(options.input), "utf8"));
-const version = JSON.parse(
-  fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf8"),
-).version;
 const sourceSha = capture("git", ["rev-parse", "HEAD"]);
+assertWorkspaceVersion(workspaceRoot, SOURCE_VERSION);
 
-assert.equal(plan.schemaVersion, 1, "release plan schema");
+assert.equal(plan.schemaVersion, 2, "release plan schema");
 assert.equal(plan.kind, "watchbound-release-plan", "release plan kind");
 assert.equal(plan.mode, options.mode, "release plan mode");
 assert.equal(plan.sourceSha, sourceSha, "release plan source SHA");
+assert.equal(plan.sourceVersion, SOURCE_VERSION, "release plan source version");
 assert.equal(typeof plan.qualify, "boolean", "release plan qualify value");
 assert.equal(
   typeof plan.willRelease,
@@ -29,11 +32,16 @@ assert.equal(
 if (options.mode === "qualification") {
   assert.equal(plan.qualify, true, "qualification plan must qualify");
   assert.equal(plan.willRelease, false, "qualification plan cannot publish");
-  assert.equal(plan.version, version, "qualification plan version");
+  assert.equal(plan.version, SOURCE_VERSION, "qualification plan version");
   assert.equal(plan.tag, null, "qualification plan cannot select a tag");
 } else if (plan.willRelease) {
   assert.equal(plan.qualify, true, "release plan must qualify before publication");
-  assert.equal(plan.version, version, "release plan version");
+  assert.match(
+    plan.version,
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u,
+    "release plan version",
+  );
+  assert.notEqual(plan.version, SOURCE_VERSION, "release plan uses source placeholder");
   assert.equal(typeof plan.tag, "string", "release plan tag");
   assert.ok(plan.tag.length > 0, "release plan tag cannot be empty");
 } else {
@@ -47,6 +55,7 @@ fs.appendFileSync(
   [
     `qualify=${plan.qualify}`,
     `will-release=${plan.willRelease}`,
+    `source-version=${plan.sourceVersion}`,
     `version=${plan.version ?? ""}`,
     `source-sha=${plan.sourceSha}`,
     `tag=${plan.tag ?? ""}`,

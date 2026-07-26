@@ -125,7 +125,7 @@ writeJson(path.join(evidenceRoot, "release-metadata.json"), {
   reproducibility: {
     level: independentReproducibility === null
       ? "not-checked"
-      : "two-independent-clean-builders-per-target",
+      : "two-independent-materialized-builders-per-target",
     independent: independentReproducibility,
   },
   tools,

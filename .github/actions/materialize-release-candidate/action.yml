@@ -1,0 +1,31 @@
+name: Materialize semantic-release candidate
+description: Stamp the semantic-release version onto an exact clean source SHA
+
+inputs:
+  source-sha:
+    description: Exact committed source SHA
+    required: true
+  version:
+    description: Version selected by the release plan
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Apply the deterministic version transform
+      shell: bash
+      env:
+        WATCHBOUND_CANDIDATE_SHA: ${{ inputs.source-sha }}
+        WATCHBOUND_CANDIDATE_VERSION: ${{ inputs.version }}
+      run: >-
+        node scripts/set-release-version.mjs
+        "$WATCHBOUND_CANDIDATE_VERSION"
+        --source-sha "$WATCHBOUND_CANDIDATE_SHA"
+    - name: Retain the generated-candidate identity
+      shell: bash
+      env:
+        WATCHBOUND_CANDIDATE_SHA: ${{ inputs.source-sha }}
+        WATCHBOUND_CANDIDATE_VERSION: ${{ inputs.version }}
+      run: |
+        printf 'WATCHBOUND_CANDIDATE_SHA=%s\n' "$WATCHBOUND_CANDIDATE_SHA" >> "$GITHUB_ENV"
+        printf 'WATCHBOUND_CANDIDATE_VERSION=%s\n' "$WATCHBOUND_CANDIDATE_VERSION" >> "$GITHUB_ENV"

@@ -11,6 +11,7 @@ import {
   targetForId,
   targetForRuntime,
 } from "./lib/native-matrix.mjs";
+import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,14 +28,13 @@ const artifactPath = path.resolve(
 );
 const outputPath = path.resolve(workspaceRoot, options.output);
 const rootPackage = readJson(path.join(workspaceRoot, "package.json"));
-const status = capture("git", [
-  "status",
-  "--porcelain=v1",
-  "--untracked-files=all",
-]);
+const sourceSha = capture("git", ["rev-parse", "HEAD"]);
+const candidate = verifyReleaseCandidate(workspaceRoot, {
+  sourceSha,
+  version: rootPackage.version,
+});
 const nativeFiles = nativeArtifactEntries(workspaceRoot);
 
-assert.equal(status, "", "native build evidence requires a clean source checkout");
 assert.deepEqual(
   nativeFiles,
   [target.binary],
@@ -52,12 +52,13 @@ assert.equal(metadata.buildProfile, "release");
 
 const osRelease = readOsRelease();
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   kind: "watchbound-independent-native-build",
   builder: options.builder,
   source: {
-    gitHead: capture("git", ["rev-parse", "HEAD"]),
-    gitDirty: false,
+    gitHead: sourceSha,
+    gitDirty: candidate.gitDirty,
+    materialization: candidate,
     locks: {
       cargo: sha256(path.join(workspaceRoot, "Cargo.lock")),
       pnpm: sha256(path.join(workspaceRoot, "pnpm-lock.yaml")),

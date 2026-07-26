@@ -1,6 +1,6 @@
 # Support and qualification matrix
 
-Status: the `1.2.0` multi-target work is an unpublished candidate. Its x64 and
+Status: the multi-target work is an unpublished source candidate. Its x64 and
 ARM64 GNU/Linux target statuses are `supported` in the checked-in source
 matrix. The current qualified registry release is still `1.0.1` under its
 historical Ubuntu 24.04 x64 contract.

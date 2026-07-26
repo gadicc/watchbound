@@ -45,6 +45,10 @@ pnpm check
   JavaScript syntax checks.
 - Preserve exact Linux path bytes at the native boundary. Do not normalize away
   path components before native symlink validation.
+- Keep every checked-in npm, Cargo, and lockfile version at
+  `0.0.0-development`. Semantic-release is the only published-version
+  authority; release jobs apply its planned version as a deterministic,
+  uncommitted transform of the exact source SHA.
 - Do not follow directory symlinks or weaken explicit watch/resource limits.
 - Keep output cardinality and native-to-JavaScript delivery bounded. On loss or
   pressure, prefer a root invalidation and explicit uncertainty over detailed

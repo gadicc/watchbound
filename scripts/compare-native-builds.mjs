@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
+import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -18,13 +19,19 @@ const targetId = options.target ?? left.manifest.release?.targetId;
 const target = targetForId(matrix, targetId);
 const rootPackage = readJson(path.join(workspaceRoot, "package.json"));
 const sourceSha = capture("git", ["rev-parse", "HEAD"]);
+const candidate = verifyReleaseCandidate(workspaceRoot, {
+  sourceSha,
+  version: rootPackage.version,
+});
 
-validateBuild(left, "left", sourceSha, rootPackage.version, target);
-validateBuild(right, "right", sourceSha, rootPackage.version, target);
+validateBuild(left, "left", candidate, target);
+validateBuild(right, "right", candidate, target);
 assert.notEqual(left.manifest.builder, right.manifest.builder);
 
 for (const field of [
   ["source", "gitHead"],
+  ["source", "gitDirty"],
+  ["source", "materialization"],
   ["source", "locks", "cargo"],
   ["source", "locks", "pnpm"],
   ["release", "version"],
@@ -84,10 +91,11 @@ const canonicalPath = path.join(
 );
 fs.copyFileSync(left.binaryPath, canonicalPath);
 const comparison = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   kind: "watchbound-independent-native-comparison",
   sourceSha,
   version: rootPackage.version,
+  candidate,
   targetId: target.id,
   target: left.manifest.release.target,
   profile: left.manifest.release.profile,
@@ -128,17 +136,22 @@ function loadBuild(manifestSource) {
   };
 }
 
-function validateBuild(build, label, sourceSha, version, target) {
+function validateBuild(build, label, candidate, target) {
   const { manifest, binary, observedSha256 } = build;
-  assert.equal(manifest.schemaVersion, 1, `${label} manifest schema`);
+  assert.equal(manifest.schemaVersion, 2, `${label} manifest schema`);
   assert.equal(
     manifest.kind,
     "watchbound-independent-native-build",
     `${label} manifest kind`,
   );
-  assert.equal(manifest.source.gitHead, sourceSha, `${label} source SHA`);
-  assert.equal(manifest.source.gitDirty, false, `${label} dirty state`);
-  assert.equal(manifest.release.version, version, `${label} version`);
+  assert.equal(manifest.source.gitHead, candidate.sourceSha, `${label} source SHA`);
+  assert.equal(manifest.source.gitDirty, candidate.gitDirty, `${label} dirty state`);
+  assert.deepEqual(
+    manifest.source.materialization,
+    candidate,
+    `${label} candidate materialization`,
+  );
+  assert.equal(manifest.release.version, candidate.version, `${label} version`);
   assert.equal(manifest.release.targetId, target.id, `${label} target id`);
   assert.equal(
     manifest.release.target,

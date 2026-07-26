@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix, targetForRuntime } from "./lib/native-matrix.mjs";
+import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,6 +28,7 @@ const sourceSha = capture("git", ["rev-parse", "HEAD"]);
 const version = JSON.parse(
   fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf8"),
 ).version;
+const candidate = verifyReleaseCandidate(workspaceRoot, { sourceSha, version });
 
 try {
   for (const buildNumber of [1, 2]) {
@@ -87,6 +89,7 @@ try {
         kind: "watchbound-same-runner-reproducibility",
         sourceSha,
         version,
+        candidate,
         target: target.id,
         targetTriple: target.rustTarget,
         expectedSha256,

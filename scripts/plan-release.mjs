@@ -4,26 +4,29 @@ import fs from "node:fs";
 import path from "node:path";
 import semanticRelease from "semantic-release";
 import { fileURLToPath } from "node:url";
+import {
+  SOURCE_VERSION,
+  assertWorkspaceVersion,
+} from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
-const version = JSON.parse(
-  fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf8"),
-).version;
 const sourceSha = capture("git", ["rev-parse", "HEAD"]);
+assertWorkspaceVersion(workspaceRoot, SOURCE_VERSION);
 let plan;
 
 if (options.mode === "qualification") {
   plan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "watchbound-release-plan",
     mode: options.mode,
     qualify: true,
     willRelease: false,
-    version,
+    sourceVersion: SOURCE_VERSION,
+    version: SOURCE_VERSION,
     sourceSha,
     tag: null,
   };
@@ -40,20 +43,26 @@ if (options.mode === "qualification") {
   );
   if (result === false) {
     plan = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "watchbound-release-plan",
       mode: options.mode,
       qualify: false,
       willRelease: false,
+      sourceVersion: SOURCE_VERSION,
       version: null,
       sourceSha,
       tag: null,
     };
   } else {
-    assert.equal(
+    assert.match(
       result.nextRelease.version,
-      version,
-      "semantic-release planned a version different from the committed candidate",
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u,
+      "semantic-release planned an invalid version",
+    );
+    assert.notEqual(
+      result.nextRelease.version,
+      SOURCE_VERSION,
+      "semantic-release cannot publish the source placeholder",
     );
     assert.equal(
       result.nextRelease.gitHead,
@@ -61,12 +70,13 @@ if (options.mode === "qualification") {
       "semantic-release planned a different source commit",
     );
     plan = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "watchbound-release-plan",
       mode: options.mode,
       qualify: true,
       willRelease: true,
-      version,
+      sourceVersion: SOURCE_VERSION,
+      version: result.nextRelease.version,
       sourceSha,
       tag: result.nextRelease.gitTag,
     };
@@ -84,6 +94,7 @@ if (options["github-output"]) {
     [
       `qualify=${plan.qualify}`,
       `will-release=${plan.willRelease}`,
+      `source-version=${plan.sourceVersion}`,
       `version=${plan.version ?? ""}`,
       `source-sha=${plan.sourceSha}`,
       `tag=${plan.tag ?? ""}`,

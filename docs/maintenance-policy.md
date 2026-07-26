@@ -29,7 +29,7 @@ per-environment delivery. The public registry line reset with a `0.0.1`
 bootstrap package containing that revision; later public versions are owned by
 semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
 although a later exact commit qualified its implementation baseline. The
-corrected `1.0.1` package is the current release. The unpublished `1.2.0`
+corrected `1.0.1` package is the current release. The unpublished multi-target
 candidate adds the x64/ARM64 target-package matrix while retaining
 generation-zero exclusions, promise-aware callbacks, and binding API 3; its
 capability schema 4 target entries are `supported` after complete exact-commit

@@ -1,22 +1,29 @@
 # Release and registry runbook
 
-Status: `1.0.1` remains the qualified published release. `1.2.0` is an
-unpublished multi-target candidate. This repository configuration is
-preparation, not blanket permission to publish.
+Status: `1.0.1` remains the qualified published release. The multi-target work
+is an unpublished source candidate whose version will be selected only by
+semantic-release. This repository configuration is preparation, not blanket
+permission to publish.
 
 ## Fail-closed release boundary
 
 Only a push to `main` can enter the publication path in
-`.github/workflows/release.yml`. The write-capable planning job computes the
-semantic-release decision without changing versions. A separate manual
-dispatch path can run exact-candidate qualification with repository-read
-permission only; it cannot satisfy the publication job's independent event,
-ref, or semantic-release guards. The custom plugin requires the planned
-release version to equal the already committed lockstep npm, JSR, Cargo, and
-lockfile version.
+`.github/workflows/release.yml`. Every checked-in npm, Cargo, workspace, and
+lockfile version remains `0.0.0-development`. The write-capable planning job
+uses semantic-release, Conventional Commits, and release tags to select the
+only publication version. Every version-sensitive builder then applies that
+version as the same deterministic, uncommitted transform of the exact source
+SHA and records the transform in its evidence.
+
+A separate manual dispatch path can run exact-source qualification with
+repository-read permission only. It retains the source placeholder, cannot
+satisfy the publication job's independent event, ref, or semantic-release
+guards, and is never reused as versioned publication evidence. The custom
+plugin requires semantic-release's version to equal the retained release-plan
+version and verifies the exact generated candidate before every mutation.
 
 The plugin refuses preparation unless every matrix target is checked in as
-`supported`. Both `1.2.0` targets now satisfy that support-state guard, but
+`supported`. Both candidate targets now satisfy that support-state guard, but
 publication remains independently restricted to an approved semantic-release
 push on `main`; qualification or credentials alone never authorize it.
 
@@ -24,9 +31,10 @@ push on `main`; qualification or credentials alone never authorize it.
 
 For each x64 and ARM64 registry target, the release workflow:
 
-1. runs two isolated clean builders on a native Ubuntu 22.04 runner with Node
-   24.15.0, Rust 1.88.0, pnpm 10.33.2, stable remapped Cargo paths, no
-   incrementality, `SOURCE_DATE_EPOCH=0`, and UTC;
+1. starts two isolated builders from the exact clean source SHA, applies the
+   same recorded semantic-release version transform, and builds on native
+   Ubuntu 22.04 with Node 24.15.0, Rust 1.88.0, pnpm 10.33.2, stable remapped
+   Cargo paths, no incrementality, `SOURCE_DATE_EPOCH=0`, and UTC;
 2. records source/lock/tool/host/build identities and artifact SHA-256;
 3. byte-compares the two outputs and fails on any metadata or byte mismatch;
 4. aggregates both canonical artifacts with one signed-off comparison record;

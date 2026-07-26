@@ -30,7 +30,7 @@ importers:
   js:
     dependencies:
       '@gadicc/watchbound-node':
-        specifier: workspace:1.2.0
+        specifier: workspace:0.0.0-development
         version: link:../node
 
   node: {}

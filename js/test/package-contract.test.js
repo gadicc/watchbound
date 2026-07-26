@@ -402,6 +402,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(kernelBaseline, /watchbound-kernel-baseline-qualification/u);
   assert.match(kernelBaseline, /architectureEvidence/u);
   assert.match(kernelBaseline, /not provided by this QEMU lane/u);
+  assert.match(kernelBaseline, /installed-package-smoke-helpers\.mjs/u);
   assert.match(kernelBaseline, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed/u);
   assert.match(selectReleasePlan, /watchbound-release-plan/u);
   assert.match(selectReleasePlan, /plan\.sourceSha/u);

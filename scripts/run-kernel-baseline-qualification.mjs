@@ -58,13 +58,13 @@ try {
   copyFiles(
     [
       path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
-      path.join(workspaceRoot, "scripts/fixtures/distro-package-smoke.sh"),
+      path.join(workspaceRoot, "scripts/installed-package-smoke-helpers.mjs"),
     ],
-    path.join(rootfs, "work/scripts/fixtures"),
+    path.join(rootfs, "work/scripts"),
   );
-  fs.renameSync(
-    path.join(rootfs, "work/scripts/fixtures/check-installed-package.mjs"),
-    path.join(rootfs, "work/scripts/check-installed-package.mjs"),
+  copyFiles(
+    [path.join(workspaceRoot, "scripts/fixtures/distro-package-smoke.sh")],
+    path.join(rootfs, "work/scripts/fixtures"),
   );
   const guestInit = path.join(rootfs, "watchbound-init");
   fs.copyFileSync(path.join(workspaceRoot, "scripts/fixtures/kernel-baseline-init.sh"), guestInit);

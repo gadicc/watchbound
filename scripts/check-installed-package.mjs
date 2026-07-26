@@ -6,6 +6,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { recoverStableReplacement } from "./installed-package-smoke-helpers.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -286,10 +287,12 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       () => subscription.rootState.attachment === "lost",
       "root replacement did not become explicitly lost",
     );
-    const recovery = await subscription.recoverRoot({
-      identityPolicy: "accept-replacement",
-    });
-    assert.equal(recovery.attachment, "replacement-adopted");
+    const recovery = await recoverStableReplacement(subscription);
+    assert.equal(
+      recovery.attachment,
+      "replacement-adopted",
+      `root recovery did not adopt the stable replacement: ${recovery.reason ?? "unknown"}`,
+    );
     assert.equal(recovery.currentRootState.attachment, "attached");
     const afterRecovery = path.join(root, "replacement", "after.txt");
     fs.writeFileSync(afterRecovery, "after");

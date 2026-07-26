@@ -359,6 +359,11 @@ test("manual qualification is read-only while semantic release stays push-only",
     )?.length,
     2,
   );
+  assert.match(
+    release,
+    /- name: Configure isolated release homes[\s\S]*?cargo_home="\$RUNNER_TEMP\/release-cargo-home"[\s\S]*?echo "CARGO_HOME=\$cargo_home" >> "\$GITHUB_ENV"[\s\S]*?echo "RUSTUP_HOME=\$RUNNER_TEMP\/release-rustup" >> "\$GITHUB_ENV"/u,
+  );
+  assert.doesNotMatch(release, /\/opt\/hostedtoolcache\/cargo/u);
   assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
   assert.doesNotMatch(release, /^\s*- uses: [^\s]+@v\d+(?:\.\d+)*\s*$/mu);
   assert.doesNotMatch(ci, /workflow_dispatch/u);

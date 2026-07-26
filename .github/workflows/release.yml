@@ -696,16 +696,26 @@ jobs:
           architecture: x64
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Configure isolated release homes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_home="$RUNNER_TEMP/release-cargo-home"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/release-target" >> "$GITHUB_ENV"
+          echo "COREPACK_HOME=$RUNNER_TEMP/release-corepack" >> "$GITHUB_ENV"
+          echo "PNPM_STORE_DIR=$RUNNER_TEMP/release-pnpm-store" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUNNER_TEMP/release-rustup" >> "$GITHUB_ENV"
       - name: Set up exact release tools
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
-          cargo_home="${CARGO_HOME:-/opt/hostedtoolcache/cargo}"
-          echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
+          pnpm config set store-dir "$PNPM_STORE_DIR"
           pnpm install --frozen-lockfile
           npm install --global npm@11.18.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2

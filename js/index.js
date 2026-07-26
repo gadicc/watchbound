@@ -45,6 +45,8 @@ export const capabilities = invokeWatchbound("create-engine", () =>
   buildCapabilities(
     nativeBinding.capabilities(),
     nativeBinding.bindingMetadata(),
+    nativeBinding.nativeDeliveryMetadata(),
+    nativeBinding.nativeTargetMatrix(),
   ));
 
 const automaticReconciliationDisabled = Object.freeze({ state: "disabled" });

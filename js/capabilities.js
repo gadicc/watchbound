@@ -13,10 +13,15 @@ const wrapperPackage = JSON.parse(
 export const WRAPPER_VERSION = wrapperPackage.version;
 export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
 
-export function buildCapabilities(native, metadata) {
-  if (native?.schemaVersion !== 3 || metadata?.schemaVersion !== 1) {
+export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
+  if (
+    native?.schemaVersion !== 3 ||
+    metadata?.schemaVersion !== 1 ||
+    deliveryMetadata?.schemaVersion !== 1 ||
+    matrix?.schemaVersion !== 1
+  ) {
     throw new Error(
-      "native capability metadata does not use capability schema 3 and metadata schema 1",
+      "native capability, delivery, or target metadata uses an incompatible schema",
     );
   }
   if (
@@ -42,9 +47,37 @@ export function buildCapabilities(native, metadata) {
   const maximum = native.positiveIntegerMaximum;
   const defaults = native.subscriptionDefaults;
   const prebuilt = WRAPPER_DELIVERY === "bundled-native-package";
+  const supportTargets = matrix.targets.map((target) => ({
+    id: target.id,
+    status: target.qualification,
+    package: target.package,
+    targetTriple: target.rustTarget,
+    operatingSystem: "linux",
+    architecture: target.architecture,
+    libc: {
+      family: target.libc,
+      maximumRequiredSymbolVersion: matrix.releaseBaseline.glibcMaximum,
+    },
+    kernelMinimum: matrix.releaseBaseline.kernelMinimum,
+    nodeRange: matrix.nodeRange,
+    qualificationLanes: matrix.qualificationLanes
+      .filter((lane) => lane.architectures.includes(target.architecture))
+      .map((lane) => lane.id),
+  }));
+  const runtimeMatchesPackagedTarget =
+    runtime.platform === "linux" &&
+    runtime.architecture === deliveryMetadata.architecture &&
+    runtime.libc.family === deliveryMetadata.libc &&
+    metadata.targetTriple === deliveryMetadata.targetTriple;
+  const currentTarget = supportTargets.find(
+    (target) => target.id === deliveryMetadata.targetId,
+  );
+  if (currentTarget === undefined) {
+    throw new Error("loaded native target is absent from the support matrix");
+  }
 
   return deepFreeze({
-    schemaVersion: 3,
+    schemaVersion: 4,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -58,10 +91,20 @@ export function buildCapabilities(native, metadata) {
       targetTriple: metadata.targetTriple,
       nodeApi: metadata.nodeApiVersion,
       rustMinimum: "1.88",
+      packagedTarget: {
+        id: deliveryMetadata.targetId,
+        package: deliveryMetadata.targetPackage,
+        binary: deliveryMetadata.binary,
+        sha256: deliveryMetadata.sha256,
+        architecture: deliveryMetadata.architecture,
+        libc: deliveryMetadata.libc,
+        qualification: deliveryMetadata.qualification,
+      },
     },
     runtime,
     support: {
-      status: "supported",
+      scope: "legacy-primary-target",
+      status: supportTargets.find((target) => target.architecture === "x64").status,
       operatingSystem: {
         family: "linux",
         distribution: "ubuntu",
@@ -75,6 +118,24 @@ export function buildCapabilities(native, metadata) {
       packageManager: "pnpm@10.33.2",
       delivery: WRAPPER_DELIVERY,
       rootThreatModel: "trusted-stable-local-roots",
+      targets: supportTargets,
+      qualificationLanes: matrix.qualificationLanes.map((lane) => ({
+        id: lane.id,
+        distribution: lane.distribution,
+        version: lane.version,
+        family: lane.family,
+        architectures: lane.architectures,
+        evidence: lane.evidence,
+      })),
+      recognizedCompatibilityFamilies: matrix.recognizedCompatibilityFamilies,
+      currentRuntime: {
+        packagedTargetId: currentTarget.id,
+        runtimeMatchesPackagedTarget,
+        qualification: currentTarget.status,
+        supported:
+          runtimeMatchesPackagedTarget && currentTarget.status === "supported",
+      },
+      intentionallyUnsupported: matrix.intentionallyUnsupported,
     },
     features: {
       recursive: native.recursive,

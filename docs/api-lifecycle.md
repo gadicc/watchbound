@@ -196,18 +196,18 @@ reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
 
-## Capability schema version 3
+## Capability schema version 4
 
 The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
 has these top-level sections:
 
 | Section | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `3`. |
+| `schemaVersion` | Exactly `4`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
-| `build` | Manifest-derived delivery: source workspaces report `controlled-source-build` and `prebuilt: false`; generated registry packages report `bundled-native-package` and `prebuilt: true`. Both include build profile, target triple, Node-API 6, and Rust 1.88 minimum. |
+| `build` | Manifest-derived delivery, build profile, triple, Node-API/Rust floors, and the exact packaged target/package/file/SHA when generated. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | The narrow Ubuntu 24.04, Linux 6.8+, x64, glibc 2.39, Node `>=24.15.0 <25`, Rust 1.88+, pnpm 10.33.2 target under trusted stable local roots, plus the same manifest-derived delivery identity. `SupportStatus` is the closed union `target-pending-clean-ci | supported`; `1.1.0` emits `supported`, effective for its wider Node floor only after that exact commit passes the release qualification gates. |
+| `support` | Compatibility-preserved legacy x64 fields plus `targets`, `qualificationLanes`, `currentRuntime`, recognized compatibility families, and explicit unsupported targets. `SupportStatus` is `target-pending-clean-ci | supported`; the `1.2.0` targets remain pending. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, single-credit admission, and callback completion/error/disposal/teardown policy. |
@@ -669,15 +669,12 @@ historical event queries. Parcel's typed coalesced events and query API remain
 the more useful contract for those needs when its public loss and resource
 model is acceptable.
 
-The intended maintained target is limited to the controlled Ubuntu
-24.04, Linux 6.8+, x86_64, glibc 2.39, Node `>=24.15.0 <25` source build under
-trusted stable local roots. The `1.1.0` candidate declares `supported`, effective
-only after that exact commit passes both clean support lanes and the
-independent-builder comparison. Node-API compatibility or successful loading does
-not widen that matrix. WSL, network filesystems, Filesystem in Userspace
-(FUSE), overlay filesystems, unusual container mounts, musl, other
-distributions or architectures, and non-Linux platforms are unqualified or
-unsupported. Existing mount points are traversed; no one-filesystem option or
+The `1.2.0` candidate target matrix is x64 and ARM64 GNU/Linux, kernel 5.15 and
+glibc at most 2.35, with Node `>=24.15.0 <25`; both targets remain pending.
+Node-API compatibility or successful loading does not widen that matrix. WSL,
+network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
+unusual container mounts, musl, ARMv7, and non-Linux platforms are unqualified
+or unsupported. Existing mount points are traversed; no one-filesystem option or
 runtime descendant-mount reconciliation is implemented. See
 [`support-matrix.md`](support-matrix.md).
 

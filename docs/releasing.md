@@ -1,300 +1,105 @@
 # Release and registry runbook
 
-Status: `1.0.1` is the verified current release on npm and JSR, its GitHub tag
-targets source commit `744cd8f`, and its GitHub Release retains both package
-tarballs, reproducibility evidence, registry publication evidence, and npm and
-JSR Node-route lifecycle smokes. The affected immutable JSR `1.0.0` is yanked;
-both npm `1.0.0` packages remain available and unchanged. Supervised-overflow
-evidence remains a separate gate.
+Status: `1.0.1` remains the qualified published release. `1.2.0` is an
+unpublished multi-target candidate. This repository configuration is
+preparation, not blanket permission to publish.
 
-## What CI does
+## Fail-closed release boundary
 
-Every pull request and push runs the two supported-source-build lanes in
-parallel on GitHub's Ubuntu 24.04 x64 runner:
+Only a push to `main` can enter `.github/workflows/release.yml`. The planning
+job computes the semantic-release decision without changing versions. Expensive
+native jobs run only when the exact commit would release. The custom plugin
+then requires the planned version to equal the already committed lockstep npm,
+JSR, Cargo, and lockfile version.
 
-| Lane | Node | Rust | Purpose |
-| --- | --- | --- | --- |
-| floor | 24.15.0 | 1.88.0 | Exact minimum supported toolchain |
-| moving | latest 24.x | latest stable | Early warning inside the declared ranges |
+The plugin refuses preparation unless every matrix target is checked in as
+`supported`. Both `1.2.0` targets are currently
+`target-pending-clean-ci`, so publication is intentionally blocked even if
+credentials or workflow conditions are otherwise present.
 
-Both lanes assert Ubuntu 24.04, Linux x86_64, glibc 2.39, the kernel floor,
-Node-API, compiler/linker availability, and their selected runtime versions.
-They build from source, test, check, run bounded maintenance gates, and run
-ordinary strict conformance serially. The floor lane additionally:
+## Exact target pipeline
 
-1. generates controlled public npm trees from the private workspace manifests;
-2. packs `@gadicc/watchbound-node` and `watchbound`;
-3. checks the exact files in both tarballs;
-4. installs both tarballs offline into an empty project and exercises real
-   delivery, Promise callback serialization, callback cancellation/stop, joined
-   disposal, and final resource baselines;
-5. runs a JSR publish dry run over the generated wrapper tree;
-6. inspects the ELF target, stripped-symbol status, dynamic-library allowlist,
-   Node-API export, embedded search paths, and size;
-7. emits SHA-256 checksums, release metadata, and a CycloneDX 1.6 SBOM.
+For each x64 and ARM64 registry target, the release workflow:
 
-The JSR check retains JSR's fast public-API/slow-type validation but passes
-`--no-check` to the broader Deno checker. That checker cannot load the native
-npm dependency's Node declarations in the isolated publish tree; the npm
-tarball install smoke and the repository's TypeScript fixtures cover those
-Node-specific declarations instead.
+1. runs two isolated clean builders on a native Ubuntu 22.04 runner with Node
+   24.15.0, Rust 1.88.0, pnpm 10.33.2, stable remapped Cargo paths, no
+   incrementality, `SOURCE_DATE_EPOCH=0`, and UTC;
+2. records source/lock/tool/host/build identities and artifact SHA-256;
+3. byte-compares the two outputs and fails on any metadata or byte mismatch;
+4. aggregates both canonical artifacts with one signed-off comparison record;
+5. packages the canonical artifact and exercises every applicable pinned
+   distro lane on the same native architecture;
+6. runs the canonical package from `app.asar`/`app.asar.unpacked` under exact
+   Electron 42.3.0 and Node 24.15.0;
+7. runs the explicitly acknowledged, I/O-heavy forced-overflow and automatic
+   overflow-reconciliation scenarios against the canonical artifact on a
+   prepared self-hosted runner labeled `watchbound-overflow`; and
+8. relies on the reusable CI workflow for full semantics and locked Nix source
+   closures on x64 and ARM64.
 
-`pnpm test:packages` performs the same artifact validation locally after
-`pnpm build:node`. Generated files live under ignored `dist/`.
+The release job downloads the aggregate, repeats the current-runner build,
+requires its digest to equal the canonical x64 digest, generates all packages,
+installs them offline, performs the JSR dry run, and emits ELF inspection,
+checksums, build metadata, CycloneDX 1.6 SBOM, and reproducibility evidence.
+No mismatch or missing target has a waiver path.
 
-## Main-branch semantic release
+Cross-compilation and QEMU-only execution cannot satisfy a target. Container
+lanes provide distro userspace evidence but share the runner kernel; kernel
+floor evidence must be recorded separately and truthfully.
 
-`.github/workflows/release.yml` runs only for a push to `main`. It plans the
-exact committed version without mutating source, reuses the complete CI
-workflow, builds the addon on two isolated clean Ubuntu 24.04 jobs, transfers
-both exact binaries, and recomputes their SHA-256 values in a third job before
-byte-comparing them. The independent builders retain distinct Cargo, target,
-package-manager, and Rustup homes. Rust compiler flags remap each private Cargo
-source root to the stable virtual path `/watchbound/cargo-home`, preventing
-runner-specific source paths from changing otherwise identical binaries. The
-evidence retains both the real isolation paths and the applied remapping, and
-the comparison still requires whole-file byte equality.
+## Publication ordering and partial failure
 
-If those gates pass, semantic-release analyzes Conventional Commits since the
-last tag:
+After every gate, the custom semantic-release plugin checks immutable registry
+state and publishes missing packages in this order:
 
-- `fix` produces a patch;
-- `feat` produces a minor;
-- a documented breaking change produces a major; and
-- documentation, test, CI, or chore-only changes do not publish by default.
+1. `@gadicc/watchbound-node-linux-x64-gnu`;
+2. `@gadicc/watchbound-node-linux-arm64-gnu`;
+3. architecture-neutral `@gadicc/watchbound-node`;
+4. `watchbound`;
+5. JSR `@gadicc/watchbound`.
 
-For a release, the custom semantic-release plugin:
+Existing versions must have exact identity, integrity, dependencies,
+`optionalDependencies`, `os`, `cpu`, and `libc`. The plugin refuses a loader or
+wrapper version that exists without both exact target versions. It writes a
+publication ledger after every mutation so an immutable partial failure can be
+handled as an incident rather than overwritten.
 
-1. requires the semantic-release version to equal the committed lockstep
-   version and proves version stamping is a no-op;
-2. performs two same-runner clean builds as defense in depth and requires both
-   to match the independently approved digest;
-3. installs the canonical independently compared binary, then packs, audits,
-   and offline-smoke-tests the exact npm tarballs;
-4. dry-runs the generated JSR tree and writes checksums, release metadata, and
-   a CycloneDX 1.6 SBOM;
-5. checks each registry and publishes only missing immutable versions, verifying
-   any existing npm version against the exact local integrity and dependency
-   metadata, always publishing native npm before wrapper npm and JSR last;
-6. reinstalls the exact prepared native tarball into the generated JSR tree
-   immediately before a final JSR dry run and publication; and
-7. publishes through npm and JSR GitHub Actions OIDC with provenance.
+npm publication uses trusted publishing and provenance. JSR publication uses
+its GitHub OIDC relationship. The workflow has no npm/JSR token. Semantic
+release creates the tag and GitHub release only in the normal main-push path.
 
-After preparation succeeds, semantic-release creates its Git tag before calling
-the publish plugins. After registry publication, the GitHub plugin creates the
-release and attaches the inspected tarballs and reproducibility evidence. The
-workflow then, on fresh supported runners, installs the exact npm wrapper and
-the JSR Node-compatibility route, exercises the full lifecycle contract, and
-verifies the installed native hash. The tag-before-publish failure case is
-covered by the incident runbook.
+## New-package bootstrap
 
-The publish step fails closed on registry lookup errors and refuses the unsafe
-partial state where the wrapper exists but its exact native dependency does
-not. The planning job has `contents: write` because semantic-release verifies
-push access even in dry-run mode; the planner itself does not push. The
-GitHub-hosted publish job has the write permissions semantic-release needs for
-its tag, release, issues, and pull-request notes, plus `id-token: write` for
-registry OIDC. It has no npm or JSR secret.
+The two target package names do not yet exist. Their one-time package creation
+requires separate explicit maintainer approval and interactive registry
+authority. Create only the exact reviewed version with a non-default bootstrap
+dist-tag, do not create a semantic-release Git tag, and verify the resulting
+registry integrity before enabling ordinary OIDC release. This branch does not
+perform that bootstrap.
 
-Feature branches, pull requests, and `dev` pushes run the ordinary CI workflow
-but cannot start the Release workflow or publish.
+Configure npm trusted-publisher relationships for the `release.yml` workflow
+and JSR package authorization before an ordinary release. Keep the repository,
+workflow filename, branch, and environment constraints exact.
 
-### `v1.0.0` JSR recovery incident
+## Post-publication verification
 
-Release workflow run `30103706249` published and verified both npm `1.0.0`
-packages, then failed before JSR publication because package rehearsal had
-removed the generated JSR tree's `node_modules`. The npm artifacts, their
-provenance, the immutable `v1.0.0` tag, the two independent native builds, and
-the retained package checksums were verified after the incident.
+The immutable release is only verified after npm and JSR Node routes install
+the exact version on native x64 and ARM64 runners. Each smoke confirms the
+selected target package and digest, production loader/capability handshake,
+real delivery, initial/dynamic exclusions, root recovery, reconciliation,
+cancellation, callback serialization, joined disposal, and resource return.
 
-The one-time workflow at commit `e5bdf4c` checked out the immutable tag,
-downloaded the original plan, independently approved binary, and
-partial-publication evidence, and matched every pinned source and artifact
-digest. It proved both npm registry versions matched the reconstructed
-tarballs, restored the exact native dependency, repeated the JSR dry run, and
-published JSR `1.0.0` with provenance.
+If any route fails after publication, stop. Do not replace, unpublish, or
+silently retag the immutable version. Retain the ledger and evidence, assess
+the partial state, and follow `release-incident-response.md` with a new patch
+version where appropriate.
 
-Its first verification failed because Deno's default 24-hour minimum dependency
-age hid the new version. Direct metadata and a zero-age lookup confirmed the
-version was present. The subsequent supported Node-route install exposed the
-separate manifest-normalization incompatibility described above. The recovery
-workflow is retired and cannot be dispatched again. Do not create a normal
-GitHub Release presenting `1.0.0` as fully verified.
+## Before changing a target to supported
 
-The corrected package treats JSR's normalized npm manifest as bundled delivery
-only when its generated package name and exact native dependency agree. Package
-rehearsal simulates that normalized manifest, and registry checks resolve the
-real pnpm package location before locating the native dependency. Immediate
-JSR visibility checks read the registry's exact package metadata directly, so
-they do not depend on Deno's client-side dependency-age policy or CLI version.
-
-The `v1.0.1` partial-publication recovery was deliberately separate from normal
-semantic release because the correct immutable tag and npm packages already
-existed. Its one-time controller pinned the original source commit, release
-run, plan, independently reproduced native binary, package integrities, and
-partial publication ledger; it could publish only the missing JSR version and
-create the missing GitHub Release.
-
-Its first dispatch, run `30117474624`, failed before any registry mutation
-because package rehearsal correctly rejected release evidence from `744cd8f`
-while executing at the later controller commit. The corrected controller first
-requires a clean checkout whose complete source delta is the reviewed
-recovery-only allowlist, preserves the original reproducibility evidence
-unchanged, and keeps the canonical binary and npm integrity checks mandatory.
-
-Run `30118062644` then published and verified JSR `1.0.1` with provenance, but
-the controller rejected the completed ledger because its assertion omitted the
-intermediate `published-verification-pending` record. The idempotent follow-up
-run `30118226669` verified all three registry versions as existing and passed
-the installed npm lifecycle smoke, then exposed that the smoke child resolved
-its relative evidence path from a temporary project. Registry smoke evidence
-paths are now made absolute before changing working directories.
-
-Qualified finalization run `30118613707` verified every registry identity as
-existing, passed both supported lifecycle smokes with retained install locks,
-created the GitHub Release on the existing `v1.0.1` tag, and retained the
-complete recovery ledger. JSR `1.0.0` was then yanked: exact or locked requests
-remain possible, while semver and npm-compatibility resolution select `1.0.1`.
-The one-time `v1.0.1` recovery workflow and controller are retired and cannot
-be dispatched or reused.
-
-An intentional maintainer merge or push to `main` is the human publication
-authorization boundary. There is no protected GitHub environment, temporary
-workflow secret, branch-protection requirement, manual-dispatch prerequisite,
-or separate release-approval deployment.
-
-## One-time `0.0.1` bootstrap
-
-npm trusted publishers can be configured only after each package exists. The
-initial `0.0.1` versions are therefore published locally with the maintainer's
-interactive npm authentication and MFA. They use npm's `bootstrap` dist-tag:
-
-```sh
-pnpm build:node
-pnpm test
-pnpm check
-pnpm check:reproducible
-pnpm test:packages
-
-npm publish dist/tarballs/gadicc-watchbound-node-0.0.1.tgz \
-  --access public \
-  --provenance=false \
-  --tag bootstrap
-npm publish dist/tarballs/watchbound-0.0.1.tgz \
-  --access public \
-  --provenance=false \
-  --tag bootstrap
-```
-
-The explicit `--provenance=false` overrides the generated package's
-OIDC-oriented `publishConfig` for this local exception. The bootstrap remains
-attributable through the npm account and immutable package contents, but it
-does not claim GitHub Actions build provenance.
-
-On the first and only version of each new npm package, the registry also
-retained `latest` and rejected its removal even though publication explicitly
-used `--tag bootstrap`. The `bootstrap` tags still identify the release's
-intent. The first ordinary semantic release moves `latest` to the OIDC-backed
-public version.
-
-Create `@gadicc/watchbound` at <https://jsr.io/new>, link it to
-`gadicc/watchbound`, and publish the generated `0.0.1` tree:
-
-```sh
-cd dist/jsr
-deno publish --no-check
-```
-
-JSR may use browser authorization for this one-time local publication. In JSR
-package settings, record Node.js as supported and Deno, Bun, Cloudflare
-Workers, and browsers as unsupported. The package contains a Linux Node-API
-dependency; publication on JSR does not widen the support matrix.
-
-After both npm names exist, configure the exact OIDC publishers:
-
-```sh
-npm install --global npm@11.18.0
-npm trust github @gadicc/watchbound-node \
-  --repo gadicc/watchbound \
-  --file release.yml \
-  --allow-publish \
-  --yes
-npm trust github watchbound \
-  --repo gadicc/watchbound \
-  --file release.yml \
-  --allow-publish \
-  --yes
-```
-
-The equivalent npm website configuration is GitHub owner `gadicc`, repository
-`watchbound`, workflow filename `release.yml`, no environment, and allowed
-action `npm publish`. Verify both relationships with
-`npm trust list <package>`, require 2FA, and disallow token publishing.
-
-npm trusted publishing requires npm 11.5.1+ and Node 22.14.0+. The workflow
-pins Node 24.15.0 and npm 11.18.0. Publisher fields are exact and
-case-sensitive, and both published manifests identify the public
-`https://github.com/gadicc/watchbound` repository.
-
-As with `projectfmt`, do not create a semantic-release Git tag for the
-`bootstrap` dist-tag. With no prior semantic-release tag, the first
-release-worthy `main` run establishes the normal public line (typically
-`1.0.0`) and publishes it with OIDC provenance under npm's `latest` dist-tag.
-
-Official references:
-
-- [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
-- [npm provenance](https://docs.npmjs.com/generating-provenance-statements/)
-- [JSR publishing from GitHub Actions](https://jsr.io/docs/publishing-packages)
-- [JSR provenance and trust](https://jsr.io/docs/trust)
-- [semantic-release](https://semantic-release.gitbook.io/)
-
-## Remaining release gates
-
-Green automation is necessary, not a production-readiness declaration. Before
-publishing, explicitly close or accept the currently documented blockers,
-qualify the exact release commit on both support lanes, and review
-[`native-delivery.md`](native-delivery.md).
-
-The automated pieces cover package file allowlists, offline install/import, JSR
-dry-run validation, exact target naming, version/delivery lockstep, binary
-inspection, checksums, a CycloneDX SBOM, same-runner byte reproducibility, and
-OIDC provenance after bootstrap. The incident path is in
-[`release-incident-response.md`](release-incident-response.md).
-
-Still requiring an explicit human decision or external evidence before the
-same qualified SHA is pushed to `main`:
-
-- accept the deliberately narrow Ubuntu 24.04 x64/glibc 2.39 public artifact,
-  with unsupported targets failing closed;
-- resolve or explicitly accept every production blocker and decide whether the
-  release remains experimental;
-- obtain fresh supervised forced-overflow evidence for the exact release
-  candidate on a confirmed quiet, prepared host;
-- review known limitations; and
-- accept that exact stable registry smoke necessarily follows immutable
-  publication and use the incident path if either route fails.
-
-## Release checklist
-
-1. Use a Conventional Commit whose type matches the intended release impact.
-2. Commit the intended release version in package, Cargo, and lock metadata.
-3. Run `pnpm build:node`, `pnpm test`, `pnpm check`,
-   `pnpm check:reproducible`, and `pnpm test:packages`.
-4. On a confirmed quiet supported host, run the separately approved manual and
-   automatic forced-overflow trials against that SHA and native digest.
-5. For the completed one-time bootstrap only, `0.0.1` was published locally in
-   native, wrapper, then JSR order, and the registry OIDC relationships were
-   configured.
-6. For subsequent releases, intentionally merge or push the exact approved
-   Conventional Commit to `main`; semantic-release validates and publishes its
-   committed version after the two CI lanes and independent-builder comparison
-   pass in that same workflow run.
-7. Treat the release as published-but-verification-pending until both exact npm
-   and JSR Node-route registry smokes pass.
-8. Verify provenance, npm dist-tags, JSR version state, GitHub evidence, and the
-   retained smoke results.
-
-Do not merge a release-worthy commit to `main` merely to exercise publishing.
-Every `main` push crosses the publication-authorization boundary; use an
-ordinary branch push or pull request for non-publishing CI.
+- Ensure the exact status-bearing commit has complete green x64/ARM64 source,
+  reproducibility, distro, Electron, Nix, and supervised overflow evidence.
+- Record runner/job URLs, artifact hashes, maximum GLIBC versions, host kernel
+  facts, and caveats in a non-release evidence update.
+- Complete both adversarial packaging/release reviews.
+- Obtain explicit maintainer release approval and registry bootstrap approval.
+- Never merge merely to exercise publishing.

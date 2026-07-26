@@ -13,24 +13,38 @@ const workspaceRoot = path.resolve(
 const distRoot = path.join(workspaceRoot, "dist");
 const tarballRoot = path.join(distRoot, "tarballs");
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-packages-"));
-const version = JSON.parse(
-  fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf8"),
-).version;
+const version = readJson(path.join(workspaceRoot, "package.json")).version;
+const packageManifest = readJson(path.join(distRoot, "native-package-manifest.json"));
+const matrix = readJson(path.join(workspaceRoot, "config", "native-matrix.json"));
+const currentTarget = matrix.targets.find((target) =>
+  target.platform === process.platform && target.architecture === process.arch);
+assert.ok(currentTarget, `no package smoke target for ${process.platform}/${process.arch}`);
 
 fs.rmSync(tarballRoot, { recursive: true, force: true });
 fs.mkdirSync(tarballRoot, { recursive: true });
 
 try {
-  const native = packAndCheck("node", [
+  const loader = packAndCheck(packageManifest.loader.root, [
     "LICENSE.txt",
     "README.md",
     "index.d.ts",
     "index.js",
     "load-native.cjs",
+    "native-matrix.json",
     "package.json",
-    "watchbound.linux-x64-gnu.node",
   ]);
-  const wrapper = packAndCheck("wrapper", [
+  const targets = packageManifest.targets.map((target) => ({
+    ...target,
+    ...packAndCheck(target.root, [
+      "LICENSE.txt",
+      "README.md",
+      "package.json",
+      target.binary,
+    ]),
+  }));
+  const currentTargetPackage = targets.find(({ id }) => id === currentTarget.id);
+  assert.ok(currentTargetPackage, `prepared packages omit current target ${currentTarget.id}`);
+  const wrapper = packAndCheck(packageManifest.wrapper.root, [
     "LICENSE.txt",
     "README.md",
     "automatic-reconciliation.js",
@@ -43,10 +57,7 @@ try {
     "package.json",
   ]);
 
-  writeJson(path.join(smokeRoot, "package.json"), {
-    private: true,
-    type: "module",
-  });
+  writeJson(path.join(smokeRoot, "package.json"), { private: true, type: "module" });
   run(
     "npm",
     [
@@ -55,7 +66,8 @@ try {
       "--no-audit",
       "--no-fund",
       "--offline",
-      native.tarball,
+      currentTargetPackage.tarball,
+      loader.tarball,
       wrapper.tarball,
     ],
     smokeRoot,
@@ -69,7 +81,8 @@ try {
         "import assert from 'node:assert/strict';",
         "import { capabilities } from 'watchbound';",
         `assert.equal(capabilities.versions.wrapper, ${JSON.stringify(version)});`,
-        "assert.equal(capabilities.support.operatingSystem.family, 'linux');",
+        "assert.equal(capabilities.schemaVersion, 4);",
+        `assert.equal(capabilities.build.packagedTarget.id, ${JSON.stringify(currentTarget.id)});`,
         "assert.equal(capabilities.build.delivery, 'bundled-native-package');",
         "assert.equal(capabilities.build.prebuilt, true);",
         "assert.equal(capabilities.support.delivery, 'bundled-native-package');",
@@ -78,27 +91,10 @@ try {
     smokeRoot,
   );
   const nativeSha256 = sha256(
-    path.join(distRoot, "npm", "node", "watchbound.linux-x64-gnu.node"),
+    path.join(distRoot, currentTargetPackage.root, currentTarget.binary),
   );
-  run(
-    process.execPath,
-    [
-      path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
-      "--project",
-      smokeRoot,
-      "--wrapper",
-      "watchbound",
-      "--version",
-      version,
-      "--native-sha256",
-      nativeSha256,
-      "--route",
-      "local-npm-tarballs",
-      "--evidence",
-      path.join(smokeRoot, "npm-installed-smoke.json"),
-    ],
-    workspaceRoot,
-  );
+  assert.equal(nativeSha256, currentTargetPackage.sha256);
+  runInstalledSmoke(smokeRoot, "watchbound", nativeSha256, currentTarget.id, "local-npm-tarballs");
 
   run(
     "npm",
@@ -110,7 +106,8 @@ try {
       "--no-package-lock",
       "--no-save",
       "--offline",
-      native.tarball,
+      currentTargetPackage.tarball,
+      loader.tarball,
     ],
     path.join(distRoot, "jsr"),
   );
@@ -119,94 +116,72 @@ try {
     ["publish", "--dry-run", "--allow-dirty", "--no-check"],
     path.join(distRoot, "jsr"),
   );
-  run(
-    process.execPath,
-    [
-      path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
-      "--project",
-      path.join(distRoot, "jsr"),
-      "--wrapper",
-      "@gadicc/watchbound",
-      "--wrapper-path",
-      path.join(distRoot, "jsr"),
-      "--version",
-      version,
-      "--native-sha256",
-      nativeSha256,
-      "--route",
-      "local-jsr-node-tree",
-      "--evidence",
-      path.join(smokeRoot, "jsr-installed-smoke.json"),
-    ],
-    workspaceRoot,
+  runInstalledSmoke(
+    path.join(distRoot, "jsr"),
+    "@gadicc/watchbound",
+    nativeSha256,
+    currentTarget.id,
+    "local-jsr-node-tree",
+    path.join(distRoot, "jsr"),
   );
   const jsrManifestPath = path.join(distRoot, "jsr", "package.json");
-  const preparedJsrManifest = JSON.parse(
-    fs.readFileSync(jsrManifestPath, "utf8"),
-  );
+  const preparedJsrManifest = readJson(jsrManifestPath);
   writeJson(jsrManifestPath, {
     name: "@jsr/gadicc__watchbound",
     version,
     type: "module",
-    dependencies: {
-      "@gadicc/watchbound-node": version,
-    },
-    exports: {
-      ".": {
-        types: "./index.d.ts",
-        default: "./index.js",
-      },
-    },
+    dependencies: { "@gadicc/watchbound-node": version },
+    exports: { ".": { types: "./index.d.ts", default: "./index.js" } },
   });
-  run(
-    process.execPath,
-    [
-      path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
-      "--project",
-      path.join(distRoot, "jsr"),
-      "--wrapper",
-      "@gadicc/watchbound",
-      "--wrapper-path",
-      path.join(distRoot, "jsr"),
-      "--version",
-      version,
-      "--native-sha256",
-      nativeSha256,
-      "--route",
-      "local-jsr-npm-compatibility-tree",
-      "--evidence",
-      path.join(smokeRoot, "jsr-npm-compatibility-smoke.json"),
-    ],
-    workspaceRoot,
+  runInstalledSmoke(
+    path.join(distRoot, "jsr"),
+    "@gadicc/watchbound",
+    nativeSha256,
+    currentTarget.id,
+    "local-jsr-npm-compatibility-tree",
+    path.join(distRoot, "jsr"),
   );
   writeJson(jsrManifestPath, preparedJsrManifest);
   fs.rmSync(path.join(distRoot, "jsr", "node_modules"), {
     recursive: true,
     force: true,
   });
-  run(
-    "node",
-    ["scripts/generate-release-evidence.mjs"],
-    workspaceRoot,
-  );
+  run("node", ["scripts/generate-release-evidence.mjs"], workspaceRoot);
 } finally {
   fs.rmSync(smokeRoot, { recursive: true, force: true });
 }
 
 process.stdout.write(
-  `Validated npm tarballs, installed package smoke, JSR dry run, and release evidence for ${version}\n`,
+  `Validated target-aware npm tarballs, installed package smoke, JSR dry run, and release evidence for ${version}\n`,
 );
 
-function packAndCheck(directory, expectedFiles) {
-  const cwd = path.join(distRoot, "npm", directory);
+function runInstalledSmoke(project, wrapper, nativeSha256, targetId, route, wrapperPath) {
+  const args = [
+    path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
+    "--project",
+    project,
+    "--wrapper",
+    wrapper,
+    "--version",
+    version,
+    "--native-target",
+    targetId,
+    "--native-sha256",
+    nativeSha256,
+    "--route",
+    route,
+    "--evidence",
+    path.join(smokeRoot, `${route}.json`),
+  ];
+  if (wrapperPath) args.push("--wrapper-path", wrapperPath);
+  run(process.execPath, args, workspaceRoot);
+}
+
+function packAndCheck(relativeDirectory, expectedFiles) {
+  const cwd = path.join(distRoot, relativeDirectory);
   const result = run(
     "npm",
-    [
-      "pack",
-      "--json",
-      "--pack-destination",
-      tarballRoot,
-    ],
+    ["pack", "--json", "--pack-destination", tarballRoot],
     cwd,
     true,
   );
@@ -218,9 +193,7 @@ function packAndCheck(directory, expectedFiles) {
     packed.files.map(({ path: file }) => file).sort(),
     [...expectedFiles].sort(),
   );
-  return {
-    tarball: path.join(tarballRoot, packed.filename),
-  };
+  return { tarball: path.join(tarballRoot, packed.filename), name: packed.name };
 }
 
 function run(command, args, cwd, capture = false) {
@@ -240,13 +213,14 @@ function run(command, args, cwd, capture = false) {
   return result;
 }
 
+function readJson(source) {
+  return JSON.parse(fs.readFileSync(source, "utf8"));
+}
+
 function writeJson(destination, value) {
   fs.writeFileSync(destination, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function sha256(source) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(source))
-    .digest("hex");
+  return crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex");
 }

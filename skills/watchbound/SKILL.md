@@ -15,8 +15,10 @@ Before changing an integration:
 
 1. Inspect the installed `watchbound` version, its declarations, and its
    exported `capabilities`.
-2. Check the runtime against `capabilities.support`; matching diagnostic runtime
-   facts alone do not widen the declared support target.
+2. Check `capabilities.support.currentRuntime` and the matching entry in
+   `capabilities.support.targets`; matching diagnostic runtime facts alone do
+   not widen the declared support target. Older packages may expose only the
+   legacy single-target fields.
 3. Confirm that the consumer can rescan after a conservative root invalidation
    and can operate honestly with partial or uncertain coverage.
 4. Prefer another watcher when the consumer needs a cross-platform package,
@@ -27,12 +29,14 @@ The source repository can be ahead of immutable registry releases. Do not use a
 source-candidate API merely because this skill describes it; verify that the
 selected package version exports the capability.
 
-Treat the maintained target as deliberately narrow. At the time represented by
-this skill it is Ubuntu 24.04, Linux 6.8 or newer in that support line, x64,
-glibc 2.39, and Node `>=24.15.0 <25`. Treat WSL, network filesystems, FUSE,
-overlay filesystems, musl, other distributions or architectures, and
-non-Linux hosts as unqualified unless the selected package explicitly says
-otherwise.
+Treat the maintained target as deliberately evidence-bound. The published
+`1.0.1` line retains its historical Ubuntu 24.04 x64 target. The unpublished
+`1.2.0` source candidate defines x64 and ARM64 GNU/Linux targets, a candidate
+kernel 5.15/glibc 2.35 baseline, and Node `>=24.15.0 <25`, but both report
+`target-pending-clean-ci`. Treat distro recognition, successful loading, and
+runtime facts as unqualified unless the selected package's exact target says
+`supported`. WSL, network filesystems, FUSE, overlay filesystems, musl, ARMv7,
+and non-Linux hosts remain outside the candidate matrix.
 
 ## Preserve the semantic model
 

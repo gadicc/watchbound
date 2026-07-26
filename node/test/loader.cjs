@@ -21,6 +21,9 @@ const packageDelivery = packageManifest.watchbound.delivery;
 const privateDirectory = "/private/watchbound/node";
 const nativeBasename = "watchbound.linux-x64-gnu.node";
 const nativePath = path.join(privateDirectory, nativeBasename);
+const nativeMatrix = require("../../config/native-matrix.json");
+const x64Target = nativeMatrix.targets.find((target) => target.architecture === "x64");
+const arm64Target = nativeMatrix.targets.find((target) => target.architecture === "arm64");
 
 const validMetadata = Object.freeze({
   schemaVersion: 1,
@@ -48,15 +51,34 @@ function validBinding(metadata = validMetadata) {
   };
 }
 
+function elfFor(target) {
+  const contents = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(contents);
+  contents[4] = target.elf.class;
+  contents[5] = target.elf.endianness;
+  contents.writeUInt16LE(target.elf.machine, 18);
+  return contents;
+}
+
 function loadOptions(overrides = {}) {
   return {
     platform: "linux",
     arch: "x64",
+    nodeVersion: "24.15.0",
     napiVersion: "9",
     report: glibcReport(),
+    matrix: nativeMatrix,
     directory: privateDirectory,
     packageVersion,
+    packageDelivery: "controlled-source-build",
     existsSync: () => true,
+    readdirSync: () => [nativeBasename],
+    lstatSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      size: elfFor(x64Target).length,
+    }),
+    readFileSync: () => elfFor(x64Target),
     requireNative: () => validBinding(),
     ...overrides,
   };
@@ -72,11 +94,10 @@ function expectLoaderError(action, code) {
   });
 }
 
-test("loader accepts only Linux x64", () => {
+test("loader accepts only configured Linux architectures", () => {
   for (const [platform, arch] of [
     ["darwin", "x64"],
     ["win32", "x64"],
-    ["linux", "arm64"],
     ["linux", "ia32"],
   ]) {
     let filesystemCalls = 0;
@@ -93,6 +114,23 @@ test("loader accepts only Linux x64", () => {
     );
     assert.equal(filesystemCalls, 0);
   }
+
+  const armBinding = loadNative(loadOptions({
+    arch: "arm64",
+    readdirSync: () => [arm64Target.binary],
+    lstatSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      size: elfFor(arm64Target).length,
+    }),
+    readFileSync: () => elfFor(arm64Target),
+    requireNative: () => validBinding({
+      ...validMetadata,
+      targetTriple: arm64Target.rustTarget,
+    }),
+  }));
+  assert.equal(armBinding.marker, "native-binding");
+  assert.equal(armBinding.nativeDeliveryMetadata().architecture, "arm64");
 });
 
 test("loader distinguishes detected glibc from musl and unknown libc", () => {
@@ -128,6 +166,19 @@ test("loader requires an integer process Node-API version of at least six", () =
   }
   assert.equal(loadNative(loadOptions({ napiVersion: "6" })).marker, "native-binding");
   assert.equal(loadNative(loadOptions({ napiVersion: "10" })).marker, "native-binding");
+});
+
+test("loader enforces the exact supported Node 24 range", () => {
+  for (const nodeVersion of [undefined, null, "", "24.14.9", "24.15.0-rc.1", "23.9.0", "25.0.0"]) {
+    expectLoaderError(
+      () => loadNative(loadOptions({ nodeVersion })),
+      WatchboundLoaderErrorCode.UNSUPPORTED_NODE,
+    );
+  }
+  assert.equal(
+    loadNative(loadOptions({ nodeVersion: "24.99.0" })).marker,
+    "native-binding",
+  );
 });
 
 test("loader reports a missing exact local addon without trying to require it", () => {
@@ -236,6 +287,124 @@ test("loader uses exactly one local basename and ignores napi-rs environment ove
     ["exists", nativePath],
     ["require", nativePath],
   ]);
+});
+
+test("bundled loader resolves one exact target package and verifies its digest", () => {
+  const contents = elfFor(x64Target);
+  const sha256 = require("node:crypto")
+    .createHash("sha256")
+    .update(contents)
+    .digest("hex");
+  const packageRoot = "/private/watchbound/target-x64";
+  const manifestPath = path.join(packageRoot, "package.json");
+  const manifest = {
+    name: x64Target.package,
+    version: packageVersion,
+    watchbound: {
+      delivery: "target-native-package",
+      target: x64Target.id,
+      targetTriple: x64Target.rustTarget,
+      architecture: x64Target.architecture,
+      libc: x64Target.libc,
+      binary: x64Target.binary,
+      nativeSha256: sha256,
+    },
+  };
+  const calls = [];
+  const binding = loadNative(loadOptions({
+    packageDelivery: "bundled-native-package",
+    resolvePackageJson(specifier) {
+      calls.push(["resolve", specifier]);
+      return manifestPath;
+    },
+    existsSync(candidate) {
+      calls.push(["exists", candidate]);
+      return true;
+    },
+    readdirSync(candidate) {
+      assert.equal(candidate, packageRoot);
+      return [x64Target.binary];
+    },
+    lstatSync(candidate) {
+      assert.equal(candidate, path.join(packageRoot, x64Target.binary));
+      return {
+        isFile: () => true,
+        isSymbolicLink: () => false,
+        size: contents.length,
+      };
+    },
+    readFileSync(candidate, encoding) {
+      if (candidate === manifestPath) {
+        assert.equal(encoding, "utf8");
+        return JSON.stringify(manifest);
+      }
+      assert.equal(candidate, path.join(packageRoot, x64Target.binary));
+      return contents;
+    },
+    requireNative(candidate) {
+      calls.push(["require", candidate]);
+      return validBinding();
+    },
+  }));
+  assert.equal(binding.marker, "native-binding");
+  assert.deepEqual(binding.nativeDeliveryMetadata(), {
+    schemaVersion: 1,
+    delivery: "bundled-native-package",
+    loaderPackage: "@gadicc/watchbound-node",
+    targetPackage: x64Target.package,
+    targetId: x64Target.id,
+    targetTriple: x64Target.rustTarget,
+    architecture: "x64",
+    libc: "glibc",
+    binary: x64Target.binary,
+    sha256,
+    qualification: "target-pending-clean-ci",
+    glibcMaximum: "2.35",
+    kernelMinimum: "5.15",
+  });
+  assert.deepEqual(calls, [
+    ["resolve", `${x64Target.package}/package.json`],
+    ["exists", path.join(packageRoot, x64Target.binary)],
+    ["require", path.join(packageRoot, x64Target.binary)],
+  ]);
+});
+
+test("bundled loader never falls back when the exact target package is missing", () => {
+  const resolved = [];
+  expectLoaderError(
+    () => loadNative(loadOptions({
+      packageDelivery: "bundled-native-package",
+      resolvePackageJson(specifier) {
+        resolved.push(specifier);
+        const error = new Error("package missing");
+        error.code = "MODULE_NOT_FOUND";
+        throw error;
+      },
+    })),
+    WatchboundLoaderErrorCode.TARGET_PACKAGE_MISSING,
+  );
+  assert.deepEqual(resolved, [`${x64Target.package}/package.json`]);
+});
+
+test("loader rejects wrong ELF identity and extra nearby addons", () => {
+  const wrongElf = elfFor(arm64Target);
+  expectLoaderError(
+    () => loadNative(loadOptions({
+      lstatSync: () => ({
+        isFile: () => true,
+        isSymbolicLink: () => false,
+        size: wrongElf.length,
+      }),
+      readFileSync: () => wrongElf,
+    })),
+    WatchboundLoaderErrorCode.NATIVE_ELF_MISMATCH,
+  );
+  expectLoaderError(
+    () => loadNative(loadOptions({
+      readdirSync: () => [nativeBasename, arm64Target.binary],
+    })),
+    WatchboundLoaderErrorCode.TARGET_PACKAGE_INVALID,
+  );
 });
 
 test("wrapper assertion uses the native package version and delivery mode", () => {

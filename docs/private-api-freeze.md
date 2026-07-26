@@ -4,10 +4,12 @@ Status: the private `0.2.0` contract is carried by the published public `0.0.1`
 bootstrap. Its later documentation commit passed both support lanes, although
 the immutable bootstrap still emits `target-pending-clean-ci`. Releases
 `1.0.0` and `1.0.1` added and then corrected the promise-aware callback
-contract. The `1.1.0` source candidate adds generation-zero initial exclusions
-and widens the declared Node 24 range down to 24.15. Its `supported`
-declaration for that target is effective only after the exact commit passes the
-release qualification gates.
+contract. The unpublished `1.2.0` candidate retains generation-zero initial
+exclusions and Node `>=24.15.0 <25` while adding exact x64/ARM64 delivery. Both
+target entries remain `target-pending-clean-ci`. Capability schema 4 is an additive delivery
+extension: the schema-3 single-target fields retain their historical meaning
+under `support.scope = "legacy-primary-target"`, while packaged-target,
+per-target qualification, lane, and current-runtime-match fields are new.
 
 The exact private `0.1.0` freeze and its support declaration remain the
 historical first qualified baseline.
@@ -129,9 +131,9 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; the `1.1.0` candidate emits
-`supported`. Exhaustive narrowing fixtures compile in the
-ordinary gate. Capability schema 3 and binding API 3 expose cancellation,
+`target-pending-clean-ci` and `supported`; both `1.2.0` target entries emit the
+pending value. Exhaustive narrowing fixtures compile in the ordinary gate.
+Capability schema 4 and binding API 3 expose cancellation,
 shared-delivery, and promise-aware callback-completion facts; loader metadata
 remains schema 1.
 
@@ -158,18 +160,17 @@ enter afterward.
 
 ## Target and exclusions
 
-The intended maintained target remains a controlled source build on Ubuntu 24.04
-x86_64, Linux 6.8 or newer within that support line, glibc 2.39, Node
-`>=24.15.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer,
-pnpm 10.33.2, and a working Ubuntu C toolchain under trusted stable local roots.
-The status-bearing candidate commit must itself pass both clean support lanes
-and independent-builder comparison; the target description or a successful
-local build is not qualification evidence.
+The unpublished candidate defines controlled x64 and ARM64 GNU/Linux source
+and package targets, a kernel 5.15/glibc 2.35 candidate baseline, Node
+`>=24.15.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer, and
+pnpm 10.33.2 under trusted stable local roots. Each status-bearing target must
+pass its full exact matrix; a target description or successful load is not
+qualification evidence.
 
-Unsupported targets include other Node ranges, distributions or glibc
-versions; musl; arm64 and other architectures; non-Linux systems; WSL,
+Unsupported targets include other Node ranges; musl; ARMv7 and other
+architectures; non-Linux systems; WSL,
 non-ordinary mounts, network/FUSE/overlay filesystems unless separately
-qualified; prebuilt installation, cross-compilation, install-time compiler
+qualified; cross-compilation alone, install-time compiler
 fallback; and hostile or adversarially mutated roots. Support does not include
 publication, prebuilds, consumer integration, Git-ignore policy, UI behavior,
 or logical workspace mapping.

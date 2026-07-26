@@ -18,18 +18,26 @@ const wrapperRoot = options["wrapper-path"]
   : path.join(projectRoot, "node_modules", options.wrapper);
 const wrapperEntry = fs.realpathSync(path.join(wrapperRoot, "index.js"));
 const wrapperRequire = createRequire(wrapperEntry);
-const nativeRoot = path.dirname(
+const loaderRoot = path.dirname(
   wrapperRequire.resolve("@gadicc/watchbound-node"),
 );
-const nativePath = path.join(
-  nativeRoot,
-  "watchbound.linux-x64-gnu.node",
+const nativeMatrix = readJson(path.join(loaderRoot, "native-matrix.json"));
+const nativeTarget = nativeMatrix.targets.find((target) =>
+  target.platform === process.platform && target.architecture === process.arch);
+assert.ok(nativeTarget, `no installed native target for ${process.platform}/${process.arch}`);
+if (options["native-target"]) {
+  assert.equal(nativeTarget.id, options["native-target"]);
+}
+const nativeRoot = path.dirname(
+  wrapperRequire.resolve(`${nativeTarget.package}/package.json`),
 );
+const nativePath = path.join(nativeRoot, nativeTarget.binary);
 const evidence = {
   schemaVersion: 1,
   kind: "watchbound-installed-package-smoke",
   route: options.route,
   expectedVersion: options.version,
+  expectedNativeTarget: options["native-target"] ?? nativeTarget.id,
   expectedNativeSha256: options["native-sha256"],
   startedAt: new Date().toISOString(),
   host: {
@@ -70,15 +78,21 @@ process.stdout.write(
 
 async function runSmoke() {
   const wrapperPackage = readJson(path.join(wrapperRoot, "package.json"));
+  const loaderPackage = readJson(path.join(loaderRoot, "package.json"));
   const nativePackage = readJson(path.join(nativeRoot, "package.json"));
   assert.equal(wrapperPackage.version, options.version);
+  assert.equal(loaderPackage.version, options.version);
   assert.equal(nativePackage.version, options.version);
   assert.equal(
     wrapperPackage.dependencies?.["@gadicc/watchbound-node"],
     options.version,
   );
   assert.equal(wrapperDelivery(wrapperPackage), "bundled-native-package");
-  assert.equal(nativePackage.watchbound?.delivery, "bundled-native-package");
+  assert.equal(loaderPackage.watchbound?.delivery, "bundled-native-package");
+  assert.equal(nativePackage.watchbound?.delivery, "target-native-package");
+  assert.equal(nativePackage.name, nativeTarget.package);
+  assert.equal(nativePackage.watchbound?.target, nativeTarget.id);
+  assert.equal(nativePackage.watchbound?.targetTriple, nativeTarget.rustTarget);
   assert.ok(fs.existsSync(nativePath), `missing installed native addon: ${nativePath}`);
   const nativeSha256 = sha256(nativePath);
   assert.equal(
@@ -97,7 +111,19 @@ async function runSmoke() {
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
   assert.equal(capabilities.build.prebuilt, true);
-  assert.equal(capabilities.support.status, "supported");
+  assert.equal(capabilities.schemaVersion, 4);
+  assert.equal(capabilities.build.packagedTarget.id, nativeTarget.id);
+  assert.equal(capabilities.build.packagedTarget.package, nativeTarget.package);
+  assert.equal(capabilities.build.packagedTarget.sha256, nativeSha256);
+  assert.equal(capabilities.support.scope, "legacy-primary-target");
+  const legacyX64Target = nativeMatrix.targets.find(
+    (target) => target.architecture === "x64",
+  );
+  assert.ok(legacyX64Target, "native matrix omits its legacy x64 target");
+  assert.equal(capabilities.support.status, legacyX64Target.qualification);
+  // These legacy single-target fields retain their original x64/Ubuntu 24.04
+  // meaning. Consumers must use support.targets and currentRuntime for the
+  // additive multi-target contract.
   assert.equal(capabilities.support.operatingSystem.distribution, "ubuntu");
   assert.equal(capabilities.support.operatingSystem.version, "24.04");
   assert.equal(capabilities.support.architecture, "x64");
@@ -105,6 +131,23 @@ async function runSmoke() {
     family: "glibc",
     version: "2.39",
   });
+  assert.equal(capabilities.support.targets.length, 2);
+  assert.equal(
+    capabilities.support.currentRuntime.packagedTargetId,
+    nativeTarget.id,
+  );
+  assert.equal(
+    capabilities.support.currentRuntime.runtimeMatchesPackagedTarget,
+    true,
+  );
+  assert.equal(
+    capabilities.support.currentRuntime.qualification,
+    nativeTarget.qualification,
+  );
+  assert.equal(
+    capabilities.support.currentRuntime.supported,
+    nativeTarget.qualification === "supported",
+  );
 
   const engine = createEngine();
   const inactiveRuntime = {
@@ -120,6 +163,7 @@ async function runSmoke() {
   const processBaseline = processResources();
 
   await checkRealDeliveryAndSerialization(engine);
+  await checkExclusionsRecoveryAndReconciliation(engine);
   await checkContextAbortAndJoinedDisposal(engine);
   await checkContextStop(engine);
 
@@ -152,6 +196,10 @@ async function runSmoke() {
       name: wrapperPackage.name,
       version: wrapperPackage.version,
     },
+    loader: {
+      name: loaderPackage.name,
+      version: loaderPackage.version,
+    },
     native: {
       name: nativePackage.name,
       version: nativePackage.version,
@@ -171,6 +219,88 @@ async function runSmoke() {
       },
     },
   };
+}
+
+async function checkExclusionsRecoveryAndReconciliation(engine) {
+  const parent = fs.mkdtempSync(
+    path.join(os.tmpdir(), "watchbound-installed-platform-semantics-"),
+  );
+  const root = path.join(parent, "root");
+  const movedRoot = path.join(parent, "root-old");
+  fs.mkdirSync(path.join(root, "initial-hidden"), { recursive: true });
+  fs.mkdirSync(path.join(root, "dynamic-hidden"), { recursive: true });
+  const batches = [];
+  let subscription;
+  try {
+    subscription = await engine.subscribe(
+      root,
+      (batch) => batches.push(batch),
+      {
+        initialExclusions: ["initial-hidden"],
+        batchWindowMs: 5,
+        outputQueueCapacity: 16,
+      },
+    );
+    assert.equal(subscription.initialCoverage.state, "complete");
+
+    const initialHidden = path.join(root, "initial-hidden", "hidden.txt");
+    const initialVisible = path.join(root, "visible.txt");
+    fs.writeFileSync(initialHidden, "hidden");
+    fs.writeFileSync(initialVisible, "visible");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(initialVisible)),
+      "initial-exclusion smoke did not deliver the visible path",
+    );
+    assert.equal(
+      batches.some((batch) => batch.invalidatedPaths.includes(initialHidden)),
+      false,
+      "initial exclusion leaked a hidden path",
+    );
+
+    const replacementCoverage = await subscription.replaceExclusions(
+      1n,
+      ["dynamic-hidden"],
+    );
+    assert.equal(replacementCoverage.state, "complete");
+    const dynamicHidden = path.join(root, "dynamic-hidden", "hidden.txt");
+    const nowVisible = path.join(root, "initial-hidden", "now-visible.txt");
+    fs.writeFileSync(dynamicHidden, "hidden");
+    fs.writeFileSync(nowVisible, "visible");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(nowVisible)),
+      "dynamic-exclusion smoke did not deliver the newly visible path",
+    );
+    assert.equal(
+      batches.some((batch) => batch.invalidatedPaths.includes(dynamicHidden)),
+      false,
+      "dynamic exclusion leaked a hidden path",
+    );
+
+    const reconciliation = await subscription.reconcile();
+    assert.equal(reconciliation.exclusionGeneration, 1n);
+    assert.equal(reconciliation.coverage.state, "complete");
+
+    fs.renameSync(root, movedRoot);
+    fs.mkdirSync(path.join(root, "replacement"), { recursive: true });
+    await waitFor(
+      () => subscription.rootState.attachment === "lost",
+      "root replacement did not become explicitly lost",
+    );
+    const recovery = await subscription.recoverRoot({
+      identityPolicy: "accept-replacement",
+    });
+    assert.equal(recovery.attachment, "replacement-adopted");
+    assert.equal(recovery.currentRootState.attachment, "attached");
+    const afterRecovery = path.join(root, "replacement", "after.txt");
+    fs.writeFileSync(afterRecovery, "after");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(afterRecovery)),
+      "root-recovery smoke did not restore real delivery",
+    );
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 }
 
 function wrapperDelivery(manifest) {
@@ -365,7 +495,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-installed-package.mjs --project <path> --wrapper <name> --version <version> --native-sha256 <digest> --route <route> [--wrapper-path <path>] [--evidence <path>]",
+        "usage: check-installed-package.mjs --project <path> --wrapper <name> --version <version> --native-sha256 <digest> --route <route> [--native-target <id>] [--wrapper-path <path>] [--evidence <path>]",
       );
     }
     parsed[flag.slice(2)] = value;

@@ -14,174 +14,272 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-build:
-    name: Source build (${{ matrix.lane }})
+  matrix:
+    name: Read native matrix
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      source: ${{ steps.matrix.outputs.source }}
+      qualification: ${{ steps.matrix.outputs.qualification }}
+      nix: ${{ steps.matrix.outputs.nix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - id: matrix
+        run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
+
+  source-build:
+    name: Source and semantic suite (${{ matrix.target }})
+    needs: matrix
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - lane: floor
-            node-version: 24.15.0
-            node-check-latest: false
-            rust-toolchain: 1.88.0
-          - lane: moving
-            node-version: 24.x
-            node-check-latest: true
-            rust-toolchain: stable
-
+        include: ${{ fromJSON(needs.matrix.outputs.source) }}
     steps:
-      - name: Check out source only
+      - name: Check out the exact clean source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
-
       - name: Reject checked-in native artifacts
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          tracked_native="$(git ls-files -- 'node/*.node' 'node/*.so')"
-          test -z "$tracked_native"
-          checkout_native="$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
-          test -z "$checkout_native"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          test -z "$(git ls-files -- 'node/*.node' 'node/*.so')"
+          test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node-version }}
-          architecture: x64
-          check-latest: ${{ matrix.node-check-latest }}
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
           package-manager-cache: false
-
-      - name: Set up Rust
+      - name: Set up pinned Rust and pnpm
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install "${{ matrix.rust-toolchain }}" \
-            --profile minimal \
-            --component clippy \
-            --component rustfmt
-          rustup default "${{ matrix.rust-toolchain }}"
-
-      - name: Assert and record target host
+          rustup toolchain install 1.88.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.88.0
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(node --version)" = v24.15.0
+          test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
+          rustc --version | grep -Eq '^rustc 1\.88\.0 '
+          test "$(pnpm --version)" = 10.33.2
+      - name: Assert and record the native baseline host
         shell: bash
         run: |
           set -euo pipefail
-
           source /etc/os-release
           test "$ID" = ubuntu
-          test "$VERSION_ID" = 24.04
+          test "$VERSION_ID" = 22.04
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
           test "$(uname -s)" = Linux
-          test "$(uname -m)" = x86_64
-          test "$(node -p 'process.platform')" = linux
-          test "$(node -p 'process.arch')" = x64
-          node -e 'if (Number(process.versions.napi) < 6) process.exit(1)'
-
-          glibc_version="$(getconf GNU_LIBC_VERSION)"
-          test "$glibc_version" = "glibc 2.39"
-
-          kernel_release="$(uname -r)"
-          kernel_version="${kernel_release%%-*}"
-          dpkg --compare-versions "$kernel_version" ge 6.8
-
+          case "${{ matrix.architecture }}" in
+            x64) test "$(uname -m)" = x86_64 ;;
+            arm64) test "$(uname -m)" = aarch64 ;;
+          esac
           command -v cc
           command -v c++
           command -v ld
-
           uname -a
-          printf 'distribution=%s %s\n' "$ID" "$VERSION_ID"
-          printf 'glibc=%s\n' "$glibc_version"
-          printf 'kernel=%s\n' "$kernel_release"
-          cc --version
-          c++ --version
-          ld --version
-          node --version
-          printf 'node_api=%s\n' "$(node -p 'process.versions.napi')"
+          getconf GNU_LIBC_VERSION
           rustc --version --verbose
-          cargo --version
-
-          if test "${{ matrix.lane }}" = floor; then
-            test "$(node --version)" = v24.15.0
-            rustc --version | grep -Eq '^rustc 1\.88\.0 '
-          else
-            node -e 'if (process.versions.node.split(".")[0] !== "24") process.exit(1)'
-            rustup show active-toolchain | grep -Eq '^stable-x86_64-unknown-linux-gnu '
-          fi
-
-      - name: Enable the pinned pnpm release
+          node -p 'JSON.stringify(process.versions)'
+      - name: Install, build, and verify the repository
         shell: bash
         run: |
           set -euo pipefail
-          corepack enable
-          corepack prepare pnpm@10.33.2 --activate
-          test "$(pnpm --version)" = 10.33.2
-
-      - name: Install from the lockfile
-        run: pnpm install --frozen-lockfile
-
-      - name: Build the native binding from source
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo metadata --format-version 1 --locked >/dev/null
+          pnpm install --frozen-lockfile
           pnpm build:node
-          test -f node/watchbound.linux-x64-gnu.node
+          test -f "node/${{ matrix.binary }}"
           test "$(find node -maxdepth 1 -type f -name '*.node' -print | wc -l)" -eq 1
-          test -z "$(find node -maxdepth 1 -type f -name '*.so' -print -quit)"
-          file node/watchbound.linux-x64-gnu.node
-          git diff --exit-code -- node/index.js node/index.d.ts node/load-native.cjs
-          git diff --exit-code -- Cargo.lock pnpm-lock.yaml
-
-      - name: Compile public TypeScript contracts
-        run: pnpm typecheck
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Run repository checks
-        run: pnpm check
-
-      - name: Run bounded maintenance gates
-        shell: bash
-        run: |
-          set -euo pipefail
+          git diff --exit-code -- Cargo.lock pnpm-lock.yaml node/index.js node/index.d.ts node/load-native.cjs
+          pnpm test
+          pnpm check
           pnpm test:soak
           pnpm test:root-recovery-stress
-
-      - name: Run strict ordinary conformance serially
-        shell: bash
-        run: |
-          set -euo pipefail
           node benches/conformance.mjs \
             --adapter watchbound \
             --scenarios normal-deep-change,moved-in-subtree,root-replacement,root-replacement-recovery,watch-limit,bridge-backpressure,dynamic-exclusions,reconciliation,automatic-reconciliation,burst-files,burst-directories,burst-renames,disposal \
-            --quick \
-            --order rotating \
-            --strict
+            --quick --order rotating --strict
+          node --expose-gc benches/benchmark.mjs \
+            --adapter watchbound --quick --order rotating --strict \
+            --output "$RUNNER_TEMP/watchbound-benchmark-smoke.json" --quiet
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.6.7
+      - name: Rehearse npm and JSR artifacts offline
+        run: pnpm test:packages
+      - name: Retain the target artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          path: node/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 30
 
-      - name: Exercise the quick benchmark paths
+  moving-toolchain:
+    name: Moving Node 24 and Rust stable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          architecture: x64
+          check-latest: true
+          package-manager-cache: false
+      - name: Exercise the moving supported tool range
         shell: bash
         run: |
           set -euo pipefail
-          node --expose-gc benches/benchmark.mjs \
-            --adapter watchbound \
-            --quick \
-            --order rotating \
-            --strict \
-            --output "$RUNNER_TEMP/watchbound-benchmark-smoke.json" \
-            --quiet
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+          pnpm build:node
+          pnpm test
+          pnpm check
 
-      - name: Set up Deno for JSR validation
-        if: matrix.lane == 'floor'
-        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+  distro-qualification:
+    name: Runtime ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
+    needs: [matrix, source-build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.qualification) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          deno-version: v2.6.7
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          path: node
+      - name: Prepare exact local tarballs
+        run: |
+          pnpm package:prepare
+          node scripts/pack-prepared-packages.mjs --target "${{ matrix.target }}"
+      - name: Exercise offline installation in the pinned distro image
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_root="$(dirname "$(dirname "$(command -v node)")")"
+          docker pull "${{ matrix.image }}"
+          node scripts/run-distro-qualification.mjs \
+            --lane "${{ matrix.lane }}" \
+            --target "${{ matrix.target }}" \
+            --image "${{ matrix.image }}" \
+            --node-root "$node_root" \
+            --evidence "$RUNNER_TEMP/watchbound-${{ matrix.lane }}-${{ matrix.architecture }}.json"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-distro-${{ matrix.lane }}-${{ matrix.architecture }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-${{ matrix.lane }}-${{ matrix.architecture }}.json
+          if-no-files-found: warn
+          retention-days: 90
 
-      - name: Validate npm and JSR release artifacts
-        if: matrix.lane == 'floor'
-        run: pnpm test:packages
+  codex-electron-asar:
+    name: Codex Electron ASAR (${{ matrix.target }})
+    needs: [matrix, source-build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.source) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          path: node
+      - name: Prepare the target package and exact Electron archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm package:prepare
+          archive="$RUNNER_TEMP/electron.zip"
+          curl --fail --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/electron/electron/releases/download/v42.3.0/electron-v42.3.0-linux-${{ matrix.electronArchitecture }}.zip"
+          expected_hex="$(printf '%s' '${{ matrix.electronSha256SRI }}' | sed 's/^sha256-//' | base64 -d | od -An -vtx1 | tr -d ' \n')"
+          printf '%s  %s\n' "$expected_hex" "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/electron"
+          unzip -q "$archive" -d "$RUNNER_TEMP/electron"
+          node scripts/check-electron-asar.mjs \
+            --electron "$RUNNER_TEMP/electron/electron" \
+            --target "${{ matrix.target }}" \
+            --evidence "$RUNNER_TEMP/watchbound-electron-${{ matrix.target }}.json"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-electron-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-electron-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  nix:
+    name: Nix closure (${{ matrix.system }})
+    needs: matrix
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.nix) }}
+    env:
+      NIX_CONFIG: experimental-features = nix-command flakes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+      - name: Build and exercise the locked source closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(nix eval --impure --raw --expr builtins.currentSystem)" = "${{ matrix.system }}"
+          nix flake check --no-update-lock-file --print-build-logs

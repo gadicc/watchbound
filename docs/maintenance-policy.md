@@ -10,8 +10,9 @@ publication still requires an explicit maintainer merge or push, a
 release-worthy Conventional Commit, and completion of the distribution gates
 below. Bootstrap publication does not itself authorize consumer integration.
 The maintainer has since separately authorized the opt-in Codex Desktop Linux
-integration recorded in `docs/architecture.md`; it remains gated on the exact
-`1.1.0` release qualification and consumer-side artifact pinning.
+integration recorded in `docs/architecture.md`; it remains gated on exact
+multi-target qualification, official immutable artifacts, and consumer-side
+artifact pinning.
 
 ## Ownership
 
@@ -28,14 +29,12 @@ per-environment delivery. The public registry line reset with a `0.0.1`
 bootstrap package containing that revision; later public versions are owned by
 semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
 although a later exact commit qualified its implementation baseline. The
-corrected `1.0.1` package is the current release. The `1.1.0` source candidate
-adds generation-zero initial exclusions and a Node 24.15 floor while retaining
-promise-aware callbacks, binding API 3, and capability schema 3. Its
-`supported` declaration for the widened floor becomes effective only when its
-exact commit passes both qualification lanes. The repository targets the narrow
-host in
-`support-matrix.md`; bootstrap publication must not imply a broader
-compatibility promise.
+corrected `1.0.1` package is the current release. The unpublished `1.2.0`
+candidate adds the x64/ARM64 target-package matrix while retaining
+generation-zero exclusions, promise-aware callbacks, and binding API 3; its
+capability schema 4 target entries remain `target-pending-clean-ci`.
+`support-matrix.md` is the claim authority, and buildability or bootstrap
+publication must not imply a broader compatibility promise.
 
 The exact-commit verification and documentation gates supporting recognition
 as maintained-unpublished are recorded in `consumer-api-stabilization.md`.
@@ -96,8 +95,8 @@ automatic per-commit test and requires fresh quiet-host confirmation.
 ## Release and distribution gates
 
 The historical maintained-unpublished status did not authorize a release. The
-separately approved bootstrap is now published. The prepared
-one-target bundled-native proposal now includes target-specific naming,
+separately approved bootstrap is now published. The unpublished multi-target
+bundled-native candidate now includes target-specific naming,
 checksums, provenance, CycloneDX SBOM, binary inspection, version/delivery
 lockstep, independent-builder byte comparison, same-runner defense in depth,
 fail-closed loading, and an incident runbook. Before publication, separately

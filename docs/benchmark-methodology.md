@@ -279,10 +279,10 @@ raw identity. A completed targeted run does not authorize a retry or any other
 command containing `--allow-forced-overflow`.
 
 For the prospective stable release, use a clean source-only checkout of the
-exact candidate SHA on Ubuntu 24.04 x64/glibc 2.39 with Node 24.18.0, Rust
-1.88.0, and pnpm 10.33.2. Install from the frozen lockfile, freshly build the
-release addon, and require its SHA-256 to equal the independent-builder
-comparison before any overflow command. Retain the checkout/build transcript,
+exact candidate SHA on a prepared native x64 or ARM64 runner with Node 24.15.0,
+Rust 1.88.0, and pnpm 10.33.2. Install from the frozen lockfile and require the
+canonical addon's SHA-256 to equal the independent-builder comparison before
+any overflow command. Retain the checkout/build transcript,
 source digest, addon hash, tool versions, inotify limits, temporary-filesystem
 identity, free blocks/inodes, `vmstat 1 5`, `/proc/pressure` samples, load,
 governor, and the list of other active I/O-heavy work.

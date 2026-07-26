@@ -18,7 +18,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v3 reports callback completion, target state, defaults, and bounds", () => {
+test("capability schema v4 separates packaged, runtime, and qualification state", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -29,7 +29,7 @@ test("capability schema v3 reports callback completion, target state, defaults, 
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 3);
+  assert.equal(capabilities.schemaVersion, 4);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
@@ -43,7 +43,17 @@ test("capability schema v3 reports callback completion, target state, defaults, 
     targetTriple: "x86_64-unknown-linux-gnu",
     nodeApi: 6,
     rustMinimum: "1.88",
+    packagedTarget: {
+      id: "linux-x64-gnu",
+      package: null,
+      binary: "watchbound.linux-x64-gnu.node",
+      sha256: capabilities.build.packagedTarget.sha256,
+      architecture: "x64",
+      libc: "glibc",
+      qualification: "target-pending-clean-ci",
+    },
   });
+  assert.match(capabilities.build.packagedTarget.sha256, /^[0-9a-f]{64}$/u);
   assert.equal(capabilities.runtime.platform, process.platform);
   assert.equal(capabilities.runtime.architecture, process.arch);
   assert.equal(capabilities.runtime.kernel, os.release());
@@ -57,8 +67,20 @@ test("capability schema v3 reports callback completion, target state, defaults, 
     capabilities.runtime.libc.version === null ||
       typeof capabilities.runtime.libc.version === "string",
   );
-  assert.deepEqual(capabilities.support, {
-    status: "supported",
+  assert.deepEqual({
+    scope: capabilities.support.scope,
+    status: capabilities.support.status,
+    operatingSystem: capabilities.support.operatingSystem,
+    architecture: capabilities.support.architecture,
+    libc: capabilities.support.libc,
+    nodeRange: capabilities.support.nodeRange,
+    rustMinimum: capabilities.support.rustMinimum,
+    packageManager: capabilities.support.packageManager,
+    delivery: capabilities.support.delivery,
+    rootThreatModel: capabilities.support.rootThreatModel,
+  }, {
+    scope: "legacy-primary-target",
+    status: "target-pending-clean-ci",
     operatingSystem: {
       family: "linux",
       distribution: "ubuntu",
@@ -73,6 +95,37 @@ test("capability schema v3 reports callback completion, target state, defaults, 
     delivery: "controlled-source-build",
     rootThreatModel: "trusted-stable-local-roots",
   });
+  assert.equal(capabilities.support.targets.length, 2);
+  assert.deepEqual(
+    capabilities.support.targets.map(({ id, architecture, status }) => ({
+      id,
+      architecture,
+      status,
+    })),
+    [
+      {
+        id: "linux-x64-gnu",
+        architecture: "x64",
+        status: "target-pending-clean-ci",
+      },
+      {
+        id: "linux-arm64-gnu",
+        architecture: "arm64",
+        status: "target-pending-clean-ci",
+      },
+    ],
+  );
+  assert.equal(capabilities.support.qualificationLanes.length, 7);
+  assert.deepEqual(capabilities.support.currentRuntime, {
+    packagedTargetId: "linux-x64-gnu",
+    runtimeMatchesPackagedTarget: true,
+    qualification: "target-pending-clean-ci",
+    supported: false,
+  });
+  assert.deepEqual(
+    capabilities.support.intentionallyUnsupported.map(({ target }) => target),
+    ["linux-armv7-gnu", "linux-musl", "non-linux"],
+  );
   assert.deepEqual(capabilities.features, {
     recursive: true,
     movedInTreeDiscovery: true,

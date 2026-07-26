@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadNativeMatrix, targetForRuntime } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -13,10 +14,12 @@ const workspaceRoot = path.resolve(
 const scratchRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), "watchbound-reproducible-build-"),
 );
+const matrix = loadNativeMatrix(workspaceRoot);
+const target = targetForRuntime(matrix, process.platform, process.arch);
 const nativePath = path.join(
   workspaceRoot,
   "node",
-  "watchbound.linux-x64-gnu.node",
+  target.binary,
 );
 const builds = [];
 const expectedSha256 = process.env.WATCHBOUND_EXPECTED_NATIVE_SHA256 ?? null;
@@ -38,7 +41,7 @@ try {
     const sha256 = crypto.createHash("sha256").update(binary).digest("hex");
     const retainedPath = path.join(
       scratchRoot,
-      `watchbound.linux-x64-gnu-${buildNumber}.node`,
+      `${target.id}-${buildNumber}.node`,
     );
     fs.writeFileSync(retainedPath, binary);
     builds.push({
@@ -55,10 +58,10 @@ try {
   );
   assert.equal(
     fs.readFileSync(
-      path.join(scratchRoot, "watchbound.linux-x64-gnu-1.node"),
+      path.join(scratchRoot, `${target.id}-1.node`),
     ).equals(
       fs.readFileSync(
-        path.join(scratchRoot, "watchbound.linux-x64-gnu-2.node"),
+        path.join(scratchRoot, `${target.id}-2.node`),
       ),
     ),
     true,
@@ -84,6 +87,8 @@ try {
         kind: "watchbound-same-runner-reproducibility",
         sourceSha,
         version,
+        target: target.id,
+        targetTriple: target.rustTarget,
         expectedSha256,
         rustFlags: process.env.RUSTFLAGS ?? null,
         builds,

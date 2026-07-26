@@ -25,54 +25,40 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       source-sha: ${{ steps.plan.outputs.source-sha }}
       tag: ${{ steps.plan.outputs.tag }}
-
+      source: ${{ steps.matrix.outputs.source }}
+      build: ${{ steps.matrix.outputs.build }}
+      qualification: ${{ steps.matrix.outputs.qualification }}
+      registry: ${{ steps.matrix.outputs.registry }}
     steps:
-      - name: Check out the exact candidate and history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Assert exact candidate checkout
-        shell: bash
+      - name: Assert exact clean candidate
         run: |
-          set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.15.0
           architecture: x64
           package-manager-cache: false
-
-      - name: Enable the pinned pnpm release
-        shell: bash
-        run: |
-          set -euo pipefail
+      - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
-          test "$(pnpm --version)" = 10.33.2
-
-      - name: Install release planner from the lockfile
-        run: pnpm install --frozen-lockfile
-
-      - name: Compute the non-mutating release plan
-        id: plan
+          pnpm install --frozen-lockfile
+      - id: matrix
+        run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
+      - id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/plan-release.mjs \
-            --mode release \
-            --output "$RUNNER_TEMP/release-plan.json" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Retain the release plan
-        if: always()
+        run: >-
+          node scripts/plan-release.mjs
+          --mode release
+          --output "$RUNNER_TEMP/release-plan.json"
+          --github-output "$GITHUB_OUTPUT"
+      - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: watchbound-release-plan-${{ github.run_attempt }}
@@ -88,276 +74,362 @@ jobs:
       contents: read
 
   repro-build:
-    name: Independent native build (${{ matrix.builder }})
+    name: Reproduce ${{ matrix.target }} (${{ matrix.builder }})
     needs: plan
-    if: needs.plan.outputs.qualify == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    if: needs.plan.outputs.will-release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        builder: [builder-a, builder-b]
+        include: ${{ fromJSON(needs.plan.outputs.build) }}
     env:
       CARGO_INCREMENTAL: "0"
       SOURCE_DATE_EPOCH: "0"
       TZ: UTC
-
     steps:
-      - name: Configure isolated build homes
-        env:
-          BUILDER: ${{ matrix.builder }}
+      - name: Configure isolated builder homes
         shell: bash
         run: |
           set -euo pipefail
-          cargo_home="$RUNNER_TEMP/watchbound-$BUILDER-cargo-home"
+          builder="${{ matrix.target }}-${{ matrix.builder }}"
+          cargo_home="$RUNNER_TEMP/$builder-cargo-home"
           echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/watchbound-$BUILDER-target" >> "$GITHUB_ENV"
-          echo "COREPACK_HOME=$RUNNER_TEMP/watchbound-$BUILDER-corepack" >> "$GITHUB_ENV"
-          echo "PNPM_STORE_DIR=$RUNNER_TEMP/watchbound-$BUILDER-pnpm-store" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/$builder-target" >> "$GITHUB_ENV"
+          echo "COREPACK_HOME=$RUNNER_TEMP/$builder-corepack" >> "$GITHUB_ENV"
+          echo "PNPM_STORE_DIR=$RUNNER_TEMP/$builder-pnpm-store" >> "$GITHUB_ENV"
           echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=$RUNNER_TEMP/watchbound-$BUILDER-rustup" >> "$GITHUB_ENV"
-
-      - name: Check out the exact source only
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+          echo "RUSTUP_HOME=$RUNNER_TEMP/$builder-rustup" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Assert isolated clean source
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - name: Assert exact isolated clean source
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.source-sha }}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.15.0
-          architecture: x64
-          package-manager-cache: false
-
-      - name: Set up isolated pinned Rust
+      - name: Build in the isolated pinned toolchain
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
-          rustc --version | grep -Eq '^rustc 1\.88\.0 '
-
-      - name: Assert the supported build host
-        shell: bash
-        run: |
-          set -euo pipefail
-          source /etc/os-release
-          test "$ID" = ubuntu
-          test "$VERSION_ID" = 24.04
-          test "$(uname -s)" = Linux
-          test "$(uname -m)" = x86_64
-          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.39"
-          test "$(node --version)" = v24.15.0
-
-      - name: Enable isolated pinned pnpm
-        shell: bash
-        run: |
-          set -euo pipefail
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
-          test "$(pnpm --version)" = 10.33.2
           pnpm config set store-dir "$PNPM_STORE_DIR"
-
-      - name: Install independently from the lockfile
-        run: pnpm install --frozen-lockfile
-
-      - name: Build the exact release-profile addon
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo metadata --format-version 1 --locked >/dev/null
+          pnpm install --frozen-lockfile
           pnpm build:node
-          test -f node/watchbound.linux-x64-gnu.node
-          test "$(find node -maxdepth 1 -type f -name '*.node' -print | wc -l)" -eq 1
-          test -z "$(find node -maxdepth 1 -type f -name '*.so' -print -quit)"
+          test -f "node/${{ matrix.binary }}"
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
+          test "$(node --version)" = v24.15.0
+          test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
           git diff --exit-code -- Cargo.lock pnpm-lock.yaml
-
-      - name: Record the exact builder output
+      - name: Record exact build identity
         shell: bash
         run: |
           set -euo pipefail
-          evidence_root="$RUNNER_TEMP/watchbound-${{ matrix.builder }}-evidence"
-          mkdir -p "$evidence_root"
+          root="$RUNNER_TEMP/evidence"
+          mkdir -p "$root"
           node scripts/record-native-build.mjs \
             --builder "${{ matrix.builder }}" \
-            --output "$evidence_root/build-manifest.json"
-          cp node/watchbound.linux-x64-gnu.node "$evidence_root/"
-
-      - name: Transfer exact independent output
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+            --target "${{ matrix.target }}" \
+            --output "$root/build-manifest.json"
+          cp "node/${{ matrix.binary }}" "$root/"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-native-${{ matrix.builder }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-${{ matrix.builder }}-evidence
+          name: watchbound-native-${{ matrix.target }}-${{ matrix.builder }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence
           if-no-files-found: error
           retention-days: 90
 
   repro-compare:
-    name: Compare independent native outputs
+    name: Compare independent ${{ matrix.target }} outputs
     needs: [plan, repro-build]
-    if: needs.plan.outputs.qualify == 'true'
-    runs-on: ubuntu-24.04
+    if: needs.plan.outputs.will-release == 'true'
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
-    outputs:
-      native-sha256: ${{ steps.compare.outputs.native-sha256 }}
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.source) }}
     steps:
-      - name: Check out comparison code at the exact SHA
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Download builder A
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-native-builder-a-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-builder-a
-
-      - name: Download builder B
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+          name: watchbound-native-${{ matrix.target }}-builder-a-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/builder-a
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-native-builder-b-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-builder-b
-
-      - name: Recompute and compare both exact binaries
-        id: compare
+          name: watchbound-native-${{ matrix.target }}-builder-b-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/builder-b
+      - name: Byte-compare exact target outputs
         shell: bash
         run: |
           set -euo pipefail
           node scripts/compare-native-builds.mjs \
-            --left "$RUNNER_TEMP/watchbound-builder-a/build-manifest.json" \
-            --right "$RUNNER_TEMP/watchbound-builder-b/build-manifest.json" \
-            --output "$RUNNER_TEMP/watchbound-approved-native" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Retain canonical binary and comparison evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+            --left "$RUNNER_TEMP/builder-a/build-manifest.json" \
+            --right "$RUNNER_TEMP/builder-b/build-manifest.json" \
+            --target "${{ matrix.target }}" \
+            --output "$RUNNER_TEMP/approved/${{ matrix.target }}"
+          touch "$RUNNER_TEMP/approved/${{ matrix.target }}.root"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-approved-native-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-approved-native
+          name: watchbound-approved-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    name: Aggregate reproducible target matrix
+    needs: [plan, repro-compare]
+    if: needs.plan.outputs.will-release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      native-matrix: ${{ steps.aggregate.outputs.native-matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: watchbound-approved-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-input
+          merge-multiple: true
+      - id: aggregate
+        run: >-
+          node scripts/aggregate-native-builds.mjs
+          --input "$RUNNER_TEMP/approved-input"
+          --output "$RUNNER_TEMP/approved-matrix"
+          --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+          if-no-files-found: error
+          retention-days: 90
+
+  release-distro:
+    name: Release artifact ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
+    needs: [plan, aggregate]
+    if: needs.plan.outputs.will-release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.qualification) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+      - name: Package and exercise the canonical target
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" node/
+          WATCHBOUND_NATIVE_ARTIFACTS_DIR="$RUNNER_TEMP/approved-matrix" pnpm package:prepare
+          node scripts/pack-prepared-packages.mjs --target "${{ matrix.target }}"
+          node_root="$(dirname "$(dirname "$(command -v node)")")"
+          docker pull "${{ matrix.image }}"
+          node scripts/run-distro-qualification.mjs \
+            --lane "${{ matrix.lane }}" --target "${{ matrix.target }}" \
+            --image "${{ matrix.image }}" --node-root "$node_root" \
+            --evidence "$RUNNER_TEMP/release-${{ matrix.lane }}-${{ matrix.architecture }}.json"
+
+  release-electron:
+    name: Release Codex Electron (${{ matrix.target }})
+    needs: [plan, aggregate]
+    if: needs.plan.outputs.will-release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.source) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+      - name: Exercise canonical package through app.asar.unpacked
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" node/
+          WATCHBOUND_NATIVE_ARTIFACTS_DIR="$RUNNER_TEMP/approved-matrix" pnpm package:prepare
+          archive="$RUNNER_TEMP/electron.zip"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/electron/electron/releases/download/v42.3.0/electron-v42.3.0-linux-${{ matrix.electronArchitecture }}.zip"
+          expected_hex="$(printf '%s' '${{ matrix.electronSha256SRI }}' | sed 's/^sha256-//' | base64 -d | od -An -vtx1 | tr -d ' \n')"
+          printf '%s  %s\n' "$expected_hex" "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/electron"
+          unzip -q "$archive" -d "$RUNNER_TEMP/electron"
+          node scripts/check-electron-asar.mjs \
+            --electron "$RUNNER_TEMP/electron/electron" \
+            --target "${{ matrix.target }}" \
+            --evidence "$RUNNER_TEMP/release-electron-${{ matrix.target }}.json"
+
+  release-overflow:
+    name: Supervised overflow gate (${{ matrix.target }})
+    needs: [plan, aggregate]
+    if: needs.plan.outputs.will-release == 'true'
+    runs-on:
+      - "${{ matrix.overflowRunner[0] }}"
+      - "${{ matrix.overflowRunner[1] }}"
+      - "${{ matrix.overflowRunner[2] }}"
+      - "${{ matrix.overflowRunner[3] }}"
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.source) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+      - name: Run the explicitly acknowledged release-only overflow scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" node/
+          node benches/conformance.mjs \
+            --adapter watchbound \
+            --scenarios overflow-reconciliation,automatic-overflow-reconciliation \
+            --allow-forced-overflow --strict --pretty \
+            --output "$RUNNER_TEMP/release-overflow-${{ matrix.target }}.json" --quiet
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-release-overflow-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-overflow-${{ matrix.target }}.json
           if-no-files-found: error
           retention-days: 90
 
   release:
-    name: Publish the exact qualified release
+    name: Publish exact qualified target matrix
+    needs: [plan, tests, aggregate, release-distro, release-electron, release-overflow]
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.plan.outputs.will-release == 'true'
-    needs: [plan, tests, repro-compare]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    env:
-      CARGO_INCREMENTAL: "0"
-      SOURCE_DATE_EPOCH: "0"
-      TZ: UTC
-    outputs:
-      published: ${{ steps.published.outputs.published }}
-      version: ${{ steps.published.outputs.version }}
-      native-sha256: ${{ needs.repro-compare.outputs.native-sha256 }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
     permissions:
       contents: write
       issues: write
       pull-requests: write
       id-token: write
-
+    outputs:
+      published: ${{ steps.published.outputs.published }}
+      version: ${{ steps.published.outputs.version }}
+      native-matrix: ${{ needs.aggregate.outputs.native-matrix }}
+    env:
+      CARGO_INCREMENTAL: "0"
+      SOURCE_DATE_EPOCH: "0"
+      TZ: UTC
     steps:
-      - name: Check out the exact release source and history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Assert exact release identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.source-sha }}"
-          test "$(node -p "require('./package.json').version")" = "${{ needs.plan.outputs.version }}"
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-      - name: Download the independently approved native artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-approved-native
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.15.0
           architecture: x64
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-
-      - name: Set up Rust
+      - name: Set up exact release tools
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
-
-      - name: Normalize embedded Cargo source paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          cargo_home="${CARGO_HOME:-/opt/hostedtoolcache/cargo}"
           echo "RUSTFLAGS=--remap-path-prefix=$cargo_home=/watchbound/cargo-home" >> "$GITHUB_ENV"
-
-      - name: Enable the pinned pnpm release
-        shell: bash
-        run: |
-          set -euo pipefail
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
-          test "$(pnpm --version)" = 10.33.2
-
-      - name: Install from the lockfile
-        run: pnpm install --frozen-lockfile
-
-      - name: Install npm with trusted-publishing support
-        run: npm install --global npm@11.18.0
-
-      - name: Set up Deno for JSR publishing
-        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+          pnpm install --frozen-lockfile
+          npm install --global npm@11.18.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.6.7
-
-      - name: Publish a release when Conventional Commits require one
+      - name: Publish only after every exact-artifact gate passes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
-          WATCHBOUND_CANONICAL_NATIVE_PATH: ${{ runner.temp }}/watchbound-approved-native/watchbound.linux-x64-gnu.node
-          WATCHBOUND_EXPECTED_NATIVE_SHA256: ${{ needs.repro-compare.outputs.native-sha256 }}
-          WATCHBOUND_INDEPENDENT_REPRODUCIBILITY: ${{ runner.temp }}/watchbound-approved-native/independent-reproducibility.json
+          WATCHBOUND_CANONICAL_NATIVE_DIR: ${{ runner.temp }}/approved-matrix
           WATCHBOUND_PLANNED_VERSION: ${{ needs.plan.outputs.version }}
-          WATCHBOUND_REPRODUCIBLE_OUTPUT: ${{ runner.temp }}/watchbound-same-runner-reproducibility.json
+          WATCHBOUND_REPRODUCIBLE_OUTPUT: ${{ runner.temp }}/same-runner-reproducibility.json
         run: pnpm release
-
-      - name: Record successful publication
-        id: published
-        shell: bash
+      - id: published
         run: |
-          set -euo pipefail
-          {
-            echo "published=true"
-            echo "version=${{ needs.plan.outputs.version }}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Retain release and partial-publication evidence
-        if: always()
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "version=${{ needs.plan.outputs.version }}" >> "$GITHUB_OUTPUT"
+      - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: watchbound-release-evidence-${{ github.run_attempt }}
@@ -366,79 +438,56 @@ jobs:
           retention-days: 90
 
   registry-smoke:
-    name: Registry smoke (${{ matrix.route }})
+    name: Registry (${{ matrix.route }}, ${{ matrix.target }})
     needs: [plan, release]
     if: needs.release.outputs.published == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        route: [npm, jsr-node]
-    permissions:
-      contents: read
-
+        include: ${{ fromJSON(needs.plan.outputs.registry) }}
     steps:
-      - name: Check out the exact smoke fixture
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.plan.outputs.source-sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Set up exact supported Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/approved-matrix
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.15.0
-          architecture: x64
+          architecture: ${{ matrix.architecture }}
           package-manager-cache: false
-
-      - name: Assert clean supported smoke host
-        shell: bash
-        run: |
-          set -euo pipefail
-          source /etc/os-release
-          test "$ID" = ubuntu
-          test "$VERSION_ID" = 24.04
-          test "$(uname -m)" = x86_64
-          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.39"
-          test "$(node --version)" = v24.15.0
-
-      - name: Enable exact package-manager versions
+      - name: Install and exercise exact immutable registry packages
         shell: bash
         run: |
           set -euo pipefail
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           npm install --global npm@11.18.0
-          test "$(pnpm --version)" = 10.33.2
-          test "$(npm --version)" = 11.18.0
-
-      - name: Install and exercise the exact registry version
-        shell: bash
-        run: |
-          set -euo pipefail
+          digest="$(sha256sum "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" | cut -d ' ' -f 1)"
           node scripts/check-registry-packages.mjs \
             --route "${{ matrix.route }}" \
             --version "${{ needs.release.outputs.version }}" \
-            --native-sha256 "${{ needs.release.outputs.native-sha256 }}" \
-            --evidence "$RUNNER_TEMP/watchbound-registry-${{ matrix.route }}.json"
-
-      - name: Retain registry smoke evidence
-        if: always()
+            --native-target "${{ matrix.target }}" \
+            --native-sha256 "$digest" \
+            --evidence "$RUNNER_TEMP/registry-${{ matrix.route }}-${{ matrix.target }}.json"
+      - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-registry-${{ matrix.route }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-registry-${{ matrix.route }}.json
+          name: watchbound-registry-${{ matrix.route }}-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/registry-${{ matrix.route }}-${{ matrix.target }}.json
           if-no-files-found: warn
           retention-days: 90
 
   verified:
-    name: Stable release verified
+    name: Stable target matrix verified
     needs: registry-smoke
     if: needs.registry-smoke.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
     steps:
-      - name: Record verification completion
-        run: echo "Both exact registry routes passed on the supported host."
+      - run: echo "Every exact npm and JSR target route passed."

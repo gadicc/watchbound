@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "nodeRange": ">=24.15.0 <25",
+  "nodeMinimum": "24.15.0",
+  "nodeApiMinimum": 6,
+  "rustMinimum": "1.88",
+  "packageManager": "pnpm@10.33.2",
+  "rootThreatModel": "trusted-stable-local-roots",
+  "releaseBaseline": {
+    "distribution": "ubuntu",
+    "version": "22.04",
+    "kernelMinimum": "5.15",
+    "glibcMaximum": "2.35"
+  },
+  "codexRuntime": {
+    "electron": "42.3.0",
+    "node": "24.15.0",
+    "nodeApi": 10,
+    "asar": {
+      "archive": "app.asar",
+      "nativeDirectory": "app.asar.unpacked"
+    }
+  },
+  "targets": [
+    {
+      "id": "linux-x64-gnu",
+      "platform": "linux",
+      "architecture": "x64",
+      "unameArchitecture": "x86_64",
+      "rustTarget": "x86_64-unknown-linux-gnu",
+      "libc": "glibc",
+      "binary": "watchbound.linux-x64-gnu.node",
+      "package": "@gadicc/watchbound-node-linux-x64-gnu",
+      "runner": "ubuntu-22.04",
+      "overflowRunner": ["self-hosted", "linux", "x64", "watchbound-overflow"],
+      "nixSystem": "x86_64-linux",
+      "codexElectron": {
+        "archiveArchitecture": "x64",
+        "sha256SRI": "sha256-SHpmfKanNLlYwWz/HfdNnUTSwYpszNtN1R9jAaNWxCA="
+      },
+      "qualification": "target-pending-clean-ci",
+      "elf": {
+        "class": 2,
+        "endianness": 1,
+        "machine": 62,
+        "machineName": "Advanced Micro Devices X86-64",
+        "fileMachineName": "x86-64",
+        "neededLibraries": [
+          "ld-linux-x86-64.so.2",
+          "libc.so.6",
+          "libgcc_s.so.1"
+        ]
+      }
+    },
+    {
+      "id": "linux-arm64-gnu",
+      "platform": "linux",
+      "architecture": "arm64",
+      "unameArchitecture": "aarch64",
+      "rustTarget": "aarch64-unknown-linux-gnu",
+      "libc": "glibc",
+      "binary": "watchbound.linux-arm64-gnu.node",
+      "package": "@gadicc/watchbound-node-linux-arm64-gnu",
+      "runner": "ubuntu-22.04-arm",
+      "overflowRunner": ["self-hosted", "linux", "arm64", "watchbound-overflow"],
+      "nixSystem": "aarch64-linux",
+      "codexElectron": {
+        "archiveArchitecture": "arm64",
+        "sha256SRI": "sha256-Kjdf+XP7e93FOKT2eyFBlH6dclE6G6or6r7Cp/Zc0PA="
+      },
+      "qualification": "target-pending-clean-ci",
+      "elf": {
+        "class": 2,
+        "endianness": 1,
+        "machine": 183,
+        "machineName": "AArch64",
+        "fileMachineName": "ARM aarch64",
+        "neededLibraries": [
+          "ld-linux-aarch64.so.1",
+          "libc.so.6",
+          "libgcc_s.so.1"
+        ]
+      }
+    }
+  ],
+  "qualificationLanes": [
+    {
+      "id": "ubuntu-22.04",
+      "distribution": "ubuntu",
+      "version": "22.04",
+      "family": "debian",
+      "evidence": "runtime-qualification-required",
+      "architectures": ["x64", "arm64"],
+      "image": "docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7"
+    },
+    {
+      "id": "ubuntu-24.04",
+      "distribution": "ubuntu",
+      "version": "24.04",
+      "family": "debian",
+      "evidence": "runtime-qualification-required",
+      "architectures": ["x64", "arm64"],
+      "image": "docker.io/library/ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+    },
+    {
+      "id": "debian-12",
+      "distribution": "debian",
+      "version": "12",
+      "family": "debian",
+      "evidence": "runtime-qualification-required",
+      "architectures": ["x64", "arm64"],
+      "image": "docker.io/library/debian:12@sha256:8a8cd02c5912770b4980228a54d4aff9e4f986f1eb2525d2d371dec5232cefcc"
+    },
+    {
+      "id": "fedora-42",
+      "distribution": "fedora",
+      "version": "42",
+      "family": "rpm",
+      "evidence": "runtime-qualification-required",
+      "architectures": ["x64", "arm64"],
+      "image": "docker.io/library/fedora:42@sha256:99e203b80b1c3d8f7e161ec10a68fd02b081ef83a3963553e513c82846b97814"
+    },
+    {
+      "id": "arch-base-devel",
+      "distribution": "arch",
+      "version": "rolling-pinned",
+      "family": "pacman",
+      "evidence": "runtime-qualification-required",
+      "architectures": ["x64"],
+      "image": "docker.io/library/archlinux:base-devel@sha256:fdff15f24df062598faebf380430955a9bd2109736e179ebb354f1208f725774"
+    },
+    {
+      "id": "opensuse-tumbleweed",
+      "distribution": "opensuse",
+      "version": "tumbleweed-pinned",
+      "family": "rpm",
+      "evidence": "runtime-qualification-required",
+      "architectures": ["x64", "arm64"],
+      "image": "docker.io/opensuse/tumbleweed:latest@sha256:a32442e71adbaca6afda6b334699c48fad881a461a4469dd986e8c3cbe5de48d"
+    },
+    {
+      "id": "nix",
+      "distribution": "nix",
+      "version": "flake-lock",
+      "family": "nix",
+      "evidence": "native-nix-closure-required",
+      "architectures": ["x64", "arm64"],
+      "image": "docker.io/nixos/nix:latest@sha256:bf1d938835ab96312f098fa6c2e9cab367728e0aad0646ee3e02a787c80d8fb8"
+    }
+  ],
+  "recognizedCompatibilityFamilies": {
+    "debian": ["linuxmint", "pop", "elementary", "zorin"],
+    "pacman": ["manjaro", "endeavouros", "artix"],
+    "rpm": ["rhel", "centos", "rocky", "almalinux", "ol", "sles", "suse"],
+    "rpmAtomic": ["fedora-atomic"]
+  },
+  "intentionallyUnsupported": [
+    {
+      "target": "linux-armv7-gnu",
+      "reason": "Codex has partial architecture mappings but no complete Electron, pacman, native-addon, release, and runtime qualification path"
+    },
+    {
+      "target": "linux-musl",
+      "reason": "Codex embeds a musl CLI, but Watchbound executes inside glibc Electron against the host runtime"
+    },
+    {
+      "target": "non-linux",
+      "reason": "The engine is Linux inotify-specific"
+    }
+  ]
+}

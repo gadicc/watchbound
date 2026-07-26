@@ -5,15 +5,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import {
+  loadNativeMatrix,
+  nativeArtifactEntries,
+  targetForId,
+  targetForRuntime,
+} from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const matrix = loadNativeMatrix(workspaceRoot);
+const target = options.target
+  ? targetForId(matrix, options.target)
+  : targetForRuntime(matrix, process.platform, process.arch);
 const artifactPath = path.resolve(
   workspaceRoot,
-  options.artifact ?? "node/watchbound.linux-x64-gnu.node",
+  options.artifact ?? path.join("node", target.binary),
 );
 const outputPath = path.resolve(workspaceRoot, options.output);
 const rootPackage = readJson(path.join(workspaceRoot, "package.json"));
@@ -22,14 +32,12 @@ const status = capture("git", [
   "--porcelain=v1",
   "--untracked-files=all",
 ]);
-const nativeFiles = fs.readdirSync(path.join(workspaceRoot, "node"))
-  .filter((filename) => /\.(?:node|so)$/u.test(filename))
-  .sort();
+const nativeFiles = nativeArtifactEntries(workspaceRoot);
 
 assert.equal(status, "", "native build evidence requires a clean source checkout");
 assert.deepEqual(
   nativeFiles,
-  ["watchbound.linux-x64-gnu.node"],
+  [target.binary],
   "native build evidence requires exactly the intended addon",
 );
 assert.ok(fs.existsSync(artifactPath), `missing native artifact: ${artifactPath}`);
@@ -39,7 +47,7 @@ const binding = require(path.join(workspaceRoot, "node/index.js"));
 const metadata = binding.bindingMetadata();
 assert.equal(metadata.nativeVersion, rootPackage.version);
 assert.equal(metadata.engineVersion, rootPackage.version);
-assert.equal(metadata.targetTriple, "x86_64-unknown-linux-gnu");
+assert.equal(metadata.targetTriple, target.rustTarget);
 assert.equal(metadata.buildProfile, "release");
 
 const osRelease = readOsRelease();
@@ -57,7 +65,9 @@ const manifest = {
   },
   release: {
     version: rootPackage.version,
+    targetId: target.id,
     target: metadata.targetTriple,
+    architecture: target.architecture,
     profile: metadata.buildProfile,
     nodeApi: metadata.nodeApiVersion,
   },
@@ -118,7 +128,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: record-native-build.mjs --builder <id> --output <path> [--artifact <path>]",
+        "usage: record-native-build.mjs --builder <id> --output <path> [--target <id>] [--artifact <path>]",
       );
     }
     parsed[flag.slice(2)] = value;

@@ -13,8 +13,9 @@ and a later exact commit passed both target lanes; the immutable bootstrap
 continues to report `target-pending-clean-ci`. The post-bootstrap async callback
 candidate requires separate exact-commit evidence.
 
-This decision does not publish a package, change package visibility, produce a
-prebuild, upload an artifact, or authorize consumer integration.
+This section is a historical decision record. Later registry releases and the
+unpublished `1.2.0` target-package work supersede its delivery assumptions but
+not its semantic and evidence discipline.
 
 ## Current decision
 
@@ -40,13 +41,13 @@ uncertainty.
 
 | Area | Implemented contract | Remaining boundary |
 | --- | --- | --- |
-| Capability reporting | Deeply frozen, JSON-serializable schema version 1 separates versions/build identity, observed runtime facts, fixed support target, features, option defaults/hard bounds/accounting, and observability. Qualified version 0.1.0 emits `supported`. | Runtime facts are diagnostic, not support evidence, and cannot widen the fixed target. |
+| Capability reporting | The current candidate's deeply frozen schema 4 separates versions, delivery/packaged target, observed runtime, per-target qualification, legacy single-target fields, features, options, and observability. | Runtime facts and successful loading are diagnostic, not support evidence. |
 | Coverage and observation | Complete, reasoned partial, and reasoned uncertain states are explicit. Immutable `initialCoverage`/`initialRootState` define sequence zero; frozen `observedState` is the baseline or last batch whose callback entered JavaScript. | `observedState` is deliberately not an atomic native snapshot. Getters and operation acknowledgements may be ahead; ordered batches are authoritative. |
 | Operations and errors | Reconciliation, exclusions, and explicit root recovery have bounded acknowledgements. Rust, Node, JavaScript, and TypeScript share schema-version-1 `WatchboundError` codes, operations, retry policy, and bounded diagnostics. | Expected non-attached recovery outcomes remain successful structured results; incompatible schema changes require a later private minor version. |
 | Runtime ownership | `createEngine({ nativeWatchBudget })` owns an optional process-wide unique-native-watch budget. Engine construction is resource-free; equal configurations share, conflicts are coded, failed provisional establishment releases ownership, and final disposal joins before reconfiguration. | `watchLimit` remains separate per-subscription logical accounting. TypeScript cannot encode numeric ranges. |
 | TypeScript | Strict TypeScript 6.0.3 consumer fixtures cover closed unions, bigint counters, exact bytes, errors, recovery, automatic status, initial state, and observed state. They run from `pnpm typecheck` and both CI lanes. | Additions to closed reason/status/result unions are compatibility changes for exhaustive consumers. |
-| Node and platform support | All manifests require Node `>=24.18.0 <25`; native/wrapper manifests declare Linux, x64, and glibc. The loader accepts exactly `watchbound.linux-x64-gnu.node`, requires Node-API 6+, and fails closed with stable platform/libc/ABI/build/version/API diagnostics. | The exact 0.1.0 freeze passed both target lanes. Other distributions, libc families, architectures, Node majors, and operating systems are unsupported. |
-| Native delivery | Controlled source build is selected. The root build guard preserves hand-owned entry files, produces the one expected local release addon, and loads it through the production metadata handshake. No runtime compilation/download/fallback or install hook exists. | No prebuild is authorized. Checksums, SBOM, signing/attestation, reproducibility, and distribution controls are documented gates for a future separately approved prebuild proposal. |
+| Node and platform support | Candidate manifests require Node `>=24.15.0 <25`; the neutral loader selects only the exact x64 or ARM64 GNU package, verifies ELF/hash/metadata, requires Node-API 6+, and fails closed with bounded codes. | Both candidate targets are pending. ARMv7, musl, other Node majors, and non-Linux systems are unsupported. |
+| Native delivery | Controlled source builds select one exact local host artifact. Generated candidate packages use an architecture-neutral loader plus exact x64 or ARM64 target packages, with no install scripts, runtime compilation/download, or nearby-target fallback. | Both `1.2.0` targets remain unqualified and unpublished; registry bootstrap, exact native CI, Nix, Electron, overflow, checksum, SBOM, provenance, and post-publication gates remain mandatory. |
 | Security and paths | The approved contract is trusted, same-user, stable local roots under ordinary concurrent mutation. Exact Linux child-path bytes, lexical components, symlink rejection, identity checks, watch-before-read ordering, and explicit recovery policy are preserved. | Malicious replacement, hostile multi-user filesystems, mount substitution, and adversarial inode reuse are unsupported. No fd-anchored `openat2` redesign is planned under this threat model. |
 | Maintenance | Rust/Node/JavaScript suites, environment teardown, descriptor-lifetime tests, deterministic recovery-barrier injection, 25-cycle bounded soak, three-run large root recovery, and strict ordinary conformance cover the defining lifecycle. | The exact support-declaration commit must pass both lanes before recognition. Forced overflow stays a separately approved milestone gate. |
 | Evidence | Private originals remain ignored and content-addressed under their committed SHA-256 manifest. Sanitizer 1.0.0, public schema 1, deterministic placeholders, bounds, linkage checks, and synthetic leak/tamper tests are implemented. | No private report was read or transformed, and no public derivative is approved. Every real derivative still requires named approval and manual review. |
@@ -80,7 +81,7 @@ uncertainty.
 | 3 | Pass | Immutable establishment state and callback-observed projection are implemented and race-tested without claiming live atomicity. |
 | 4 | Pass | Runtime budget ownership, conflicts, sharing, provisional failure rollback, final joined release, and reconfiguration are implemented and tested. |
 | 5 | Pass subject to the declaration gate | Both lanes passed the technical precursor and exact 0.1.0 freeze; recognition waits for the exact declaration commit's identical gate. |
-| 6 | Pass for the selected delivery model | Controlled source build, exact naming, load failure behavior, and lockstep metadata/version validation are implemented. Future prebuild controls are documented but deliberately not implemented. |
+| 6 | Candidate implemented, qualification pending | Controlled source build and exact target packages, hashing, ELF checks, offline installation, and lockstep validation are implemented. Native ARM64, Nix, distro, Electron, and release evidence remain gates. |
 | 7 | Pass by explicit scope rejection | Stable non-adversarial roots are supported; hostile roots require a separately approved fd-anchored redesign. |
 | 8 | Pass | Candidate replacement is deterministically injected after capture and drain, across shared/new watch admission, during traversal, and before final validation with conservative cleanup and peer proof. |
 | 9 | Pass for format/tooling; per-derivative approval remains | The sanitizer and public schema are complete and synthetic-tested. No real derivative has been authorized. |
@@ -96,8 +97,8 @@ uncertainty.
 | Snapshot/batch ordering | Pass for baseline initialization, pre-resolution seam, update-before-callback, callback exception, and acknowledgement-leading-observation cases. |
 | Repeated replacement, peers, exclusions, limits, and disposal overlap | Pass: large direct/ancestor recovery, shared old/new identities, peer survival, and every materially distinct candidate-validation barrier are covered. |
 | Churn, descriptor lifetime, deferred promotion, callbacks, and cleanup soak | Pass as combined evidence: deterministic reuse/exhaustion/gap unit tests plus 25 live bounded cycles returning exact runtime and near-baseline `/proc` resources. |
-| Chosen delivery packaging failures | Pass for controlled source build: clean target install/build/load and unsupported/missing/load/version/API mismatch tests pass. No prebuild checksum behavior exists because prebuild delivery is not selected. |
-| Genuine overflow | Historical supervised evidence remains archived. No current run was made because fresh quiet-host approval is required; it is never an automatic per-commit gate. |
+| Chosen delivery packaging failures | Current tests cover source and target-package missing/extra/symlink/hash/ELF/identity/version/API failures and offline installation. Candidate support still awaits exact platform evidence. |
+| Genuine overflow | Historical evidence does not qualify new artifacts. The release workflow has a release-only acknowledged gate; no local forced-overflow run was made for this candidate. |
 | Adversarial path tests | Deliberately not applicable under the approved threat model. They require an fd-anchored design first. |
 
 ## Private 0.1.0 local verification snapshot

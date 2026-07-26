@@ -4,19 +4,23 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const matrix = loadNativeMatrix(workspaceRoot);
 const left = loadBuild(options.left);
 const right = loadBuild(options.right);
+const targetId = options.target ?? left.manifest.release?.targetId;
+const target = targetForId(matrix, targetId);
 const rootPackage = readJson(path.join(workspaceRoot, "package.json"));
 const sourceSha = capture("git", ["rev-parse", "HEAD"]);
 
-validateBuild(left, "left", sourceSha, rootPackage.version);
-validateBuild(right, "right", sourceSha, rootPackage.version);
+validateBuild(left, "left", sourceSha, rootPackage.version, target);
+validateBuild(right, "right", sourceSha, rootPackage.version, target);
 assert.notEqual(left.manifest.builder, right.manifest.builder);
 
 for (const field of [
@@ -76,7 +80,7 @@ const outputRoot = path.resolve(workspaceRoot, options.output);
 fs.mkdirSync(outputRoot, { recursive: true });
 const canonicalPath = path.join(
   outputRoot,
-  "watchbound.linux-x64-gnu.node",
+  target.binary,
 );
 fs.copyFileSync(left.binaryPath, canonicalPath);
 const comparison = {
@@ -84,6 +88,7 @@ const comparison = {
   kind: "watchbound-independent-native-comparison",
   sourceSha,
   version: rootPackage.version,
+  targetId: target.id,
   target: left.manifest.release.target,
   profile: left.manifest.release.profile,
   sha256: left.observedSha256,
@@ -123,7 +128,7 @@ function loadBuild(manifestSource) {
   };
 }
 
-function validateBuild(build, label, sourceSha, version) {
+function validateBuild(build, label, sourceSha, version, target) {
   const { manifest, binary, observedSha256 } = build;
   assert.equal(manifest.schemaVersion, 1, `${label} manifest schema`);
   assert.equal(
@@ -134,9 +139,10 @@ function validateBuild(build, label, sourceSha, version) {
   assert.equal(manifest.source.gitHead, sourceSha, `${label} source SHA`);
   assert.equal(manifest.source.gitDirty, false, `${label} dirty state`);
   assert.equal(manifest.release.version, version, `${label} version`);
+  assert.equal(manifest.release.targetId, target.id, `${label} target id`);
   assert.equal(
     manifest.release.target,
-    "x86_64-unknown-linux-gnu",
+    target.rustTarget,
     `${label} target`,
   );
   assert.equal(manifest.release.profile, "release", `${label} profile`);
@@ -158,7 +164,7 @@ function validateBuild(build, label, sourceSha, version) {
   }
   assert.equal(
     manifest.artifact.filename,
-    "watchbound.linux-x64-gnu.node",
+    target.binary,
     `${label} artifact filename`,
   );
   assert.equal(manifest.artifact.bytes, binary.length, `${label} byte count`);
@@ -176,7 +182,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: compare-native-builds.mjs --left <manifest> --right <manifest> --output <directory> [--github-output <path>]",
+        "usage: compare-native-builds.mjs --left <manifest> --right <manifest> --output <directory> [--target <id>] [--github-output <path>]",
       );
     }
     parsed[flag.slice(2)] = value;

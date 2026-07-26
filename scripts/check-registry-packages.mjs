@@ -50,6 +50,8 @@ try {
     options.version,
     "--native-sha256",
     options["native-sha256"],
+    "--native-target",
+    options["native-target"],
     "--route",
     options.route,
     "--evidence",
@@ -120,7 +122,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-sha256 <digest> --evidence <path>",
+        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-target <id> --native-sha256 <digest> --evidence <path>",
       );
     }
     const name = flag.slice(2);
@@ -132,7 +134,7 @@ function parseOptions(args) {
     parsed.route === "npm" || parsed.route === "jsr-node",
     "--route must be npm or jsr-node",
   );
-  for (const required of ["version", "native-sha256", "evidence"]) {
+  for (const required of ["version", "native-target", "native-sha256", "evidence"]) {
     assert.ok(parsed[required], `--${required} is required`);
   }
   assert.match(parsed["native-sha256"], /^[0-9a-f]{64}$/u);
@@ -175,6 +177,7 @@ function retainFailureEvidence(error) {
     kind: "watchbound-registry-install-smoke",
     route: options.route,
     expectedVersion: options.version,
+    expectedNativeTarget: options["native-target"],
     expectedNativeSha256: options["native-sha256"],
     status: "failed",
     error: {

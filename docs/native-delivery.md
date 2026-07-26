@@ -1,123 +1,105 @@
 # Native delivery contract
 
-Status: source checkouts remain controlled builds. The public `0.0.1` npm/JSR
-bootstrap is an explicit one-target bundled native package. The `1.0.0`
-async-callback source qualified, but its JSR npm-compatibility route exposed a
-manifest-normalization defect. The corrected `1.0.1` package is the qualified
-current release. The `1.1.0` source candidate retains the same one-target native
-delivery and requires its own exact-SHA gates.
+Status: `1.2.0` is an unpublished multi-target source candidate. The current
+qualified registry release remains `1.0.1` with its historical one-target
+contract. Nothing in this document promotes the candidate targets before their
+exact commit and artifacts complete the qualification matrix.
 
-## Current decision
+## One matrix, three package roles
 
-Watchbound development is built from the checked-in Rust workspace in a
-controlled checkout after a frozen pnpm install. The only loadable native
-basename is:
+`config/native-matrix.json` is the source of truth for runtime versions,
+targets, filenames, package names, ELF identities, distro lanes, and explicit
+exclusions. Generated npm, JSR, CI, release, capability, Electron, and Nix
+paths consume that matrix.
 
-```text
-watchbound.linux-x64-gnu.node
-```
+The generated public boundary is:
 
-The build uses pinned `@napi-rs/cli` 3.7.3 with a release profile and `--no-js`.
-It may generate the ignored `node/native.generated.d.ts` for inspection, but
-`node/index.js`, `node/index.d.ts`, and `node/load-native.cjs` are hand-owned.
-The workspace build compares those files before and after native generation,
-requires the expected addon, and loads it through the production handshake.
+| Role | Package | Architecture metadata |
+| --- | --- | --- |
+| ESM wrapper | `watchbound` / JSR `@gadicc/watchbound` | Linux, architecture-neutral |
+| CommonJS loader | `@gadicc/watchbound-node` | Linux, architecture-neutral; optional exact target packages |
+| x64 artifact | `@gadicc/watchbound-node-linux-x64-gnu` | `os=linux`, `cpu=x64`, `libc=glibc` |
+| ARM64 artifact | `@gadicc/watchbound-node-linux-arm64-gnu` | `os=linux`, `cpu=arm64`, `libc=glibc` |
 
-There is deliberately no `preinstall`, `install`, or `postinstall` hook. The
-runtime loader does not compile, download, search optional packages, honor a
-native-library environment override, or fall back to WASI. A missing local
-addon is an actionable `WATCHBOUND_NATIVE_NOT_BUILT` failure rather than an
-implicit network or toolchain operation.
+Workspace manifests remain private controlled-source packages. A source build
+places exactly the current host target beside `node/index.js`. Public package
+trees are generated under ignored `dist/` paths and are never the development
+source of truth.
 
-Release-package validation copies that exact locally built addon into
-`@gadicc/watchbound-node` and smoke-tests the wrapper against it. The package
-manifest is the source of truth for delivery:
+There are no `preinstall`, `install`, or `postinstall` scripts. Neither loader
+nor wrapper compiles code, downloads an artifact, reads a native-library
+override, searches a cache, or falls back to another architecture/libc.
 
-- workspace/source manifests use `controlled-source-build`, and capabilities
-  report `prebuilt: false`;
-- generated npm and JSR manifests use `bundled-native-package`, and
-  capabilities report `prebuilt: true`.
+## Exact loader selection
 
-The wrapper and native package require matching versions and matching delivery
-identities before loading. This closes the earlier capability-reporting
-mismatch without implying support for another target or an install-time build.
+On Linux glibc, the loader maps only `process.arch === "x64"` or `"arm64"` to
+one matrix entry. It then chooses one of two explicit delivery modes:
 
-## Load and identity checks
+1. controlled source build: the one exact local matrix filename beside the
+   loader; or
+2. generated package: the exact matrix package selected by platform and
+   architecture.
 
-Before `require()` reaches native exports, the loader requires Linux x64,
-detected glibc, and process Node-API 6 or newer. It then loads only the exact
-local basename and validates:
+The public-package path verifies package name, version, delivery kind, target
+identifier, Rust triple, architecture, libc, filename, declared SHA-256, one
+regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,
+class, endianness, and machine before `require()`. After load it verifies
+metadata schema 1, binding API 3, wrapper/native/engine version lockstep,
+Node-API floor 6, target triple, and release profile.
 
-- metadata schema version 1 and binding API version 3;
-- identical native, engine, and native-package versions;
-- addon Node-API floor 6;
-- target triple `x86_64-unknown-linux-gnu`;
-- release build profile.
+Node is restricted to `>=24.15.0 <25`. The Codex boundary is Electron 42.3.0,
+embedded Node 24.15.0, and Node-API 10. Stable bounded loader codes distinguish
+unsupported Node/platform/architecture/libc, a missing or invalid target
+package, integrity/ELF failures, load failures, and binding-contract failures.
+The loader never retries with a nearby artifact.
 
-The JavaScript wrapper separately asserts its version against the native
-package. Mismatches fail closed; there is no best-effort compatibility mode.
-Import-time loader error messages and causes are byte-bounded, and the absolute
-addon path is removed from the retained cause. Loader codes are a packaging
-contract distinct from subscription operation errors.
+Electron qualification packs the wrapper and loader inside `app.asar` with the
+native file materialized by Electron under `app.asar.unpacked`. The fixture
+must load through the production package resolver and deliver a real callback.
 
-The loader's platform checks establish only that the addon is loadable in a
-compatible family. The exact maintained support claim remains the narrower
-matrix in [`support-matrix.md`](support-matrix.md) and requires clean target
-evidence.
+## Artifact controls
 
-## Clean source-build gate
+For each registry native artifact, release qualification requires:
 
-A qualifying clean job must:
+- two clean isolated native builders on the target architecture and Ubuntu
+  22.04/glibc 2.35 baseline;
+- exact source/version/tool/environment metadata and byte identity;
+- SHA-256, ELF class/machine, exact dynamic-library allowlist, no
+  RPATH/RUNPATH, and maximum required `GLIBC_* <= 2.35`;
+- a stripped release binary with no `.symtab` or debug sections;
+- exactly the `napi_register_module_v1` exported Node-API entry point and no
+  undefined linked Node-API symbols (napi-rs resolves the host table at
+  runtime);
+- bounded size, tarball allowlists, offline installation, production loader
+  handshake, and resource teardown;
+- callback serialization, cancellation, initial and dynamic exclusions,
+  reconciliation, root recovery, and joined disposal;
+- release-only, explicitly acknowledged forced-overflow and automatic
+  overflow-reconciliation runs for the canonical target artifact;
+- CycloneDX 1.6 SBOM, checksums, release/build metadata, npm/JSR provenance,
+  and exact post-publication registry smokes.
 
-1. start from a checkout containing no `.node` or `.so` artifact;
-2. assert the exact OS, architecture, libc, kernel floor, Node, Rust, pnpm,
-   compiler, and linker facts;
-3. install only from the committed lockfile;
-4. produce only `node/watchbound.linux-x64-gnu.node` from source;
-5. prove native generation did not modify hand-owned entry files;
-6. load the addon through the production metadata/version handshake;
-7. run TypeScript fixtures, tests, repository checks, real environment
-   teardown, bounded maintenance/root-recovery stress, and strict ordinary
-   conformance serially.
+Cross-compilation can demonstrate that source compiles. It cannot qualify a
+target. ARM64 execution uses a native ARM64 runner. Container distro lanes use
+the matching native host; they are not QEMU qualification.
 
-The recorded qualification runs in `support-matrix.md` completed this source-
-build gate. A workflow file or a successful build on a different host cannot
-widen the supported target.
+## Nix boundary
 
-## Bundled native release controls
+`flake.nix` builds the Rust addon from the locked source and Cargo lock inside
+Nix for `x86_64-linux` and `aarch64-linux`. It generates the same package
+layout without npm access, loads it with Nix Node 24, and packs/runs it with the
+exact pinned Nix Electron 42.3.0 closure. The Nix addon is a source-built Nix
+output, not the registry ELF: Nix may apply its own interpreter/RPATH closure,
+so registry no-RPATH evidence and Nix closure evidence remain separate.
 
-The `0.0.1` bundled-native bootstrap received explicit release approval.
-Later releases still require the documented approval boundary. For the sole
-target, the implementation now provides:
+## Deliberate exclusions
 
-- exact target basename and package `os`, `cpu`, `libc`, and Node constraints;
-- lockstep wrapper/native/engine/binding metadata and delivery validation;
-- a SHA-256 checksum manifest and deterministic release metadata;
-- a CycloneDX 1.6 SBOM covering the npm boundary and Rust dependency graph;
-- npm and JSR OIDC provenance after the one-time interactive local bootstrap;
-- two isolated clean Ubuntu 24.04 builders whose transferred native binaries
-  are re-hashed and byte-compared, plus same-runner repetition as defense in
-  depth;
-- ELF class/architecture, dynamic-library allowlist, RPATH/RUNPATH absence,
-  stripped-symbol status, Node-API export, maximum-size, tarball allowlist,
-  load, and teardown checks;
-- a `main`-push-only semantic-release boundary, immutable-version registry
-  checks, and an incident-response runbook.
+- ARMv7 is unsupported. Codex contains partial mappings, but its Electron,
+  pacman, native-addon, release, and native-runtime paths do not form a complete
+  qualified target.
+- musl is unsupported. Codex can embed a musl CLI, but Watchbound runs inside
+  the host glibc Electron process.
+- non-Linux systems are unsupported because the engine is inotify-specific.
 
-The following requirements are stable-release gates:
-
-- exact-commit green evidence on both supported CI lanes;
-- exact SHA-256 and byte identity from two independent builders, with any
-  mismatch failing closed rather than being waived;
-- fresh supervised manual and automatic forced-overflow evidence for the exact
-  candidate SHA, version, and independently approved native digest;
-- maintainer acceptance that the single Ubuntu 24.04 x64/glibc 2.39 artifact is
-  the entire public support promise;
-- production-blocker resolution; and
-- immediate post-publication exact npm and JSR Node-route registry-install
-  smoke, with immutable-version incident response on failure.
-
-There is no runtime checksum/signature lookup because the addon is already
-inside the immutable npm package whose registry provenance and tarball digest
-are verified before installation. The loader fails closed: it never downloads,
-compiles, selects a nearby target, or falls back to an older artifact.
+See `support-matrix.md`, `platform-audit.md`, and `releasing.md` for the claim
+boundary and promotion gates.

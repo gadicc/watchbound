@@ -36,6 +36,10 @@ export declare class __WatchboundTestOnlyThreadpoolBlocker {
 
 export declare function bindingMetadata(): JsBindingMetadata
 
+export declare function nativeDeliveryMetadata(): JsNativeDeliveryMetadata
+
+export declare function nativeTargetMatrix(): JsNativeTargetMatrix
+
 export declare function capabilities(): JsCapabilities
 
 export declare function createEngine(options?: JsEngineOptions | undefined | null): NativeEngine
@@ -67,6 +71,81 @@ export interface JsBindingMetadata {
   nodeApiVersion: number
   targetTriple: string
   buildProfile: string
+}
+
+export interface JsNativeDeliveryMetadata {
+  schemaVersion: 1
+  delivery: "controlled-source-build" | "bundled-native-package"
+  loaderPackage: "@gadicc/watchbound-node"
+  targetPackage: string | null
+  targetId: string
+  targetTriple: string
+  architecture: "x64" | "arm64"
+  libc: "glibc"
+  binary: string
+  sha256: string
+  qualification: "target-pending-clean-ci" | "supported"
+  glibcMaximum: string
+  kernelMinimum: string
+}
+
+export interface JsNativeTargetMatrix {
+  schemaVersion: 1
+  nodeRange: ">=24.15.0 <25"
+  nodeMinimum: "24.15.0"
+  nodeApiMinimum: 6
+  rustMinimum: "1.88"
+  packageManager: "pnpm@10.33.2"
+  rootThreatModel: "trusted-stable-local-roots"
+  releaseBaseline: {
+    distribution: "ubuntu"
+    version: "22.04"
+    kernelMinimum: "5.15"
+    glibcMaximum: "2.35"
+  }
+  codexRuntime: {
+    electron: "42.3.0"
+    node: "24.15.0"
+    nodeApi: 10
+    asar: { archive: "app.asar"; nativeDirectory: "app.asar.unpacked" }
+  }
+  targets: Array<{
+    id: string
+    platform: "linux"
+    architecture: "x64" | "arm64"
+    unameArchitecture: "x86_64" | "aarch64"
+    rustTarget: string
+    libc: "glibc"
+    binary: string
+    package: string
+    runner: string
+    overflowRunner: ["self-hosted", "linux", "x64" | "arm64", "watchbound-overflow"]
+    nixSystem: "x86_64-linux" | "aarch64-linux"
+    codexElectron: {
+      archiveArchitecture: "x64" | "arm64"
+      sha256SRI: string
+    }
+    qualification: "target-pending-clean-ci" | "supported"
+    elf: {
+      class: 2
+      endianness: 1
+      machine: number
+      machineName: string
+      fileMachineName: string
+      neededLibraries: Array<string>
+    }
+  }>
+  qualificationLanes: Array<{
+    id: string
+    distribution: string
+    version: string
+    family: string
+    evidence: string
+    architectures: Array<"x64" | "arm64">
+    image: string
+  }>
+  recognizedCompatibilityFamilies: Record<string, Array<string>>
+  intentionallyUnsupported: Array<{ target: string; reason: string }>
 }
 
 export interface JsCapabilities {

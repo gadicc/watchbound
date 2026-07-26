@@ -4,8 +4,8 @@ Status: selected for controlled source builds and the one-target public
 bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
 baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
 source qualified, and the corrected `1.0.1` package is the current release.
-The `1.1.0` source candidate adds generation-zero initial exclusions and a
-Node 24.15 floor; that widened target requires exact-commit qualification.
+The unpublished `1.2.0` candidate retains generation-zero exclusions and adds
+exact x64/ARM64 package selection; both targets require native qualification.
 
 ## Choice
 
@@ -104,14 +104,13 @@ with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 3`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 4`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
-The `1.1.0` metadata declares `support.status: "supported"`; the
-release workflow qualifies that exact status-bearing commit, so no later
-status-only commit is required. Current process facts never broaden the fixed
-target.
+The candidate metadata keeps both target entries pending. The release workflow
+refuses publication until the exact status-bearing commit and artifacts have
+qualified. Current process facts never broaden the target matrix.
 
 Node exposes a cheap `NativeEngine`, and the wrapper exposes
 `createEngine({ nativeWatchBudget: number | null })`. Creation stores a request
@@ -291,9 +290,10 @@ surface when disposal joins it.
 
 ## Release boundary
 
-- qualify the exact release commit in both Ubuntu 24.04 support lanes;
-- build on two isolated clean Ubuntu 24.04 builders and compare the intended
-  native binaries byte for byte before publication;
+- qualify the exact release commit on native x64/ARM64, pinned distro,
+  Electron ASAR, Nix, and supervised overflow lanes;
+- build each registry artifact on two isolated clean Ubuntu 22.04 native
+  builders and compare it byte for byte before publication;
 - publish only from an intentional `main` push after every pre-publication gate;
 - verify exact npm and JSR Node-route installs on fresh supported hosts after
   immutable publication.
@@ -301,4 +301,4 @@ surface when disposal joins it.
 Checksums, CycloneDX SBOM generation, binary inspection, same-runner and
 independent-builder reproducibility, npm/JSR provenance, and `main`-push
 semantic-release automation are implemented in the release-package boundary.
-They do not widen the loader's single exact target.
+They do not widen the loader's exact selected target or its qualification.

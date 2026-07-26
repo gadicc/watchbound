@@ -15,12 +15,12 @@ function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8"));
 }
 
-test("private package manifests match the narrow maintained source-build target", () => {
+test("private manifests retain source-build development and architecture-neutral public generation", () => {
   const root = readJson("package.json");
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
   const { version } = root;
-  assert.equal(version, "1.1.0");
+  assert.equal(version, "1.2.0");
 
   assert.equal(wrapper.name, "watchbound");
   assert.equal(native.name, "@gadicc/watchbound-node");
@@ -39,8 +39,8 @@ test("private package manifests match the narrow maintained source-build target"
 
   for (const manifest of [wrapper, native]) {
     assert.deepEqual(manifest.os, ["linux"]);
-    assert.deepEqual(manifest.cpu, ["x64"]);
-    assert.deepEqual(manifest.libc, ["glibc"]);
+    assert.equal(manifest.cpu, undefined);
+    assert.equal(manifest.libc, undefined);
     assert.deepEqual(manifest.watchbound, {
       delivery: "controlled-source-build",
     });
@@ -54,6 +54,13 @@ test("private package manifests match the narrow maintained source-build target"
       default: "./index.js",
     },
   });
+  assert.deepEqual(native.files, [
+    "index.js",
+    "index.d.ts",
+    "load-native.cjs",
+    "native-matrix.json",
+    "watchbound.*.node",
+  ]);
   assert.equal(
     wrapper.dependencies["@gadicc/watchbound-node"],
     `workspace:${version}`,
@@ -78,6 +85,61 @@ test("private package manifests match the narrow maintained source-build target"
     const source = fs.readFileSync(path.join(workspaceRoot, crate), "utf8");
     assert.match(source, /^publish = false$/mu);
   }
+});
+
+test("native matrix is the single source for x64 and ARM64 delivery", () => {
+  const matrix = readJson("config/native-matrix.json");
+  assert.equal(matrix.schemaVersion, 1);
+  assert.equal(matrix.nodeRange, ">=24.15.0 <25");
+  assert.deepEqual(matrix.releaseBaseline, {
+    distribution: "ubuntu",
+    version: "22.04",
+    kernelMinimum: "5.15",
+    glibcMaximum: "2.35",
+  });
+  assert.deepEqual(
+    matrix.targets.map((target) => ({
+      id: target.id,
+      architecture: target.architecture,
+      package: target.package,
+      qualification: target.qualification,
+      runner: target.runner,
+    })),
+    [
+      {
+        id: "linux-x64-gnu",
+        architecture: "x64",
+        package: "@gadicc/watchbound-node-linux-x64-gnu",
+        qualification: "target-pending-clean-ci",
+        runner: "ubuntu-22.04",
+      },
+      {
+        id: "linux-arm64-gnu",
+        architecture: "arm64",
+        package: "@gadicc/watchbound-node-linux-arm64-gnu",
+        qualification: "target-pending-clean-ci",
+        runner: "ubuntu-22.04-arm",
+      },
+    ],
+  );
+  assert.equal(matrix.qualificationLanes.length, 7);
+  assert.deepEqual(matrix.targets.map(({ overflowRunner }) => overflowRunner), [
+    ["self-hosted", "linux", "x64", "watchbound-overflow"],
+    ["self-hosted", "linux", "arm64", "watchbound-overflow"],
+  ]);
+  assert.deepEqual(matrix.codexRuntime, {
+    electron: "42.3.0",
+    node: "24.15.0",
+    nodeApi: 10,
+    asar: { archive: "app.asar", nativeDirectory: "app.asar.unpacked" },
+  });
+  for (const lane of matrix.qualificationLanes) {
+    assert.match(lane.image, /@sha256:[0-9a-f]{64}$/u);
+  }
+  assert.deepEqual(
+    matrix.intentionallyUnsupported.map(({ target }) => target),
+    ["linux-armv7-gnu", "linux-musl", "non-linux"],
+  );
 });
 
 test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
@@ -105,6 +167,15 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     path.join(workspaceRoot, "scripts/compare-native-builds.mjs"),
     "utf8",
   );
+  const aggregateNativeBuilds = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/aggregate-native-builds.mjs"),
+    "utf8",
+  );
+  const ciMatrix = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/ci-matrix.mjs"),
+    "utf8",
+  );
+  const flake = fs.readFileSync(path.join(workspaceRoot, "flake.nix"), "utf8");
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
   assert.match(
     release,
@@ -120,11 +191,21 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(release, /run: pnpm release/u);
   assert.match(release, /^  repro-build:$/mu);
   assert.match(release, /^  repro-compare:$/mu);
+  assert.match(release, /^  aggregate:$/mu);
+  assert.match(release, /^  release-distro:$/mu);
+  assert.match(release, /^  release-electron:$/mu);
+  assert.match(release, /^  release-overflow:$/mu);
   assert.match(release, /^  registry-smoke:$/mu);
   assert.match(release, /compare-native-builds\.mjs/u);
+  assert.match(release, /aggregate-native-builds\.mjs/u);
   assert.match(release, /check-registry-packages\.mjs/u);
-  assert.match(release, /WATCHBOUND_EXPECTED_NATIVE_SHA256/u);
-  assert.match(release, /watchbound-approved-native/u);
+  assert.match(release, /WATCHBOUND_CANONICAL_NATIVE_DIR/u);
+  assert.match(release, /watchbound-approved-native-matrix/u);
+  assert.match(release, /ubuntu-22\.04/u);
+  assert.match(release, /glibc 2\.35/u);
+  assert.match(release, /check-electron-asar\.mjs/u);
+  assert.match(release, /overflow-reconciliation,automatic-overflow-reconciliation/u);
+  assert.match(release, /matrix\.overflowRunner\[3\]/u);
   assert.equal(
     release.match(
       /echo "RUSTFLAGS=--remap-path-prefix=\$cargo_home=\/watchbound\/cargo-home" >> "\$GITHUB_ENV"/gu,
@@ -133,8 +214,15 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   );
   assert.doesNotMatch(release, /NPM_BOOTSTRAP_TOKEN/u);
   assert.doesNotMatch(release, /workflow_dispatch/u);
+  assert.doesNotMatch(release, /^\s*- uses: [^\s]+@v\d+(?:\.\d+)*\s*$/mu);
   assert.doesNotMatch(ci, /workflow_dispatch/u);
   assert.match(ci, /^  push:\n    branches-ignore: \[main\]$/mu);
+  assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.source\)/u);
+  assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.qualification\)/u);
+  assert.match(ci, /check-electron-asar\.mjs/u);
+  assert.match(ci, /run-distro-qualification\.mjs/u);
+  assert.match(ci, /nix flake check --no-update-lock-file/u);
+  assert.doesNotMatch(ci, /^\s*- uses: [^\s]+@v\d+(?:\.\d+)*\s*$/mu);
 
   assert.match(config, /branches: \["main"\]/u);
   assert.match(config, /@semantic-release\/commit-analyzer/u);
@@ -146,7 +234,8 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
   assert.match(plugin, /scripts\/set-release-version\.mjs/u);
   assert.match(plugin, /pnpm", \["check:reproducible"\]/u);
   assert.match(plugin, /pnpm", \["test:packages"\]/u);
-  assert.match(plugin, /installCanonicalNative/u);
+  assert.match(plugin, /installCanonicalNativeMatrix/u);
+  assert.match(plugin, /assertReleaseTargetsQualified/u);
   assert.match(plugin, /registry integrity mismatch/u);
   assert.match(plugin, /publication-ledger\.json/u);
   assert.match(plugin, /async function npmPackageState/u);
@@ -171,6 +260,17 @@ test("semantic release stays main-only, OIDC-scoped, and version-aware", () => {
     compareNativeBuilds,
     /--remap-path-prefix=\$\{manifest\.isolation\.cargoHome\}=\/watchbound\/cargo-home/u,
   );
+  assert.match(aggregateNativeBuilds, /watchbound-independent-native-matrix-comparison/u);
+  assert.match(ciMatrix, /matrix\.qualificationLanes/u);
+  assert.match(ciMatrix, /\["builder-a", "builder-b"\]/u);
+  assert.match(ciMatrix, /runner: target\.runner/u);
+  assert.match(flake, /eachSystem \[ "x86_64-linux" "aarch64-linux" \]/u);
+  assert.match(flake, /electron-v\$\{matrix\.codexRuntime\.electron\}-linux-/u);
+  assert.match(flake, /target\.codexElectron\.sha256SRI/u);
+  assert.match(flake, /patchelf/u);
+  assert.match(flake, /generate-nix-package\.mjs/u);
+  assert.match(flake, /asar pack/u);
+  assert.doesNotMatch(flake, /npm (?:install|ci)/u);
 });
 
 test("JSR existence checks exact registry metadata without Deno policy", async () => {
@@ -244,6 +344,23 @@ test("JSR publication restores only the exact prepared native tarball", () => {
     ],
     "/tmp/watchbound-jsr",
   ]]);
+});
+
+test("JSR publication can restore the loader and current target without networking", () => {
+  const calls = [];
+  installExactJsrNative(
+    (...args) => calls.push(args),
+    "/tmp/watchbound-jsr",
+    [
+      "/tmp/gadicc-watchbound-node-1.2.0.tgz",
+      "/tmp/gadicc-watchbound-node-linux-arm64-gnu-1.2.0.tgz",
+    ],
+  );
+  assert.deepEqual(calls[0][1].slice(-2), [
+    "/tmp/gadicc-watchbound-node-1.2.0.tgz",
+    "/tmp/gadicc-watchbound-node-linux-arm64-gnu-1.2.0.tgz",
+  ]);
+  assert.ok(calls[0][1].includes("--offline"));
 });
 
 test("spent JSR recoveries cannot be dispatched or reused", () => {

@@ -448,13 +448,84 @@ export type AutomaticReconciliationStatus =
 /** Qualification status declared for the exact package build and target. */
 export type SupportStatus = "target-pending-clean-ci" | "supported";
 
+/** One released GNU/Linux native target and its exact qualification state. */
+export interface SupportTargetCapability {
+  /** Stable target identifier used by packages and qualification evidence. */
+  readonly id: "linux-x64-gnu" | "linux-arm64-gnu";
+  /** Qualification state for the exact source commit and native artifact. */
+  readonly status: SupportStatus;
+  /** npm package containing only this target's native artifact. */
+  readonly package:
+    | "@gadicc/watchbound-node-linux-x64-gnu"
+    | "@gadicc/watchbound-node-linux-arm64-gnu";
+  /** Rust target triple embedded in the native binding. */
+  readonly targetTriple:
+    | "x86_64-unknown-linux-gnu"
+    | "aarch64-unknown-linux-gnu";
+  /** Operating-system family required by the inotify engine. */
+  readonly operatingSystem: "linux";
+  /** Node architecture selected by the architecture-neutral loader. */
+  readonly architecture: "x64" | "arm64";
+  /** C-library ABI and audited maximum required symbol version. */
+  readonly libc: {
+    /** Supported C-library family. */
+    readonly family: "glibc";
+    /** Highest permitted required `GLIBC_*` version in a released ELF. */
+    readonly maximumRequiredSymbolVersion: "2.35";
+  };
+  /** Oldest kernel baseline exercised by the qualification matrix. */
+  readonly kernelMinimum: "5.15";
+  /** Supported Node runtime range. */
+  readonly nodeRange: ">=24.15.0 <25";
+  /** Qualification-lane identifiers applicable to this architecture. */
+  readonly qualificationLanes: readonly string[];
+}
+
+/** One distribution or runtime lane used to qualify native delivery. */
+export interface QualificationLaneCapability {
+  /** Stable lane identifier. */
+  readonly id: string;
+  /** Distribution or runtime name. */
+  readonly distribution: string;
+  /** Pinned distribution version or flake identity. */
+  readonly version: string;
+  /** Compatibility family represented by this lane. */
+  readonly family: "debian" | "rpm" | "pacman" | "nix";
+  /** Native architectures covered by the lane. */
+  readonly architectures: readonly ("x64" | "arm64")[];
+  /** Evidence required before this lane can support a release claim. */
+  readonly evidence:
+    | "runtime-qualification-required"
+    | "native-nix-closure-required";
+}
+
+/** Loader-selected target and whether this process is qualified to use it. */
+export interface CurrentRuntimeQualificationCapability {
+  /** Stable identifier of the artifact selected by the loader. */
+  readonly packagedTargetId: "linux-x64-gnu" | "linux-arm64-gnu";
+  /** Whether platform, architecture, libc, and target triple all agree. */
+  readonly runtimeMatchesPackagedTarget: boolean;
+  /** Exact-commit qualification state of the packaged target. */
+  readonly qualification: SupportStatus;
+  /** True only for an exact runtime match whose target is qualified. */
+  readonly supported: boolean;
+}
+
+/** A deliberately excluded target and the reason it cannot be claimed. */
+export interface IntentionallyUnsupportedTargetCapability {
+  /** Unsupported target family. */
+  readonly target: "linux-armv7-gnu" | "linux-musl" | "non-linux";
+  /** Human-readable scope boundary; consumers must not parse it as policy. */
+  readonly reason: string;
+}
+
 /**
  * Frozen, JSON-serializable description of this build, runtime, supported
  * target, public features, option bounds, and observability contract.
  */
 export interface Capabilities {
   /** Version of this capabilities object’s schema. */
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
   /** Wrapper, native engine, and binding API versions. */
   readonly versions: {
     readonly wrapper: string;
@@ -470,6 +541,28 @@ export interface Capabilities {
     readonly targetTriple: string;
     readonly nodeApi: number;
     readonly rustMinimum: "1.88";
+    /** Exact local artifact selected by the architecture-neutral loader. */
+    readonly packagedTarget: {
+      /** Stable target identifier. */
+      readonly id: "linux-x64-gnu" | "linux-arm64-gnu";
+      /** Target package name, or null for a controlled source build. */
+      readonly package:
+        | "@gadicc/watchbound-node-linux-x64-gnu"
+        | "@gadicc/watchbound-node-linux-arm64-gnu"
+        | null;
+      /** Exact native basename selected without fallback. */
+      readonly binary:
+        | "watchbound.linux-x64-gnu.node"
+        | "watchbound.linux-arm64-gnu.node";
+      /** SHA-256 of the selected local native artifact. */
+      readonly sha256: string;
+      /** Node architecture of the selected artifact. */
+      readonly architecture: "x64" | "arm64";
+      /** C-library ABI of the selected artifact. */
+      readonly libc: "glibc";
+      /** Qualification state of this exact target. */
+      readonly qualification: SupportStatus;
+    };
   };
   /** Observed facts about the current process and host runtime. */
   readonly runtime: {
@@ -487,6 +580,8 @@ export interface Capabilities {
   };
   /** Exact maintained target and qualification status. */
   readonly support: {
+    /** Marks the unchanged single-target fields below as a legacy view. */
+    readonly scope: "legacy-primary-target";
     readonly status: SupportStatus;
     readonly operatingSystem: {
       readonly family: "linux";
@@ -501,6 +596,19 @@ export interface Capabilities {
     readonly packageManager: "pnpm@10.33.2";
     readonly delivery: WatchboundPackageDelivery;
     readonly rootThreatModel: "trusted-stable-local-roots";
+    /** All packaged native targets and their independent qualification state. */
+    readonly targets: readonly SupportTargetCapability[];
+    /** Distribution/runtime lanes without implied derivative qualification. */
+    readonly qualificationLanes: readonly QualificationLaneCapability[];
+    /** Detected derivative names grouped by their compatibility baseline. */
+    readonly recognizedCompatibilityFamilies: Readonly<
+      Record<string, readonly string[]>
+    >;
+    /** Facts connecting the selected artifact to this runtime and its evidence. */
+    readonly currentRuntime: CurrentRuntimeQualificationCapability;
+    /** Explicitly excluded target families that must fail closed. */
+    readonly intentionallyUnsupported:
+      readonly IntentionallyUnsupportedTargetCapability[];
   };
   /** Public behavioral and lifecycle features of this build. */
   readonly features: {

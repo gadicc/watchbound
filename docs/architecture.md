@@ -9,11 +9,11 @@ establishment, bounded per-environment native-to-Node delivery, and
 promise-aware serialized callbacks. The earlier contract is published as the
 `0.0.1` npm/JSR bootstrap. The `1.0.0` callback source qualified and was
 published, but its JSR Node route exposed a packaging incompatibility. The
-corrected `1.0.1` package is qualified, while the `1.1.0` initial-exclusion and
-Node-floor candidate requires its own exact-commit qualification. An opt-in
-Codex Desktop Linux integration has now been authorized and implemented against
-local candidate artifacts; it must not merge or ship until the exact `1.1.0`
-release artifacts pass qualification and are pinned by that consumer.
+corrected `1.0.1` package is qualified. The unpublished `1.2.0` candidate adds
+an architecture-neutral loader and exact x64/ARM64 GNU target packages; both
+remain pending exact-commit qualification. An opt-in Codex Desktop Linux
+integration experiment must not ship until official artifacts pass the full
+matrix and are pinned by that consumer.
 
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support
@@ -415,7 +415,7 @@ The wrapper combines native capability-schema-version-3 feature/default metadata
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 3`. Features distinguish
+and `observability`, under `schemaVersion: 4`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
 watches, and expose cancellable establishment and shared Node delivery. Options
 publish exact defaults, `u32` hard bounds, scope, units, and accounting.
@@ -425,12 +425,11 @@ callback queue, per-environment dispatcher scope, single-credit admission,
 promise-aware serialized callback completion, error/disposal/teardown policy,
 and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
-The `runtime` section is observed information about the process that loaded the
-single native binary, not evidence that the host is supported. The separate
-`support` section declares `supported` for `1.1.0`; that declaration
-becomes effective only when the same exact commit is qualified for the narrow
-controlled source-build target in `support-matrix.md`. Matching facts do not
-widen that fixed target and nonmatching facts do not broaden it.
+The `runtime` section is observed information about the process that loaded a
+native binary, not evidence that the host is supported. Schema 4 separately
+reports the packaged target, per-target qualification, and current-runtime
+match while retaining legacy single-target fields without reinterpreting them.
+Matching facts do not widen `support-matrix.md`.
 
 ### Allocator and promotion state machine
 
@@ -816,13 +815,12 @@ platform range, and packaging are sufficient. Parcel's Linux inotify
 conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
-The intended maintained target is the narrow Ubuntu 24.04, Linux
-6.8+, x86_64, glibc 2.39, Node `>=24.15.0 <25` controlled source build on
-trusted stable local roots in `docs/support-matrix.md`. The `1.1.0`
-declaration is effective only after exact-commit release qualification. WSL, network filesystems,
-Filesystem in Userspace (FUSE), overlay filesystems, unusual container mounts,
-musl, other distributions and architectures, and non-Linux platforms are
-unqualified or unsupported. The engine traverses existing mount points, has no
+The unpublished candidate matrix in `docs/support-matrix.md` covers x64 and
+ARM64 GNU/Linux with a kernel 5.15/glibc 2.35 candidate baseline and Node
+`>=24.15.0 <25`; its targets remain pending exact evidence. WSL, network
+filesystems, Filesystem in Userspace (FUSE), overlay filesystems, unusual
+container mounts, musl, ARMv7, and non-Linux platforms are unqualified or
+unsupported. The engine traverses existing mount points, has no
 one-filesystem mode, and cannot observe a later descendant mount insertion
 through inotify alone.
 

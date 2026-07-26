@@ -1,15 +1,18 @@
 # Forced-overflow runner strategy
 
-Status: future design note. No runner, quiet-host checker, container gate, or
-new workflow is implemented by this document. The current supervised
-forced-overflow policy in [`benchmark-methodology.md`](benchmark-methodology.md)
-remains authoritative.
+Status: the release workflow now routes x64 and ARM64 canonical-artifact
+overflow jobs only to prepared self-hosted runners carrying the
+`watchbound-overflow` label. Provisioning, quiet-host confirmation, and active
+supervision remain operator responsibilities; a label alone is not evidence.
+The policy in [`benchmark-methodology.md`](benchmark-methodology.md) remains
+authoritative.
 
 ## Recommendation
 
-Use a dedicated Ubuntu 24.04 x64 VM or self-hosted runner for qualifying
-forced-overflow evidence. Keep GitHub-hosted runners for ordinary CI,
-independent clean builds, and quick benchmark functionality smoke.
+Use a dedicated baseline-compatible x64 or ARM64 VM/bare-metal self-hosted
+runner for qualifying forced-overflow evidence. Keep GitHub-hosted runners for
+ordinary CI, independent clean builds, and quick benchmark functionality
+smoke.
 
 An Ubuntu 24.04 Docker container can be useful as a non-qualifying packaging
 and compatibility check, but it is not an Ubuntu host:
@@ -21,7 +24,7 @@ and compatibility check, but it is not an Ubuntu host:
 - its working tree is normally overlay-backed unless the operator deliberately
   supplies another filesystem.
 
-Docker can therefore catch Ubuntu userspace, glibc 2.39, dependency, build,
+Docker can therefore catch distribution userspace, libc, dependency, build,
 install, and import failures. It must not be presented as support
 qualification, quiet-host performance evidence, or a substitute for the
 supported host.

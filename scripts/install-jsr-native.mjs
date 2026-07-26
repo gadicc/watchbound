@@ -1,6 +1,7 @@
 import path from "node:path";
 
-export function installExactJsrNative(runCommand, packageRoot, nativeTarball) {
+export function installExactJsrNative(runCommand, packageRoot, nativeTarballs) {
+  const tarballs = Array.isArray(nativeTarballs) ? nativeTarballs : [nativeTarballs];
   runCommand(
     "npm",
     [
@@ -11,7 +12,7 @@ export function installExactJsrNative(runCommand, packageRoot, nativeTarball) {
       "--no-package-lock",
       "--no-save",
       "--offline",
-      path.resolve(nativeTarball),
+      ...tarballs.map((tarball) => path.resolve(tarball)),
     ],
     path.resolve(packageRoot),
   );

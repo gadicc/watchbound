@@ -5,6 +5,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "./install-jsr-native.mjs";
+import { loadNativeMatrix, targetForRuntime } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -14,10 +15,8 @@ const workspaceRoot = path.resolve(
 export function prepare(_pluginConfig, { nextRelease }) {
   const committedVersion = readJson("package.json").version;
   assertReleaseIdentity(nextRelease.version, committedVersion);
-  run(process.execPath, [
-    "scripts/set-release-version.mjs",
-    nextRelease.version,
-  ]);
+  assertReleaseTargetsQualified();
+  run(process.execPath, ["scripts/set-release-version.mjs", nextRelease.version]);
   run("git", [
     "diff",
     "--exit-code",
@@ -29,22 +28,23 @@ export function prepare(_pluginConfig, { nextRelease }) {
     "Cargo.lock",
     "pnpm-lock.yaml",
   ]);
+  installCanonicalNativeMatrix();
   run("pnpm", ["check:reproducible"]);
-  installCanonicalNative();
   run("pnpm", ["test:packages"]);
 }
 
 export async function publish(_pluginConfig, { nextRelease }) {
   const { version } = nextRelease;
   assertReleaseIdentity(version, readJson("package.json").version);
+  assertReleaseTargetsQualified();
   const distTag = nextRelease.channel ?? "latest";
-  const nativePackage = `@gadicc/watchbound-node@${version}`;
-  const wrapperPackage = `watchbound@${version}`;
   const jsrPackage = `jsr:@gadicc/watchbound@${version}`;
-  const nativeTarball = tarballPath("node", version);
-  const wrapperTarball = tarballPath("wrapper", version);
+  const packages = releasePackages(version);
+  const targets = packages.filter(({ kind }) => kind === "target");
+  const loader = packages.find(({ kind }) => kind === "loader");
+  const wrapper = packages.find(({ kind }) => kind === "wrapper");
   const ledger = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "watchbound-publication-ledger",
     version,
     sourceSha: capture("git", ["rev-parse", "HEAD"]),
@@ -54,59 +54,52 @@ export async function publish(_pluginConfig, { nextRelease }) {
   writeLedger(ledger);
 
   try {
-    const nativeState = await npmPackageState(nativePackage);
-    const wrapperState = await npmPackageState(wrapperPackage);
-    const nativeExists = nativeState !== null;
-    const wrapperExists = wrapperState !== null;
-    if (wrapperExists && !nativeExists) {
+    const states = new Map();
+    for (const descriptor of packages) {
+      states.set(descriptor.name, await npmPackageState(`${descriptor.name}@${version}`));
+    }
+    const missingTargets = targets.filter(({ name }) => states.get(name) === null);
+    if (states.get(wrapper.name) !== null && states.get(loader.name) === null) {
+      throw new Error(`${wrapper.name}@${version} exists without its exact loader dependency`);
+    }
+    if (
+      (states.get(wrapper.name) !== null || states.get(loader.name) !== null) &&
+      missingTargets.length > 0
+    ) {
       throw new Error(
-        `${wrapperPackage} exists without its exact native dependency`,
+        `loader or wrapper exists without exact native targets: ${missingTargets.map(({ name }) => name).join(", ")}`,
       );
     }
 
-    if (nativeState !== null) {
-      verifyExistingNpmPackage(nativeState, "node", version, nativeTarball);
-    }
-    if (!nativeExists) {
-      publishNpm("node", version, distTag);
-      recordOperation(ledger, "npm-native", "published-verification-pending");
-      verifyExistingNpmPackage(
-        await waitForNpmPackage(nativePackage),
-        "node",
-        version,
-        nativeTarball,
+    for (const descriptor of packages) {
+      const existing = states.get(descriptor.name);
+      if (existing !== null) {
+        verifyExistingNpmPackage(existing, descriptor, version);
+      } else {
+        publishNpm(descriptor, distTag);
+        recordOperation(ledger, `npm:${descriptor.name}`, "published-verification-pending");
+        verifyExistingNpmPackage(
+          await waitForNpmPackage(`${descriptor.name}@${version}`),
+          descriptor,
+          version,
+        );
+      }
+      recordOperation(
+        ledger,
+        `npm:${descriptor.name}`,
+        existing === null ? "verified-published" : "verified-existing",
       );
     }
-    recordOperation(
-      ledger,
-      "npm-native",
-      nativeExists ? "verified-existing" : "verified-published",
-    );
-
-    if (wrapperState !== null) {
-      verifyExistingNpmPackage(wrapperState, "wrapper", version, wrapperTarball);
-    }
-    if (!wrapperExists) {
-      publishNpm("wrapper", version, distTag);
-      recordOperation(ledger, "npm-wrapper", "published-verification-pending");
-      verifyExistingNpmPackage(
-        await waitForNpmPackage(wrapperPackage),
-        "wrapper",
-        version,
-        wrapperTarball,
-      );
-    }
-    recordOperation(
-      ledger,
-      "npm-wrapper",
-      wrapperExists ? "verified-existing" : "verified-published",
-    );
 
     if (!await jsrPackageExists(jsrPackage)) {
+      const matrix = loadNativeMatrix(workspaceRoot);
+      const currentTarget = targetForRuntime(matrix, process.platform, process.arch);
+      const currentTargetPackage = targets.find(({ targetId }) =>
+        targetId === currentTarget.id);
       installExactJsrNative(
         run,
         path.join(workspaceRoot, "dist/jsr"),
-        nativeTarball,
+        [loader.tarball, currentTargetPackage.tarball],
       );
       run(
         "deno",
@@ -128,10 +121,7 @@ export async function publish(_pluginConfig, { nextRelease }) {
   } catch (error) {
     ledger.finishedAt = new Date().toISOString();
     ledger.status = "failed";
-    ledger.error = {
-      name: error?.name ?? null,
-      message: error?.message ?? String(error),
-    };
+    ledger.error = { name: error?.name ?? null, message: error?.message ?? String(error) };
     writeLedger(ledger);
     throw error;
   }
@@ -142,10 +132,94 @@ export async function publish(_pluginConfig, { nextRelease }) {
   };
 }
 
-function publishNpm(kind, version, distTag) {
+function assertReleaseTargetsQualified() {
+  const matrix = loadNativeMatrix(workspaceRoot);
+  const pending = matrix.targets.filter(({ qualification }) => qualification !== "supported");
+  if (pending.length > 0) {
+    throw new Error(
+      `release targets lack exact-commit qualification: ${pending.map(({ id }) => id).join(", ")}`,
+    );
+  }
+}
+
+function installCanonicalNativeMatrix() {
+  const canonicalRootValue = process.env.WATCHBOUND_CANONICAL_NATIVE_DIR;
+  if (!canonicalRootValue) {
+    throw new Error("stable release requires WATCHBOUND_CANONICAL_NATIVE_DIR");
+  }
+  const canonicalRoot = path.resolve(canonicalRootValue);
+  const comparisonPath = path.join(canonicalRoot, "independent-reproducibility.json");
+  const comparison = readJsonAbsolute(comparisonPath);
+  const matrix = loadNativeMatrix(workspaceRoot);
+  if (
+    comparison.schemaVersion !== 1 ||
+    comparison.kind !== "watchbound-independent-native-matrix-comparison" ||
+    comparison.sourceSha !== capture("git", ["rev-parse", "HEAD"]) ||
+    comparison.version !== readJson("package.json").version
+  ) {
+    throw new Error("canonical independent native matrix has the wrong identity");
+  }
+  for (const target of matrix.targets) {
+    const source = path.join(canonicalRoot, target.binary);
+    const compared = comparison.targets.find(({ target: id }) => id === target.id);
+    if (
+      !compared ||
+      compared.targetTriple !== target.rustTarget ||
+      compared.architecture !== target.architecture ||
+      compared.filename !== target.binary ||
+      compared.sha256 !== sha256(source) ||
+      !Number.isSafeInteger(compared.bytes) ||
+      compared.bytes !== fs.statSync(source).size ||
+      compared.byteIdentical !== true ||
+      !Array.isArray(compared.builders) ||
+      compared.builders.length !== 2
+    ) {
+      throw new Error(`canonical independent native artifact has the wrong identity: ${target.id}`);
+    }
+  }
+  const currentTarget = targetForRuntime(matrix, process.platform, process.arch);
+  const currentSource = path.join(canonicalRoot, currentTarget.binary);
+  const currentDestination = path.join(workspaceRoot, "node", currentTarget.binary);
+  fs.copyFileSync(currentSource, currentDestination);
+  if (sha256(currentDestination) !== sha256(currentSource)) {
+    throw new Error("canonical native artifact changed while installing it");
+  }
+  process.env.WATCHBOUND_NATIVE_ARTIFACTS_DIR = canonicalRoot;
+  process.env.WATCHBOUND_REQUIRE_ALL_TARGETS = "1";
+  process.env.WATCHBOUND_INDEPENDENT_REPRODUCIBILITY = comparisonPath;
+  process.env.WATCHBOUND_EXPECTED_NATIVE_SHA256 = sha256(currentSource);
+}
+
+function releasePackages(version) {
+  const manifest = readJson("dist/native-package-manifest.json");
+  const targets = manifest.targets.map((target) => ({
+    kind: "target",
+    targetId: target.id,
+    name: target.name,
+    root: target.root,
+    tarball: genericTarballPath(target.name, version),
+  }));
+  return [
+    ...targets,
+    {
+      kind: "loader",
+      name: manifest.loader.name,
+      root: manifest.loader.root,
+      tarball: genericTarballPath(manifest.loader.name, version),
+    },
+    {
+      kind: "wrapper",
+      name: manifest.wrapper.name,
+      root: manifest.wrapper.root,
+      tarball: genericTarballPath(manifest.wrapper.name, version),
+    },
+  ];
+}
+
+function publishNpm(descriptor, distTag) {
   run("npm", [
     "publish",
-    tarballPath(kind, version),
+    descriptor.tarball,
     "--access",
     "public",
     "--provenance",
@@ -154,58 +228,26 @@ function publishNpm(kind, version, distTag) {
   ]);
 }
 
-function installCanonicalNative() {
-  const canonicalPath = process.env.WATCHBOUND_CANONICAL_NATIVE_PATH;
-  const expectedSha256 = process.env.WATCHBOUND_EXPECTED_NATIVE_SHA256;
-  if (!canonicalPath || !expectedSha256) {
-    throw new Error(
-      "stable release requires WATCHBOUND_CANONICAL_NATIVE_PATH and WATCHBOUND_EXPECTED_NATIVE_SHA256",
-    );
-  }
-  const resolvedCanonical = path.resolve(canonicalPath);
-  const nativePath = path.join(
-    workspaceRoot,
-    "node",
-    "watchbound.linux-x64-gnu.node",
-  );
-  if (sha256(resolvedCanonical) !== expectedSha256) {
-    throw new Error("canonical independent native artifact has the wrong digest");
-  }
-  fs.copyFileSync(resolvedCanonical, nativePath);
-  if (sha256(nativePath) !== expectedSha256) {
-    throw new Error("canonical native artifact changed while installing it");
-  }
-}
-
 function assertReleaseIdentity(version, committedVersion) {
   if (process.env.WATCHBOUND_PLANNED_VERSION !== version) {
-    throw new Error(
-      `semantic-release version ${version} differs from the planned version`,
-    );
+    throw new Error(`semantic-release version ${version} differs from the planned version`);
   }
   if (committedVersion !== version) {
-    throw new Error(
-      `semantic-release version ${version} differs from committed ${committedVersion}`,
-    );
+    throw new Error(`semantic-release version ${version} differs from committed ${committedVersion}`);
   }
 }
 
 async function npmPackageState(specifier) {
-  const result = spawnSync(
-    "npm",
-    ["view", specifier, "--json"],
-    {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-      stdio: "pipe",
-    },
-  );
+  const result = spawnSync("npm", ["view", specifier, "--json"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
   if (result.error) throw result.error;
   if (result.status === 0) return JSON.parse(result.stdout);
-  if (isMissing("npm", `${result.stdout}\n${result.stderr}`)) return null;
+  if (isMissing(`${result.stdout}\n${result.stderr}`)) return null;
   throw new Error(
-    `could not determine whether ${specifier} exists:\n` +
-      `${result.stdout}\n${result.stderr}`.trim(),
+    `could not determine whether ${specifier} exists:\n${result.stdout}\n${result.stderr}`.trim(),
   );
 }
 
@@ -218,26 +260,19 @@ async function waitForNpmPackage(specifier) {
   throw new Error(`${specifier} was not visible after publication`);
 }
 
-function verifyExistingNpmPackage(state, kind, version, tarball) {
-  const expectedManifest = readJson(
-    path.join("dist", "npm", kind === "node" ? "node" : "wrapper", "package.json"),
-  );
-  const expectedIntegrity = sha512Integrity(tarball);
+function verifyExistingNpmPackage(state, descriptor, version) {
+  const expectedManifest = readJson(path.join("dist", descriptor.root, "package.json"));
+  const expectedIntegrity = sha512Integrity(descriptor.tarball);
   if (state.name !== expectedManifest.name || state.version !== version) {
     throw new Error(`registry identity mismatch for ${expectedManifest.name}@${version}`);
   }
   if (state.dist?.integrity !== expectedIntegrity) {
-    throw new Error(
-      `registry integrity mismatch for ${expectedManifest.name}@${version}`,
-    );
+    throw new Error(`registry integrity mismatch for ${expectedManifest.name}@${version}`);
   }
-  if (
-    JSON.stringify(state.dependencies ?? {}) !==
-      JSON.stringify(expectedManifest.dependencies ?? {})
-  ) {
-    throw new Error(
-      `registry dependency mismatch for ${expectedManifest.name}@${version}`,
-    );
+  for (const field of ["dependencies", "optionalDependencies", "os", "cpu", "libc"]) {
+    if (JSON.stringify(state[field] ?? null) !== JSON.stringify(expectedManifest[field] ?? null)) {
+      throw new Error(`registry ${field} mismatch for ${expectedManifest.name}@${version}`);
+    }
   }
 }
 
@@ -249,31 +284,22 @@ async function waitForJsrPackage(specifier) {
   return false;
 }
 
-export async function jsrPackageExists(
-  specifier,
-  fetchImplementation = globalThis.fetch,
-) {
+export async function jsrPackageExists(specifier, fetchImplementation = globalThis.fetch) {
   const match =
     /^jsr:@(?<scope>[a-z0-9-]+)\/(?<packageName>[a-z0-9-]+)@(?<version>[^/]+)$/u
       .exec(specifier);
-  if (!match?.groups) {
-    throw new Error(`invalid exact JSR package specifier: ${specifier}`);
-  }
+  if (!match?.groups) throw new Error(`invalid exact JSR package specifier: ${specifier}`);
   const { scope, packageName, version } = match.groups;
-  const metadataUrl =
-    `https://jsr.io/@${scope}/${packageName}/meta.json`;
+  const metadataUrl = `https://jsr.io/@${scope}/${packageName}/meta.json`;
   const response = await fetchImplementation(metadataUrl, {
     cache: "no-store",
-    headers: {
-      accept: "application/json",
-    },
+    headers: { accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   });
   if (response.status === 404) return false;
   if (!response.ok) {
     throw new Error(
-      `could not determine whether ${specifier} exists: ` +
-        `${metadataUrl} returned HTTP ${response.status}`,
+      `could not determine whether ${specifier} exists: ${metadataUrl} returned HTTP ${response.status}`,
     );
   }
   const metadata = await response.json();
@@ -288,84 +314,51 @@ export async function jsrPackageExists(
   return Object.hasOwn(metadata.versions, version);
 }
 
-function isMissing(registry, output) {
-  return registry === "npm"
-    ? /\bE404\b|is not in this registry|no match found/iu.test(output)
-    : /\b404\b|not found|could not find|does not exist/iu.test(output);
+function isMissing(output) {
+  return /\bE404\b|is not in this registry|no match found/iu.test(output);
 }
 
-function tarballPath(kind, version) {
-  return path.join(
-    workspaceRoot,
-    "dist",
-    "tarballs",
-    kind === "node"
-      ? `gadicc-watchbound-node-${version}.tgz`
-      : `watchbound-${version}.tgz`,
-  );
+function genericTarballPath(name, version) {
+  const filename = `${name.replace(/^@/u, "").replaceAll("/", "-")}-${version}.tgz`;
+  return path.join(workspaceRoot, "dist", "tarballs", filename);
 }
 
 function recordOperation(ledger, operation, status) {
-  ledger.operations.push({
-    operation,
-    status,
-    at: new Date().toISOString(),
-  });
+  ledger.operations.push({ operation, status, at: new Date().toISOString() });
   writeLedger(ledger);
 }
 
 function writeLedger(ledger) {
-  const destination = path.join(
-    workspaceRoot,
-    "dist",
-    "evidence",
-    "publication-ledger.json",
-  );
+  const destination = path.join(workspaceRoot, "dist", "evidence", "publication-ledger.json");
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(ledger, null, 2)}\n`);
 }
 
 function readJson(relativePath) {
-  return JSON.parse(
-    fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8"),
-  );
+  return readJsonAbsolute(path.join(workspaceRoot, relativePath));
+}
+
+function readJsonAbsolute(source) {
+  return JSON.parse(fs.readFileSync(source, "utf8"));
 }
 
 function sha256(source) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(source))
-    .digest("hex");
+  return crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex");
 }
 
 function sha512Integrity(source) {
-  return `sha512-${crypto
-    .createHash("sha512")
-    .update(fs.readFileSync(source))
-    .digest("base64")}`;
+  return `sha512-${crypto.createHash("sha512").update(fs.readFileSync(source)).digest("base64")}`;
 }
 
 function capture(command, args) {
-  const result = spawnSync(command, args, {
-    cwd: workspaceRoot,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
+  const result = spawnSync(command, args, { cwd: workspaceRoot, encoding: "utf8", stdio: "pipe" });
   if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} exited with status ${result.status}`);
-  }
+  if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
   return result.stdout.trim();
 }
 
 function run(command, args, cwd = workspaceRoot) {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: "inherit",
-  });
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: "inherit" });
   if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} exited with status ${result.status}`);
-  }
+  if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
 }

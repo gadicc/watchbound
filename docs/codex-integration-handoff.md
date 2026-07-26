@@ -1,9 +1,9 @@
 # Codex Desktop Linux handoff
 
-Status: pre-publication and pending final kernel-floor/promotion qualification.
-The native/distro/Electron/Nix and supervised-overflow basis is green, but do
-not enable or pin this candidate in Codex yet. The sibling repository was not
-modified.
+Status: qualified source matrix, pre-publication. The native, distro, Electron,
+Nix, reproducibility, pinned-kernel, and both supervised-overflow scenarios are
+green for x64 and ARM64, but do not enable or pin this candidate in Codex until
+official immutable packages exist. The sibling repository was not modified.
 
 ## Package and loader contract
 
@@ -40,7 +40,7 @@ the exact `dist.tarball`, `dist.integrity`, and `dist.shasum` with
 tarball SHA-256 and the package-declared/computed native SHA-256, and pin all
 four immutable packages. Never synthesize integrity from a local rehearsal.
 
-## Codex changes after qualification
+## Codex changes after publication
 
 1. Replace the single x64 Watchbound artifact record with wrapper, neutral
    loader, x64 target, and ARM64 target records in lockstep.
@@ -68,13 +68,8 @@ source revision.
 
 ## Handoff blockers
 
-- x64 and ARM64 target statuses remain pending exact-candidate qualification.
-- The guarded hosted workflow has not yet produced canonical x64/ARM64
-  overflow evidence for the status-bearing commit.
-- The final candidate must rerun source, reproducibility, distro, Electron, and
-  locked Nix lanes; earlier green CI does not transfer across a changed SHA.
-- Kernel 5.15 floor evidence remains separate from hosted Ubuntu 24.04
-  overflow correctness evidence.
+- Kernel 5.15 floor evidence remains deliberately separate from native Ubuntu
+  24.04 overflow correctness evidence; both components are complete.
 - The npm target-name bootstrap is complete, but no official `1.2.0` package
   has been published.
 - Publication, official integrity values, and Codex repository edits were

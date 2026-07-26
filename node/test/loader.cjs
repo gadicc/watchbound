@@ -358,7 +358,7 @@ test("bundled loader resolves one exact target package and verifies its digest",
     libc: "glibc",
     binary: x64Target.binary,
     sha256,
-    qualification: "target-pending-clean-ci",
+    qualification: "supported",
     glibcMaximum: "2.35",
     kernelMinimum: "5.15",
   });

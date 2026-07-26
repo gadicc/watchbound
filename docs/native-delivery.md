@@ -2,8 +2,9 @@
 
 Status: `1.2.0` is an unpublished multi-target source candidate. The current
 qualified registry release remains `1.0.1` with its historical one-target
-contract. Nothing in this document promotes the candidate targets before their
-exact commit and artifacts complete the qualification matrix.
+contract. The candidate's exact x64 and ARM64 GNU/Linux targets are supported
+by the checked-in source matrix; that does not claim official registry
+availability before an approved publication.
 
 ## One matrix, three package roles
 

@@ -207,7 +207,7 @@ has these top-level sections:
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Manifest-derived delivery, build profile, triple, Node-API/Rust floors, and the exact packaged target/package/file/SHA when generated. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | Compatibility-preserved legacy x64 fields plus `targets`, `qualificationLanes`, `currentRuntime`, recognized compatibility families, and explicit unsupported targets. `SupportStatus` is `target-pending-clean-ci | supported`; the `1.2.0` targets remain pending. |
+| `support` | Compatibility-preserved legacy x64 fields plus `targets`, `qualificationLanes`, `currentRuntime`, recognized compatibility families, and explicit unsupported targets. `SupportStatus` is `target-pending-clean-ci | supported`; both `1.2.0` GNU/Linux targets are supported in the source matrix. |
 | `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, single-credit admission, and callback completion/error/disposal/teardown policy. |
@@ -670,7 +670,8 @@ the more useful contract for those needs when its public loss and resource
 model is acceptable.
 
 The `1.2.0` candidate target matrix is x64 and ARM64 GNU/Linux, kernel 5.15 and
-glibc at most 2.35, with Node `>=24.15.0 <25`; both targets remain pending.
+glibc at most 2.35, with Node `>=24.15.0 <25`; both GNU/Linux targets are
+supported by the checked-in source matrix.
 Node-API compatibility or successful loading does not widen that matrix. WSL,
 network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, ARMv7, and non-Linux platforms are unqualified

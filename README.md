@@ -28,10 +28,10 @@ incompatibility. The corrected `1.0.1` package is the current qualified
 release. The unpublished `1.2.0` source candidate keeps generation-zero
 `initialExclusions`, targets Node `>=24.15.0 <25` for Electron 42, and adds an
 architecture-neutral loader with exact x64 and ARM64 GNU/Linux target packages.
-Both new targets report `target-pending-clean-ci`; they are buildable candidates,
-not qualified releases. The native/distro/Electron/Nix and supervised-overflow
-basis is green; promotion still requires the exact kernel-5.15 component and a
-green status-bearing commit.
+Both new targets now report `supported` in the source matrix after complete
+native/distro/Electron/Nix, kernel-5.15, reproducibility, and separately
+supervised overflow qualification. They remain unpublished candidates rather
+than official registry packages.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits to decide whether a release is
@@ -177,8 +177,9 @@ consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own native delivery and a
 joined-disposal lifecycle. The published `1.0.1` target remains historically
 narrow. The unpublished `1.2.0` candidate defines x64 and ARM64 GNU/Linux
-packages, a kernel 5.15/glibc 2.35 candidate baseline, and Node
-`>=24.15.0 <25`; neither target is supported until its exact matrix passes.
+packages, a qualified kernel 5.15/glibc 2.35 baseline, and Node
+`>=24.15.0 <25`; both targets are supported by the checked-in source matrix,
+but official `1.2.0` packages have not been published.
 WSL, network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, ARMv7, and all non-Linux platforms remain
 unqualified or unsupported. See
@@ -227,7 +228,7 @@ inotify backend.
 | Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout; `1.0.1` is the qualified historical one-target npm/JSR release. The unpublished `1.2.0` candidate generates a neutral loader and exact x64/ARM64 GNU target packages, all still pending the documented matrix | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout; `1.0.1` is the qualified historical one-target npm/JSR release. The unpublished `1.2.0` candidate generates a neutral loader and qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -314,10 +315,9 @@ and the complete caveats.
 ## Build and test
 
 The manifests intentionally admit only Node `>=24.15.0 <25` and Linux glibc.
-The unpublished candidate defines native x64 and ARM64 packages with a kernel
-5.15/glibc 2.35 candidate baseline, Rust 1.88+, pnpm 10.33.2, and a working C
-toolchain; both targets remain pending the exact kernel-floor and promotion
-matrix. See
+The unpublished candidate defines supported native x64 and ARM64 targets with
+a kernel 5.15/glibc 2.35 baseline, Rust 1.88+, pnpm 10.33.2, and a working C
+toolchain. See
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
 floor, not a broader support claim. See the
 [release runbook](docs/releasing.md) for artifact validation, registry
@@ -365,8 +365,8 @@ features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
 callback queue, single-credit admission, and promise-aware serialized callback
 completion explicitly. Runtime facts do not widen support. The `1.2.0` target
-entries remain pending until exact-commit native evidence changes their
-declaration deliberately. See
+entries are deliberately `supported` after exact-commit native and kernel-floor
+evidence plus both supervised overflow scenarios. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md)
 and [`docs/support-matrix.md`](docs/support-matrix.md). The private API revision
 and compatibility policy are recorded in

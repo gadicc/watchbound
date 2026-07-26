@@ -32,7 +32,8 @@ although a later exact commit qualified its implementation baseline. The
 corrected `1.0.1` package is the current release. The unpublished `1.2.0`
 candidate adds the x64/ARM64 target-package matrix while retaining
 generation-zero exclusions, promise-aware callbacks, and binding API 3; its
-capability schema 4 target entries remain `target-pending-clean-ci`.
+capability schema 4 target entries are `supported` after complete exact-commit
+qualification.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
 

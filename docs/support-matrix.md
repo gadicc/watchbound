@@ -1,21 +1,22 @@
 # Support and qualification matrix
 
-Status: the `1.2.0` multi-target work is an unpublished candidate. Its target
-status is `target-pending-clean-ci`. The current qualified registry release is
-still `1.0.1` under its historical Ubuntu 24.04 x64 contract.
+Status: the `1.2.0` multi-target work is an unpublished candidate. Its x64 and
+ARM64 GNU/Linux target statuses are `supported` in the checked-in source
+matrix. The current qualified registry release is still `1.0.1` under its
+historical Ubuntu 24.04 x64 contract.
 
-Candidate `ecc593a87a006affa19868f31f488968ba723cc4` completed the native
-x64/ARM64 source, reproducibility, distro, Electron, Nix, and both supervised
-overflow scenarios. Its canonical ELFs require at most `GLIBC_2.34`. The
-remaining baseline gap is genuine kernel 5.15 execution; see
+Candidate `361562d60e79a6337b0b19cbd3c163ea999ac6b3` completed the native
+x64/ARM64 source, reproducibility, distro, Electron, Nix, pinned-kernel 5.15,
+and both separately supervised overflow scenarios. Its canonical ELFs require
+at most `GLIBC_2.34`; see
 [`qualification-evidence-2026-07-26.md`](qualification-evidence-2026-07-26.md).
 
 ## Candidate target contract
 
 | Target | Package | Buildable | Candidate baseline | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Pending exact kernel-floor and promotion run |
-| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Pending exact kernel-floor and promotion run |
+| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Supported in the source matrix; package unpublished |
+| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Supported in the source matrix; package unpublished |
 
 “Buildable” describes implemented build and packaging paths. It is not a
 support claim. `supported` becomes true only when the exact runtime matches a
@@ -29,17 +30,17 @@ independently reproduced candidate artifacts require no symbol newer than
 
 ## Runtime lanes
 
-| Lane | x64 | ARM64 | Meaning before green exact evidence |
+| Lane | x64 | ARM64 | Evidence meaning |
 | --- | --- | --- | --- |
-| Ubuntu 22.04 pinned / baseline builder | Passed at `ecc593a` | Passed at `ecc593a` | Candidate ABI and oldest distro userspace lane |
-| Ubuntu 24.04 pinned | Passed at `ecc593a` | Passed at `ecc593a` | Codex advertised Debian-family lane |
-| Debian 12 pinned | Passed at `ecc593a` | Passed at `ecc593a` | Codex advertised Debian-family lane |
-| Fedora 42 pinned | Passed at `ecc593a` | Passed at `ecc593a` | Codex advertised RPM lane |
-| Arch `base-devel` pinned | Passed at `ecc593a` | Not in Codex lane | Codex advertised pacman lane |
-| openSUSE Tumbleweed pinned | Passed at `ecc593a` | Passed at `ecc593a` | Representative current advertised openSUSE RPM lane |
-| locked Nix closure | Passed at `ecc593a` | Passed at `ecc593a` | Source-built Nix package and exact Electron closure |
-| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `ecc593a` | Passed at `ecc593a` | Exact Codex host-runtime boundary |
-| Ubuntu 22.04 / kernel 5.15 QEMU component | Pending exact run | Pending exact run | Kernel floor only; native runners separately prove architecture |
+| Ubuntu 22.04 pinned / baseline builder | Passed at `361562d` | Passed at `361562d` | Candidate ABI and oldest distro userspace lane |
+| Ubuntu 24.04 pinned | Passed at `361562d` | Passed at `361562d` | Codex advertised Debian-family lane |
+| Debian 12 pinned | Passed at `361562d` | Passed at `361562d` | Codex advertised Debian-family lane |
+| Fedora 42 pinned | Passed at `361562d` | Passed at `361562d` | Codex advertised RPM lane |
+| Arch `base-devel` pinned | Passed at `361562d` | Not in Codex lane | Codex advertised pacman lane |
+| openSUSE Tumbleweed pinned | Passed at `361562d` | Passed at `361562d` | Representative current advertised openSUSE RPM lane |
+| locked Nix closure | Passed at `361562d` | Passed at `361562d` | Source-built Nix package and exact Electron closure |
+| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `361562d` | Passed at `361562d` | Exact Codex host-runtime boundary |
+| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `361562d` | Passed at `361562d` | Kernel floor only; native runners separately prove architecture |
 
 The images, official kernel/initrd hashes, and Nix inputs are pinned in
 `config/native-matrix.json` and `flake.lock`. A container changes userspace,

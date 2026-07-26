@@ -11,7 +11,8 @@ promise-aware serialized callbacks. The earlier contract is published as the
 published, but its JSR Node route exposed a packaging incompatibility. The
 corrected `1.0.1` package is qualified. The unpublished `1.2.0` candidate adds
 an architecture-neutral loader and exact x64/ARM64 GNU target packages; both
-remain pending exact-commit qualification. An opt-in Codex Desktop Linux
+are supported by the checked-in source matrix after exact-commit
+qualification. An opt-in Codex Desktop Linux
 integration experiment must not ship until official artifacts pass the full
 matrix and are pinned by that consumer.
 
@@ -815,9 +816,9 @@ platform range, and packaging are sufficient. Parcel's Linux inotify
 conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
-The unpublished candidate matrix in `docs/support-matrix.md` covers x64 and
-ARM64 GNU/Linux with a kernel 5.15/glibc 2.35 candidate baseline and Node
-`>=24.15.0 <25`; its targets remain pending exact evidence. WSL, network
+The unpublished candidate matrix in `docs/support-matrix.md` covers supported
+x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35 baseline and Node
+`>=24.15.0 <25`. WSL, network
 filesystems, Filesystem in Userspace (FUSE), overlay filesystems, unusual
 container mounts, musl, ARMv7, and non-Linux platforms are unqualified or
 unsupported. The engine traverses existing mount points, has no

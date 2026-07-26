@@ -31,14 +31,14 @@ selected package version exports the capability.
 
 Treat the maintained target as deliberately evidence-bound. The published
 `1.0.1` line retains its historical Ubuntu 24.04 x64 target. The unpublished
-`1.2.0` source candidate defines x64 and ARM64 GNU/Linux targets, a candidate
-kernel 5.15/glibc 2.35 baseline, and Node `>=24.15.0 <25`, but both report
-`target-pending-clean-ci`. The native/distro/Electron/Nix and supervised
-overflow basis is green; the exact kernel-5.15 component and status-bearing
-promotion run remain. Treat distro recognition, successful loading, and runtime
-facts as unqualified unless the selected package's exact target says
-`supported`. WSL, network filesystems, FUSE, overlay filesystems, musl, ARMv7,
-and non-Linux hosts remain outside the candidate matrix.
+`1.2.0` source candidate defines supported x64 and ARM64 GNU/Linux targets, a
+kernel 5.15/glibc 2.35 baseline, and Node `>=24.15.0 <25`. Exact native,
+distro, Electron, Nix, reproducibility, kernel-floor, and separately supervised
+overflow evidence backs those source declarations, but official `1.2.0`
+registry packages are not yet published. Treat distro recognition, successful
+loading, and runtime facts as unqualified unless the selected package's exact
+target says `supported`. WSL, network filesystems, FUSE, overlay filesystems,
+musl, ARMv7, and non-Linux hosts remain outside the candidate matrix.
 
 ## Preserve the semantic model
 

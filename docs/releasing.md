@@ -16,9 +16,9 @@ release version to equal the already committed lockstep npm, JSR, Cargo, and
 lockfile version.
 
 The plugin refuses preparation unless every matrix target is checked in as
-`supported`. Both `1.2.0` targets are currently
-`target-pending-clean-ci`, so publication is intentionally blocked even if
-credentials or workflow conditions are otherwise present.
+`supported`. Both `1.2.0` targets now satisfy that support-state guard, but
+publication remains independently restricted to an approved semantic-release
+push on `main`; qualification or credentials alone never authorize it.
 
 ## Exact target pipeline
 
@@ -118,7 +118,7 @@ silently retag the immutable version. Retain the ledger and evidence, assess
 the partial state, and follow `release-incident-response.md` with a new patch
 version where appropriate.
 
-## Before changing a target to supported
+## Support-promotion invariant
 
 - Ensure the exact status-bearing commit has complete green x64/ARM64 source,
   reproducibility, distro, Electron, Nix, pinned kernel-floor, and supervised
@@ -126,5 +126,6 @@ version where appropriate.
 - Record runner/job URLs, artifact hashes, maximum GLIBC versions, host kernel
   facts, and caveats in a non-release evidence update.
 - Complete both adversarial packaging/release reviews.
-- Obtain explicit maintainer release approval and registry bootstrap approval.
+- Obtain explicit maintainer release approval before publication; target-name
+  registry bootstrap is complete.
 - Never merge merely to exercise publishing.

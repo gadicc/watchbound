@@ -75,5 +75,5 @@ Explicitly blocked rather than waived:
 - release-canonical forced-overflow evidence (not run casually locally);
 - official tarball URLs/integrity and Codex pins, because publication and Codex
   mutation were forbidden; and
-- target promotion, which remains `target-pending-clean-ci` until the exact
+- target promotion, which changes to `supported` only when the exact
   status-bearing commit completes all gates.

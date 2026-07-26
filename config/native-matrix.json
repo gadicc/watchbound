@@ -76,7 +76,7 @@
         "archiveArchitecture": "x64",
         "sha256SRI": "sha256-SHpmfKanNLlYwWz/HfdNnUTSwYpszNtN1R9jAaNWxCA="
       },
-      "qualification": "target-pending-clean-ci",
+      "qualification": "supported",
       "elf": {
         "class": 2,
         "endianness": 1,
@@ -106,7 +106,7 @@
         "archiveArchitecture": "arm64",
         "sha256SRI": "sha256-Kjdf+XP7e93FOKT2eyFBlH6dclE6G6or6r7Cp/Zc0PA="
       },
-      "qualification": "target-pending-clean-ci",
+      "qualification": "supported",
       "elf": {
         "class": 2,
         "endianness": 1,

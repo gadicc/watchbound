@@ -6,7 +6,8 @@ the immutable bootstrap still emits `target-pending-clean-ci`. Releases
 `1.0.0` and `1.0.1` added and then corrected the promise-aware callback
 contract. The unpublished `1.2.0` candidate retains generation-zero initial
 exclusions and Node `>=24.15.0 <25` while adding exact x64/ARM64 delivery. Both
-target entries remain `target-pending-clean-ci`. Capability schema 4 is an additive delivery
+target entries are `supported` after exact-commit qualification. Capability
+schema 4 is an additive delivery
 extension: the schema-3 single-target fields retain their historical meaning
 under `support.scope = "legacy-primary-target"`, while packaged-target,
 per-target qualification, lane, and current-runtime-match fields are new.
@@ -132,7 +133,7 @@ Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; both `1.2.0` target entries emit the
-pending value. Exhaustive narrowing fixtures compile in the ordinary gate.
+supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
 Capability schema 4 and binding API 3 expose cancellation,
 shared-delivery, and promise-aware callback-completion facts; loader metadata
 remains schema 1.

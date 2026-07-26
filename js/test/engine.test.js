@@ -93,7 +93,7 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
     rootThreatModel: capabilities.support.rootThreatModel,
   }, {
     scope: "legacy-primary-target",
-    status: "target-pending-clean-ci",
+    status: "supported",
     operatingSystem: {
       family: "linux",
       distribution: "ubuntu",
@@ -119,12 +119,12 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
       {
         id: "linux-x64-gnu",
         architecture: "x64",
-        status: "target-pending-clean-ci",
+        status: "supported",
       },
       {
         id: "linux-arm64-gnu",
         architecture: "arm64",
-        status: "target-pending-clean-ci",
+        status: "supported",
       },
     ],
   );

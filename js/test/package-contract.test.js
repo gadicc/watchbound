@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "../../scripts/install-jsr-native.mjs";
+import {
+  INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
+  readOptionalEvidence,
+} from "../../scripts/lib/native-build-evidence.mjs";
 import { jsrPackageExists } from "../../scripts/semantic-release-watchbound.mjs";
 import { validateOverflowDispatch } from "../../scripts/validate-overflow-dispatch.mjs";
 
@@ -89,6 +94,41 @@ test("private manifests retain source-build development and architecture-neutral
   for (const crate of ["engine/Cargo.toml", "node/Cargo.toml"]) {
     const source = fs.readFileSync(path.join(workspaceRoot, crate), "utf8");
     assert.match(source, /^publish = false$/mu);
+  }
+});
+
+test("release evidence accepts only the canonical independent matrix schema", () => {
+  const fixtureRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "watchbound-native-evidence-"),
+  );
+  const source = path.join(fixtureRoot, "independent-reproducibility.json");
+  const evidence = {
+    ...INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
+    sourceSha: "a".repeat(40),
+    version: "9.8.7",
+    targets: [],
+  };
+
+  try {
+    fs.writeFileSync(source, `${JSON.stringify(evidence)}\n`);
+    assert.deepEqual(
+      readOptionalEvidence(source, INDEPENDENT_NATIVE_MATRIX_EVIDENCE),
+      evidence,
+    );
+
+    fs.writeFileSync(source, `${JSON.stringify({ ...evidence, schemaVersion: 1 })}\n`);
+    assert.throws(
+      () => readOptionalEvidence(source, INDEPENDENT_NATIVE_MATRIX_EVIDENCE),
+      /schema version/u,
+    );
+
+    fs.writeFileSync(source, `${JSON.stringify({ ...evidence, kind: "wrong" })}\n`);
+    assert.throws(
+      () => readOptionalEvidence(source, INDEPENDENT_NATIVE_MATRIX_EVIDENCE),
+      /kind/u,
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
 
@@ -209,6 +249,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   const aggregateNativeBuilds = fs.readFileSync(
     path.join(workspaceRoot, "scripts/aggregate-native-builds.mjs"),
+    "utf8",
+  );
+  const generateReleaseEvidence = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/generate-release-evidence.mjs"),
     "utf8",
   );
   const ciMatrix = fs.readFileSync(
@@ -421,13 +465,14 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(recordNativeBuild, /materialization: candidate/u);
   assert.match(compareNativeBuilds, /schemaVersion: 2/u);
   assert.match(compareNativeBuilds, /manifest\.source\.materialization/u);
-  assert.match(aggregateNativeBuilds, /schemaVersion: 2/u);
+  assert.match(aggregateNativeBuilds, /INDEPENDENT_NATIVE_MATRIX_EVIDENCE/u);
   assert.match(aggregateNativeBuilds, /candidate,/u);
+  assert.match(generateReleaseEvidence, /readOptionalEvidence/u);
+  assert.match(generateReleaseEvidence, /INDEPENDENT_NATIVE_MATRIX_EVIDENCE/u);
   assert.match(
     compareNativeBuilds,
     /--remap-path-prefix=\$\{manifest\.isolation\.cargoHome\}=\/watchbound\/cargo-home/u,
   );
-  assert.match(aggregateNativeBuilds, /watchbound-independent-native-matrix-comparison/u);
   assert.match(ciMatrix, /matrix\.qualificationLanes/u);
   assert.match(ciMatrix, /matrix\.kernelBaselineQualification/u);
   assert.match(ciMatrix, /\["builder-a", "builder-b"\]/u);

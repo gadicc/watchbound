@@ -5,6 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix } from "./lib/native-matrix.mjs";
+import {
+  INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
+  readOptionalEvidence,
+} from "./lib/native-build-evidence.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -76,7 +80,7 @@ const cargoMetadata = JSON.parse(
 const commit = capture("git", ["rev-parse", "HEAD"]);
 const independentReproducibility = readOptionalEvidence(
   process.env.WATCHBOUND_INDEPENDENT_REPRODUCIBILITY,
-  "watchbound-independent-native-matrix-comparison",
+  INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
 );
 if (independentReproducibility !== null) {
   assert.equal(independentReproducibility.sourceSha, commit);
@@ -325,14 +329,6 @@ function capture(command, args) {
 
 function readJson(source) {
   return JSON.parse(fs.readFileSync(source, "utf8"));
-}
-
-function readOptionalEvidence(source, expectedKind) {
-  if (!source) return null;
-  const value = readJson(path.resolve(source));
-  assert.equal(value.schemaVersion, 1);
-  assert.equal(value.kind, expectedKind);
-  return value;
 }
 
 function writeJson(destination, value) {

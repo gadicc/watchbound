@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix } from "./lib/native-matrix.mjs";
+import { INDEPENDENT_NATIVE_MATRIX_EVIDENCE } from "./lib/native-build-evidence.mjs";
 import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
@@ -52,8 +53,7 @@ const targets = matrix.targets.map((target) => {
 });
 
 const aggregate = {
-  schemaVersion: 2,
-  kind: "watchbound-independent-native-matrix-comparison",
+  ...INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
   sourceSha,
   version,
   candidate,

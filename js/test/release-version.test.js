@@ -13,6 +13,7 @@ import {
   materializeReleaseCandidate,
   verifyReleaseCandidate,
 } from "../../scripts/lib/release-version.mjs";
+import { verifyPublishPreconditions } from "../../scripts/semantic-release-watchbound.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -26,6 +27,28 @@ test("committed workspace versions are permanent development placeholders", () =
     assertWorkspaceVersion(workspaceRoot, process.env.WATCHBOUND_CANDIDATE_VERSION);
   } else {
     assertWorkspaceVersion(workspaceRoot, SOURCE_VERSION);
+  }
+});
+
+test("semantic-release publish preflight validates the exact generated candidate", () => {
+  const fixture = createFixture();
+  const version = "9.8.7";
+  const previousPlannedVersion = process.env.WATCHBOUND_PLANNED_VERSION;
+  try {
+    const sourceSha = capture(fixture, "git", ["rev-parse", "HEAD"]);
+    materializeReleaseCandidate(fixture, { sourceSha, version });
+    process.env.WATCHBOUND_PLANNED_VERSION = version;
+    const candidate = verifyPublishPreconditions(version, fixture);
+    assert.equal(candidate.kind, "watchbound-materialized-release-candidate");
+    assert.equal(candidate.sourceVersion, SOURCE_VERSION);
+    assert.equal(candidate.version, version);
+  } finally {
+    if (previousPlannedVersion === undefined) {
+      delete process.env.WATCHBOUND_PLANNED_VERSION;
+    } else {
+      process.env.WATCHBOUND_PLANNED_VERSION = previousPlannedVersion;
+    }
+    fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
 
@@ -88,7 +111,8 @@ test("generated candidates reject any mutation outside the version transform", (
 
 function createFixture() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-release-version-"));
-  for (const relativePath of VERSION_FILES) {
+  const fixtureFiles = [...VERSION_FILES, "config/native-matrix.json"];
+  for (const relativePath of fixtureFiles) {
     const destination = path.join(fixture, relativePath);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     const source = process.env.WATCHBOUND_CANDIDATE_VERSION
@@ -97,7 +121,7 @@ function createFixture() {
     fs.writeFileSync(destination, source);
   }
   run(fixture, "git", ["init", "--quiet"]);
-  run(fixture, "git", ["add", ...VERSION_FILES]);
+  run(fixture, "git", ["add", ...fixtureFiles]);
   run(fixture, "git", [
     "-c",
     "user.name=Watchbound Test",

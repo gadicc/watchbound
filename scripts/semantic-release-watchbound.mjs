@@ -30,10 +30,7 @@ export function prepare(_pluginConfig, { nextRelease }) {
 
 export async function publish(_pluginConfig, { nextRelease }) {
   const { version } = nextRelease;
-  assertPlannedVersion(version);
-  assert.equal(readJson("package.json").version, version);
-  verifyCurrentCandidate(version);
-  assertReleaseTargetsQualified();
+  verifyPublishPreconditions(version);
   const distTag = nextRelease.channel ?? "latest";
   const jsrPackage = `jsr:@gadicc/watchbound@${version}`;
   const packages = releasePackages(version);
@@ -129,8 +126,15 @@ export async function publish(_pluginConfig, { nextRelease }) {
   };
 }
 
-function assertReleaseTargetsQualified() {
-  const matrix = loadNativeMatrix(workspaceRoot);
+export function verifyPublishPreconditions(version, root = workspaceRoot) {
+  assertPlannedVersion(version);
+  const candidate = verifyCurrentCandidate(version, root);
+  assertReleaseTargetsQualified(root);
+  return candidate;
+}
+
+function assertReleaseTargetsQualified(root = workspaceRoot) {
+  const matrix = loadNativeMatrix(root);
   const pending = matrix.targets.filter(({ qualification }) => qualification !== "supported");
   if (pending.length > 0) {
     throw new Error(
@@ -233,9 +237,9 @@ function assertPlannedVersion(version) {
   }
 }
 
-function verifyCurrentCandidate(version) {
-  return verifyReleaseCandidate(workspaceRoot, {
-    sourceSha: capture("git", ["rev-parse", "HEAD"]),
+function verifyCurrentCandidate(version, root = workspaceRoot) {
+  return verifyReleaseCandidate(root, {
+    sourceSha: capture("git", ["rev-parse", "HEAD"], root),
     version,
   });
 }
@@ -353,8 +357,8 @@ function sha512Integrity(source) {
   return `sha512-${crypto.createHash("sha512").update(fs.readFileSync(source)).digest("base64")}`;
 }
 
-function capture(command, args) {
-  const result = spawnSync(command, args, { cwd: workspaceRoot, encoding: "utf8", stdio: "pipe" });
+function capture(command, args, cwd = workspaceRoot) {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: "pipe" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
   return result.stdout.trim();

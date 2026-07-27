@@ -1,0 +1,306 @@
+name: Recover JSR v1.1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type RECOVER_JSR_1_1_0_FROM_RUN_30248771665
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: watchbound-recover-jsr-v1-1-0
+  cancel-in-progress: false
+
+env:
+  RELEASE_SOURCE_SHA: 9f207599f828ba8a4d5a3f7c1033745cea7e47ff
+  ORIGINAL_RUN_ID: "30248771665"
+  TZ: UTC
+
+jobs:
+  recover:
+    name: Recover exact missing JSR v1.1.0
+    if: github.repository == 'gadicc/watchbound'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Require the exact recovery confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirm }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = RECOVER_JSR_1_1_0_FROM_RUN_30248771665
+
+      - name: Check out the reviewed recovery controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create an exact tagged release-source worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse 'v1.1.0^{commit}')" = "$RELEASE_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/release-source" "$RELEASE_SOURCE_SHA"
+          test "$(git -C "$RUNNER_TEMP/release-source" rev-parse HEAD)" = "$RELEASE_SOURCE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/release-source" status --porcelain=v1 --untracked-files=all)"
+
+      - name: Download the original release plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-release-plan-1
+          path: ${{ runner.temp }}/original-plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: ${{ env.ORIGINAL_RUN_ID }}
+
+      - name: Download the independently approved native matrix
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-1
+          path: ${{ runner.temp }}/approved-matrix
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: ${{ env.ORIGINAL_RUN_ID }}
+
+      - name: Download the original partial-publication evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-release-evidence-1
+          path: ${{ runner.temp }}/original-evidence
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: ${{ env.ORIGINAL_RUN_ID }}
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Set up exact recovery tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          npm install --global npm@11.18.0
+
+      - name: Set up exact Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.3
+        with:
+          deno-version: v2.6.7
+
+      - name: Verify npm and publish only missing JSR v1.1.0
+        env:
+          WATCHBOUND_APPROVED_NATIVE_DIR: ${{ runner.temp }}/approved-matrix
+          WATCHBOUND_ORIGINAL_RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/original-evidence
+          WATCHBOUND_ORIGINAL_RELEASE_PLAN: ${{ runner.temp }}/original-plan/release-plan.json
+          WATCHBOUND_RECOVERY_CONTROLLER_SHA: ${{ github.sha }}
+          WATCHBOUND_RELEASE_SOURCE_ROOT: ${{ runner.temp }}/release-source
+        run: node scripts/recover-jsr-v1-1-0.mjs
+
+      - name: Assemble recovery evidence bundle
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/recovery-bundle"
+          mkdir -p "$bundle"
+          for directory in \
+            "$RUNNER_TEMP/release-source/dist/tarballs" \
+            "$RUNNER_TEMP/release-source/dist/evidence" \
+            "$RUNNER_TEMP/original-plan" \
+            "$RUNNER_TEMP/original-evidence"; do
+            if test -d "$directory"; then
+              cp -R "$directory" "$bundle/"
+            fi
+          done
+          if test -f "$RUNNER_TEMP/approved-matrix/independent-reproducibility.json"; then
+            cp "$RUNNER_TEMP/approved-matrix/independent-reproducibility.json" \
+              "$bundle/approved-independent-reproducibility.json"
+          fi
+
+      - name: Retain recovery build and publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-jsr-v1-1-0-recovery-build-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery-bundle
+          if-no-files-found: warn
+          retention-days: 90
+
+  registry-smoke:
+    name: Recovery registry (${{ matrix.route }}, ${{ matrix.target }})
+    needs: recover
+    if: needs.recover.result == 'success'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - route: npm
+            target: linux-x64-gnu
+            architecture: x64
+            runner: ubuntu-24.04
+            binary: watchbound.linux-x64-gnu.node
+          - route: jsr-node
+            target: linux-x64-gnu
+            architecture: x64
+            runner: ubuntu-24.04
+            binary: watchbound.linux-x64-gnu.node
+          - route: npm
+            target: linux-arm64-gnu
+            architecture: arm64
+            runner: ubuntu-24.04-arm
+            binary: watchbound.linux-arm64-gnu.node
+          - route: jsr-node
+            target: linux-arm64-gnu
+            architecture: arm64
+            runner: ubuntu-24.04-arm
+            binary: watchbound.linux-arm64-gnu.node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-approved-native-matrix-1
+          path: ${{ runner.temp }}/approved-matrix
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gadicc/watchbound
+          run-id: ${{ env.ORIGINAL_RUN_ID }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - name: Install and exercise the exact immutable registry package
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          npm install --global npm@11.18.0
+          digest="$(sha256sum "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" | cut -d ' ' -f 1)"
+          node scripts/check-registry-packages.mjs \
+            --route "${{ matrix.route }}" \
+            --version 1.1.0 \
+            --native-target "${{ matrix.target }}" \
+            --native-sha256 "$digest" \
+            --evidence "$RUNNER_TEMP/registry-${{ matrix.route }}-${{ matrix.target }}.json"
+      - name: Retain exact registry-smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-jsr-v1-1-0-registry-${{ matrix.route }}-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/registry-${{ matrix.route }}-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  finalize:
+    name: Finalize recovered v1.1.0 release
+    needs: [recover, registry-smoke]
+    if: >-
+      always() &&
+      needs.recover.result == 'success' &&
+      needs.registry-smoke.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Download recovery build evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: watchbound-jsr-v1-1-0-recovery-build-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery-build
+      - name: Download registry-smoke evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: watchbound-jsr-v1-1-0-registry-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/registry-evidence
+          merge-multiple: true
+      - name: Verify recovered public state and evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v1.1.0^{commit}')" = "$RELEASE_SOURCE_SHA"
+          test "$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.status)' "$RUNNER_TEMP/recovery-build/evidence/publication-ledger.json")" = completed
+          test "$(find "$RUNNER_TEMP/registry-evidence" -maxdepth 1 -name '*.json' -type f | wc -l)" = 4
+          node --input-type=module -e '
+            import { jsrPackageExists } from "./scripts/semantic-release-watchbound.mjs";
+            if (!await jsrPackageExists("jsr:@gadicc/watchbound@1.1.0")) {
+              throw new Error("JSR 1.1.0 is not visible");
+            }
+          '
+
+      - name: Create the missing GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v1.1.0 --repo gadicc/watchbound >/dev/null 2>&1; then
+            gh release view v1.1.0 --repo gadicc/watchbound
+          else
+            gh release create v1.1.0 \
+              --repo gadicc/watchbound \
+              --verify-tag \
+              --title v1.1.0 \
+              --generate-notes \
+              "$RUNNER_TEMP/recovery-build/tarballs/gadicc-watchbound-node-linux-x64-gnu-1.1.0.tgz#Inspected npm package" \
+              "$RUNNER_TEMP/recovery-build/tarballs/gadicc-watchbound-node-linux-arm64-gnu-1.1.0.tgz#Inspected npm package" \
+              "$RUNNER_TEMP/recovery-build/tarballs/gadicc-watchbound-node-1.1.0.tgz#Inspected npm package" \
+              "$RUNNER_TEMP/recovery-build/tarballs/watchbound-1.1.0.tgz#Inspected npm package" \
+              "$RUNNER_TEMP/recovery-build/original-evidence/SHA256SUMS#SHA-256 package checksums" \
+              "$RUNNER_TEMP/recovery-build/original-evidence/release-metadata.json#Release build metadata" \
+              "$RUNNER_TEMP/recovery-build/original-evidence/watchbound-1.1.0.cdx.json#CycloneDX 1.6 SBOM" \
+              "$RUNNER_TEMP/recovery-build/original-evidence/independent-reproducibility.json#Original native reproducibility evidence" \
+              "$RUNNER_TEMP/recovery-build/evidence/publication-ledger.json#Completed recovery publication ledger" \
+              "$RUNNER_TEMP/registry-evidence/registry-npm-linux-x64-gnu.json#npm x64 registry smoke" \
+              "$RUNNER_TEMP/registry-evidence/registry-jsr-node-linux-x64-gnu.json#JSR x64 registry smoke" \
+              "$RUNNER_TEMP/registry-evidence/registry-npm-linux-arm64-gnu.json#npm ARM64 registry smoke" \
+              "$RUNNER_TEMP/registry-evidence/registry-jsr-node-linux-arm64-gnu.json#JSR ARM64 registry smoke"
+          fi
+          gh release view v1.1.0 --repo gadicc/watchbound --json tagName,url,assets
+
+      - name: Retain final recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watchbound-jsr-v1-1-0-final-evidence-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/recovery-build/evidence
+            ${{ runner.temp }}/recovery-build/original-evidence
+            ${{ runner.temp }}/registry-evidence
+          if-no-files-found: warn
+          retention-days: 90

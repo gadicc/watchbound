@@ -9,6 +9,7 @@ import {
   INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
   readOptionalEvidence,
 } from "../../scripts/lib/native-build-evidence.mjs";
+import { RECOVERY as JSR_V1_1_0_RECOVERY } from "../../scripts/recover-jsr-v1-1-0.mjs";
 import { jsrPackageExists } from "../../scripts/semantic-release-watchbound.mjs";
 import { validateOverflowDispatch } from "../../scripts/validate-overflow-dispatch.mjs";
 
@@ -454,6 +455,10 @@ test("manual qualification is read-only while semantic release stays push-only",
     plugin,
     /\["publish", "--dry-run", "--allow-dirty", "--no-check"\]/u,
   );
+  assert.match(
+    plugin,
+    /\["publish", "--allow-dirty", "--no-check"\]/u,
+  );
   assert.match(plugin, /"publish"/u);
   assert.match(plugin, /"--provenance"/u);
   assert.doesNotMatch(plugin, /NPM_TOKEN|NODE_AUTH_TOKEN/u);
@@ -670,6 +675,60 @@ test("spent JSR recoveries cannot be dispatched or reused", () => {
       `${relativePath} must be retired`,
     );
   }
+});
+
+test("the active JSR 1.1.0 recovery is exact, npm-read-only, and one-shot", () => {
+  const workflow = fs.readFileSync(
+    path.join(workspaceRoot, ".github/workflows/recover-jsr-v1-1-0.yml"),
+    "utf8",
+  );
+  const recovery = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/recover-jsr-v1-1-0.mjs"),
+    "utf8",
+  );
+  const incident = fs.readFileSync(
+    path.join(workspaceRoot, "docs/release-incident-response.md"),
+    "utf8",
+  );
+
+  assert.deepEqual(JSR_V1_1_0_RECOVERY, {
+    version: "1.1.0",
+    tag: "v1.1.0",
+    sourceSha: "9f207599f828ba8a4d5a3f7c1033745cea7e47ff",
+    originalRunId: "30248771665",
+    originalRunAttempt: 1,
+    confirmation: "RECOVER_JSR_1_1_0_FROM_RUN_30248771665",
+  });
+  assert.match(workflow, /^\s*workflow_dispatch:/mu);
+  assert.match(workflow, /RECOVER_JSR_1_1_0_FROM_RUN_30248771665/gu);
+  assert.match(workflow, /run-id: \$\{\{ env\.ORIGINAL_RUN_ID \}\}/gu);
+  assert.match(workflow, /watchbound-release-plan-1/gu);
+  assert.match(workflow, /watchbound-approved-native-matrix-1/gu);
+  assert.match(workflow, /watchbound-release-evidence-1/gu);
+  assert.match(workflow, /git worktree add --detach/gu);
+  assert.match(workflow, /id-token: write/gu);
+  assert.match(workflow, /ubuntu-24\.04-arm/gu);
+  assert.match(workflow, /gh release create v1\.1\.0/gu);
+  assert.doesNotMatch(workflow, /npm publish/gu);
+
+  for (const value of [
+    "30248771665",
+    "9f207599f828ba8a4d5a3f7c1033745cea7e47ff",
+    "a58f01eb09ae8f5c7a2c2a06bf97ea88fd7c5a9371611cc3dff461b7680648d9",
+    "fc89bb178304c20315b5a74a0e531fbe066c55791288ddcdf4d418e2e6bbd33b",
+    "sha512-57RbiAXwt9JkjceHUm07bveSd+U8COpQyof9+dwrgGjUjTNkZqPacK3Z80BQEXdvWFv6ilbpgU1cu4yvkDLpPw==",
+    "sha512-f9rvGOjbSO33jiBN8yQHSOJuBuuySH9J7aWCIAFwirEWeS301Skl2pDIFAR2FmO79gUVkLKmjhSChPRgy4ek7w==",
+    "sha512-2fpaPB0RkD8TTmdaqrpFPxgTuydoMchTFmG8m/fFW8khxX9FAA4qNLVXyScXb72O/91zuQIvtw4d8BQ9Fw98dg==",
+    "sha512-PnsFQ/nxZdQtwCy5mdCG8URk8sorOSE6XE2+RjVNPrqAi/UZF3orrgFVlBUuXY1VGGQhYuBWKVOymw3a6ymqcA==",
+  ]) {
+    assert.ok(recovery.includes(value), `recovery omits pinned value ${value}`);
+  }
+  assert.match(recovery, /EXPECTED_ORIGINAL_OPERATIONS/gu);
+  assert.match(recovery, /"publication-attempt-started"/gu);
+  assert.match(recovery, /\["publish", "--allow-dirty", "--no-check"\]/gu);
+  assert.doesNotMatch(recovery, /"npm", \["publish"/gu);
+  assert.match(incident, /Release run `30248771665`/gu);
+  assert.match(incident, /Retire the controller after successful recovery\./gu);
 });
 
 test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {

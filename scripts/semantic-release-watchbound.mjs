@@ -100,7 +100,11 @@ export async function publish(_pluginConfig, { nextRelease }) {
         ["publish", "--dry-run", "--allow-dirty", "--no-check"],
         path.join(workspaceRoot, "dist/jsr"),
       );
-      run("deno", ["publish", "--no-check"], path.join(workspaceRoot, "dist/jsr"));
+      run(
+        "deno",
+        ["publish", "--allow-dirty", "--no-check"],
+        path.join(workspaceRoot, "dist/jsr"),
+      );
       recordOperation(ledger, "jsr-wrapper", "published-verification-pending");
       if (!await waitForJsrPackage(jsrPackage)) {
         throw new Error(`${jsrPackage} was not visible after publication`);

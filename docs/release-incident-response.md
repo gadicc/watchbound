@@ -49,6 +49,17 @@ JSR Node-route smoke caused by JSR npm-manifest normalization. The workflow is
 retired; yank the affected immutable JSR `1.0.0` and use the corrected lockstep
 patch release rather than attempting recovery again.
 
+Release run `30248771665` published and registry-verified all four npm `1.1.0`
+packages from tagged source `9f207599f828ba8a4d5a3f7c1033745cea7e47ff`,
+then stopped before JSR publication because the real `deno publish` invocation
+omitted the dirty-candidate allowance already used by its dry run. The reviewed
+one-time `recover-jsr-v1-1-0.yml` controller is pinned to that run, tag, source,
+release plan, failed publication ledger, npm tarball integrities, and approved
+two-target native matrix. It must verify the existing npm packages without
+republishing them, publish only a missing JSR `1.1.0`, pass fresh npm and JSR
+registry smokes on x64 and ARM64, and only then create the missing GitHub
+Release. Retire the controller after successful recovery.
+
 ## Registry-smoke failure
 
 The release remains published-but-unverified until both fresh-runner npm and

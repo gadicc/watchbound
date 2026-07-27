@@ -52,13 +52,15 @@ patch release rather than attempting recovery again.
 Release run `30248771665` published and registry-verified all four npm `1.1.0`
 packages from tagged source `9f207599f828ba8a4d5a3f7c1033745cea7e47ff`,
 then stopped before JSR publication because the real `deno publish` invocation
-omitted the dirty-candidate allowance already used by its dry run. The reviewed
-one-time `recover-jsr-v1-1-0.yml` controller is pinned to that run, tag, source,
-release plan, failed publication ledger, npm tarball integrities, and approved
-two-target native matrix. It must verify the existing npm packages without
-republishing them, publish only a missing JSR `1.1.0`, pass fresh npm and JSR
-registry smokes on x64 and ARM64, and only then create the missing GitHub
-Release. Retire the controller after successful recovery.
+omitted the dirty-candidate allowance already used by its dry run. Recovery run
+`30258264259` verified the immutable source, evidence, native matrix, and npm
+integrities and successfully published JSR `1.1.0`; it failed only because the
+new version did not become visible within the bounded propagation window.
+Idempotent completion run `30258399636` observed the existing JSR version,
+republished nothing, passed fresh npm and JSR registry smokes on x64 and ARM64,
+and created the GitHub Release with the inspected tarballs, checksums, SBOM,
+publication ledger, and smoke evidence. The one-time controller was retired
+after recovery completed.
 
 ## Registry-smoke failure
 

@@ -2407,7 +2407,20 @@ impl Worker {
             return true;
         }
         if state.root_lost && state.root_recovery.is_none() {
-            self.subscriptions.insert(id, state);
+            if let Some(establishment) = state.establishment.take() {
+                let error = WatchboundError::new(
+                    ErrorCode::RootUnavailable,
+                    Operation::Subscribe,
+                    format!(
+                        "watch root was lost during establishment: {}",
+                        state.root.display()
+                    ),
+                );
+                self.begin_failed_establishment_teardown(&mut state, establishment, error);
+                self.process_establishment_teardown_turn(state);
+            } else {
+                self.subscriptions.insert(id, state);
+            }
             return true;
         }
         let mut directories = 0;
@@ -3468,15 +3481,24 @@ impl Worker {
                 false
             }
             Err(error) => {
-                let terminal_error = if establishment.cancellation.try_commit_failure() {
-                    error
-                } else {
-                    operation_cancelled_error()
-                };
-                self.begin_establishment_teardown(state, establishment, Some(terminal_error));
+                self.begin_failed_establishment_teardown(state, establishment, error);
                 true
             }
         }
+    }
+
+    fn begin_failed_establishment_teardown(
+        &mut self,
+        state: &mut SubscriptionState,
+        establishment: PendingEstablishment,
+        error: WatchboundError,
+    ) {
+        let terminal_error = if establishment.cancellation.try_commit_failure() {
+            error
+        } else {
+            operation_cancelled_error()
+        };
+        self.begin_establishment_teardown(state, establishment, Some(terminal_error));
     }
 
     fn begin_cancelled_establishment_teardown(&mut self, state: &mut SubscriptionState) {
@@ -4967,6 +4989,65 @@ mod tests {
         assert_eq!(runtime.stats().native_watches, 0);
         runtime.shutdown_and_join().unwrap();
         error
+    }
+
+    #[test]
+    fn native_root_loss_during_establishment_rolls_back_before_acknowledgement() {
+        let parent = TestRoot::new("root-loss-during-establishment");
+        let root = parent.0.join("root");
+        let moved = parent.0.join("moved");
+        fs::create_dir(&root).unwrap();
+        for index in 0..(MAX_TOPOLOGY_ENTRIES_PER_TURN + 32) {
+            fs::write(root.join(format!("entry-{index}")), b"watched").unwrap();
+        }
+
+        let hook_root = root.clone();
+        let hook_moved = moved.clone();
+        let renamed = Arc::new(AtomicBool::new(false));
+        let hook_renamed = Arc::clone(&renamed);
+        let hook: EstablishmentBarrierHook = Arc::new(move |observed, path| {
+            if observed == EstablishmentBarrier::DuringTraversal
+                && path == hook_root
+                && !hook_renamed.swap(true, Ordering::AcqRel)
+            {
+                fs::rename(&hook_root, &hook_moved).unwrap();
+            }
+        });
+        let runtime = Runtime::start_with_establishment_barrier_hook(None, hook).unwrap();
+        let cancellation = bound_cancellation();
+        let pending = runtime
+            .begin_subscribe(
+                root,
+                SubscriptionOptions::default(),
+                Arc::new(SharedStats::new()),
+                cancellation.shared(),
+            )
+            .unwrap();
+        let (completed, completion) = mpsc::sync_channel(1);
+        let waiter = std::thread::spawn(move || {
+            completed.send(pending.wait()).unwrap();
+        });
+
+        let result = match completion.recv_timeout(Duration::from_secs(2)) {
+            Ok(result) => result,
+            Err(error) => {
+                runtime.shutdown_and_join().unwrap();
+                waiter.join().unwrap();
+                panic!("root-loss establishment did not settle: {error}");
+            }
+        };
+        let error = match result {
+            Ok(_) => panic!("renamed root unexpectedly established"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::RootUnavailable);
+        assert!(renamed.load(Ordering::Acquire));
+        assert_eq!(runtime.stats().subscriptions, 0);
+        assert_eq!(runtime.stats().native_watches, 0);
+        assert_eq!(runtime.stats().deferred_interests, 0);
+        waiter.join().unwrap();
+        runtime.shutdown_and_join().unwrap();
+        assert_eq!(runtime.stats(), RuntimeStats::default());
     }
 
     #[test]

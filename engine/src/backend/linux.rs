@@ -2154,6 +2154,33 @@ impl Worker {
         }
     }
 
+    fn reject_colliding_native_watch(
+        &mut self,
+        state: &mut SubscriptionState,
+        path: &Path,
+        descriptor: i32,
+    ) -> io::Error {
+        if path == state.root
+            && let Some(recovery) = state.root_recovery.as_mut()
+        {
+            recovery.candidate_unstable = true;
+        }
+        // The registry still names an older kernel lifetime whose IN_IGNORED
+        // is already queued, while the descriptor now names the just-added
+        // lifetime in the kernel. Remove the collision without adding it to
+        // the normal retired range: the older ignored record must transition
+        // the registered interests first. Permanent quarantine makes the
+        // collision's later ignored record harmless to any future lifetime.
+        self.exhausted_watch_descriptors.insert(descriptor);
+        // SAFETY: inotify is live and descriptor was just returned by
+        // inotify_add_watch. Failure is benign if that lifetime raced away.
+        unsafe {
+            libc::inotify_rm_watch(self.inotify.as_raw_fd(), descriptor);
+        }
+        state.mark_uncertain(UncertainReason::TopologyRace, state.root.clone());
+        io::Error::from_raw_os_error(libc::ESTALE)
+    }
+
     fn expect_ignored(&mut self, descriptor: i32, lifetime: WatchLifetime) {
         let ordered = match self.retired_ignored_lifetimes.get_mut(&descriptor) {
             Some(lifetimes) => {
@@ -3788,14 +3815,16 @@ impl Worker {
         } else {
             None
         };
+        let descriptor_collision = self
+            .watches
+            .get(&descriptor)
+            .and_then(|watch| watch.identity)
+            .is_some_and(|watched| watched != identity);
+        if descriptor_collision {
+            return Err(self.reject_colliding_native_watch(state, path, descriptor));
+        }
         let identity_after = directory_identity(path);
-        if identity_after.as_ref().ok() != Some(&identity)
-            || self
-                .watches
-                .get(&descriptor)
-                .and_then(|watch| watch.identity)
-                .is_some_and(|watched| watched != identity)
-        {
+        if identity_after.as_ref().ok() != Some(&identity) {
             if path == state.root
                 && let Some(recovery) = state.root_recovery.as_mut()
             {
@@ -6194,6 +6223,72 @@ mod tests {
                 reason: UncertainReason::TopologyRace,
             }
         );
+    }
+
+    #[test]
+    fn stale_live_descriptor_collision_is_removed_and_permanently_quarantined() {
+        let owner_root = TestRoot::new("stale-live-collision-owner");
+        let stale_path = owner_root.0.join("stale");
+        fs::create_dir(&stale_path).unwrap();
+        let adding_root = TestRoot::new("stale-live-collision-adding");
+        let requested_path = adding_root.0.join("requested");
+        fs::create_dir(&requested_path).unwrap();
+        let (mut owner, _owner_batches) = state(&owner_root.0, SubscriptionOptions::default());
+        let (mut adding, _adding_batches) = state(&adding_root.0, SubscriptionOptions::default());
+        adding.id = 2;
+        let mut worker = worker();
+        let descriptor = 43;
+
+        install_synthetic_watch(
+            &mut worker,
+            &mut owner,
+            descriptor,
+            WatchLifetime(1),
+            &stale_path,
+            false,
+        );
+        worker.subscriptions.insert(owner.id, owner);
+
+        let error = worker.reject_colliding_native_watch(&mut adding, &requested_path, descriptor);
+
+        assert_eq!(error.raw_os_error(), Some(libc::ESTALE));
+        assert!(worker.exhausted_watch_descriptors.contains(&descriptor));
+        assert!(!worker.retired_ignored_lifetimes.contains_key(&descriptor));
+        assert_eq!(worker.watches[&descriptor].lifetime, WatchLifetime(1));
+        assert_eq!(
+            worker.subscriptions[&1].watched_paths.get(&stale_path),
+            Some(&descriptor)
+        );
+        assert_eq!(
+            adding.coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::TopologyRace,
+            }
+        );
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 1);
+
+        // The first record belongs to stale W1 and must perform its ordinary
+        // truth transition. The removed collision's later record is harmless.
+        worker.handle_ignored(descriptor);
+        assert!(!worker.watches.contains_key(&descriptor));
+        assert!(
+            !worker.subscriptions[&1]
+                .watched_paths
+                .contains_key(&stale_path)
+        );
+        assert_eq!(
+            worker.subscriptions[&1].coverage(),
+            Coverage::Uncertain {
+                reason: UncertainReason::TopologyRace,
+            }
+        );
+        assert_eq!(worker.counters.native_watches.load(Ordering::Acquire), 0);
+
+        let error = worker.claim_new_watch_lifetime(descriptor).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EOVERFLOW));
+        worker.handle_ignored(descriptor);
+        assert!(!worker.watches.contains_key(&descriptor));
+        assert!(worker.exhausted_watch_descriptors.contains(&descriptor));
     }
 
     #[test]

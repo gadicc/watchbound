@@ -81,6 +81,11 @@ controller-supervised helper. An IPC/stdin handshake records the helper process 
 stop the watcher; it then confirms the watcher reached `SIGSTOP` and creates
 `max_queued_events + 4096` distinct files. It records that mutation began only after the stop was
 confirmed, finished before resume, and that `/proc` no longer showed the watcher stopped afterward.
+The shared workload planner accepts a host `max_queued_events` no greater than
+16,384, the repository's expected default and the exact value in retained
+qualification evidence. This caps the workload at 20,480 files; malformed or
+larger host values fail preflight and the scenario instead of being capped or
+silently expanding the I/O envelope.
 After resume, the watcher must show activity and reach a
 quiet boundary before the harness starts a separate sentinel phase. Induction evidence, explicit
 coverage/loss reporting, drain status, and sentinel delivery are separate results. It is a correctness

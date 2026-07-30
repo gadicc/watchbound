@@ -181,6 +181,14 @@ normal errors and handled termination signals. The normal handshake also
 confirms the mutation completed before resume and that `/proc` subsequently no
 longer reports the watcher stopped.
 
+The forced-overflow workload is approved only for host
+`max_queued_events <= 16,384`. That ceiling is the repository's expected Linux
+default and the exact setting used by the retained qualification runs; with the
+4,096-event induction margin it bounds each workload at 20,480 files. The
+preflight and scenario share one strict parser and fail closed for unreadable,
+malformed, or larger values. They never cap a larger value, because doing so
+would no longer prove that the actual kernel queue bound was exceeded.
+
 The report separates this induction evidence from the adapter's loss report.
 After resume it waits for activity and a quiet window before writing the
 sentinel; there is no fixed post-resume sentinel delay. Failure to establish a

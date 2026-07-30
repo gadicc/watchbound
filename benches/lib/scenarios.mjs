@@ -13,6 +13,7 @@ import {
   sleep,
   waitFor,
 } from "./metrics.mjs";
+import { planOverflowWorkload } from "./overflow-workload.mjs";
 import { createRecorder } from "./recorder.mjs";
 
 export const scenarioNames = Object.freeze([
@@ -1233,20 +1234,15 @@ async function runQueueOverflow(adapter, prepared, config) {
   if (config.allowForcedOverflow !== true) {
     throw new Error("queue-overflow requires the forced-overflow permission gate");
   }
+  const overflowWorkload = planOverflowWorkload(
+    fs.readFileSync("/proc/sys/fs/inotify/max_queued_events", "utf8"),
+  );
   const recorder = createRecorder(prepared.root);
   const started = await subscribeMeasured(adapter, prepared, config, recorder);
   let disposal;
   try {
     await requirePhaseQuiescence(recorder, config, "subscription startup");
-    let kernelQueueLimit = 16_384;
-    try {
-      const parsed = Number.parseInt(
-        fs.readFileSync("/proc/sys/fs/inotify/max_queued_events", "utf8").trim(),
-        10,
-      );
-      if (Number.isSafeInteger(parsed) && parsed > 0) kernelQueueLimit = parsed;
-    } catch {}
-    const generatedEventCount = kernelQueueLimit + 4_096;
+    const { kernelQueueLimit, generatedEventCount } = overflowWorkload;
     const expectedPaths = Array.from(
       { length: generatedEventCount },
       (_value, index) => path.join(prepared.root, `overflow-${numbered(index)}.txt`),
@@ -1505,6 +1501,11 @@ async function runReconciliation(
   if (forcedOverflow && config.allowForcedOverflow !== true) {
     throw new Error("overflow-reconciliation requires the forced-overflow permission gate");
   }
+  const overflowWorkload = forcedOverflow
+    ? planOverflowWorkload(
+        fs.readFileSync("/proc/sys/fs/inotify/max_queued_events", "utf8"),
+      )
+    : null;
   const recorder = createRecorder(prepared.root);
   const peerRecorder = createRecorder(prepared.peerRoot);
   const primaryAllCheckpoint = recorder.checkpoint();
@@ -1599,15 +1600,7 @@ async function runReconciliation(
     let kernelQueueLimit = null;
     let generatedEventCount = null;
     if (forcedOverflow) {
-      kernelQueueLimit = 16_384;
-      try {
-        const parsed = Number.parseInt(
-          fs.readFileSync("/proc/sys/fs/inotify/max_queued_events", "utf8").trim(),
-          10,
-        );
-        if (Number.isSafeInteger(parsed) && parsed > 0) kernelQueueLimit = parsed;
-      } catch {}
-      generatedEventCount = kernelQueueLimit + 4_096;
+      ({ kernelQueueLimit, generatedEventCount } = overflowWorkload);
       overflowHelper = await runOverflowMutator({
         watcherPid: process.pid,
         root: prepared.root,

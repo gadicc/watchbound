@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  MAX_APPROVED_KERNEL_QUEUE_EVENTS,
+  OVERFLOW_EVENT_MARGIN,
+  planOverflowWorkload,
+} from "../benches/lib/overflow-workload.mjs";
+import {
   loadNativeMatrix,
   nativeArtifactEntries,
   targetForId,
@@ -89,6 +94,15 @@ function recordEvidence(destination) {
   const osRelease = readOsRelease();
   const uname = capture("uname", ["-m"]);
   const glibc = capture("getconf", ["GNU_LIBC_VERSION"]);
+  const maxQueuedEvents = readOptional(
+    "/proc/sys/fs/inotify/max_queued_events",
+  );
+  let overflowWorkload = null;
+  try {
+    overflowWorkload = planOverflowWorkload(maxQueuedEvents);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
 
   check(
     JSON.stringify(nativeArtifactEntries(workspaceRoot)) ===
@@ -163,6 +177,11 @@ function recordEvidence(destination) {
       pnpm: sha256(fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"))),
     },
   };
+  destination.qualification.workloadPolicy = {
+    approvedMaximumKernelQueueLimit: MAX_APPROVED_KERNEL_QUEUE_EVENTS,
+    generatedEventMargin: OVERFLOW_EVENT_MARGIN,
+    plan: overflowWorkload,
+  };
   destination.canonicalArtifact = {
     target: target.id,
     architecture: target.architecture,
@@ -187,7 +206,7 @@ function recordEvidence(destination) {
       memory: readOptional("/proc/pressure/memory"),
     },
     inotify: {
-      max_queued_events: readOptional("/proc/sys/fs/inotify/max_queued_events"),
+      max_queued_events: maxQueuedEvents,
       max_user_instances: readOptional("/proc/sys/fs/inotify/max_user_instances"),
       max_user_watches: readOptional("/proc/sys/fs/inotify/max_user_watches"),
     },

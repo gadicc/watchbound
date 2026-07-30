@@ -212,7 +212,7 @@ pub(crate) struct Runtime {
 
 impl Runtime {
     pub(crate) fn start(native_watch_budget: Option<usize>) -> WatchboundResult<Arc<Self>> {
-        Self::start_inner(native_watch_budget, None, None)
+        Self::start_inner(native_watch_budget, None, None, false)
     }
 
     #[cfg(test)]
@@ -220,7 +220,7 @@ impl Runtime {
         native_watch_budget: Option<usize>,
         hook: RootRecoveryBarrierHook,
     ) -> WatchboundResult<Arc<Self>> {
-        Self::start_inner(native_watch_budget, Some(hook), None)
+        Self::start_inner(native_watch_budget, Some(hook), None, false)
     }
 
     #[cfg(test)]
@@ -228,15 +228,24 @@ impl Runtime {
         native_watch_budget: Option<usize>,
         hook: EstablishmentBarrierHook,
     ) -> WatchboundResult<Arc<Self>> {
-        Self::start_inner(native_watch_budget, None, Some(hook))
+        Self::start_inner(native_watch_budget, None, Some(hook), false)
+    }
+
+    #[cfg(test)]
+    fn start_with_root_recovery_read_failure(
+        native_watch_budget: Option<usize>,
+    ) -> WatchboundResult<Arc<Self>> {
+        Self::start_inner(native_watch_budget, None, None, true)
     }
 
     fn start_inner(
         native_watch_budget: Option<usize>,
         #[cfg(test)] root_recovery_barrier_hook: Option<RootRecoveryBarrierHook>,
         #[cfg(test)] establishment_barrier_hook: Option<EstablishmentBarrierHook>,
+        #[cfg(test)] fail_next_root_recovery_read: bool,
         #[cfg(not(test))] _root_recovery_barrier_hook: Option<()>,
         #[cfg(not(test))] _establishment_barrier_hook: Option<()>,
+        #[cfg(not(test))] _fail_next_root_recovery_read: bool,
     ) -> WatchboundResult<Arc<Self>> {
         let inotify = create_inotify().map_err(|error| {
             WatchboundError::from_io(
@@ -277,6 +286,7 @@ impl Runtime {
                     let mut worker = worker;
                     worker.root_recovery_barrier_hook = root_recovery_barrier_hook;
                     worker.establishment_barrier_hook = establishment_barrier_hook;
+                    worker.fail_next_root_recovery_read = fail_next_root_recovery_read;
                     worker
                 };
                 worker.run();
@@ -1384,6 +1394,8 @@ struct Worker {
     root_recovery_barrier_hook: Option<RootRecoveryBarrierHook>,
     #[cfg(test)]
     establishment_barrier_hook: Option<EstablishmentBarrierHook>,
+    #[cfg(test)]
+    fail_next_root_recovery_read: bool,
 }
 
 impl Worker {
@@ -1419,6 +1431,8 @@ impl Worker {
             root_recovery_barrier_hook: None,
             #[cfg(test)]
             establishment_barrier_hook: None,
+            #[cfg(test)]
+            fail_next_root_recovery_read: false,
         }
     }
 
@@ -2712,7 +2726,7 @@ impl Worker {
             }
         }
         mark_reconciliation_encounter(state, &directory, reconciliation);
-        match fs::read_dir(&directory) {
+        match self.read_topology_directory(state, &directory) {
             Ok(entries) => Some(OpenedDirectory {
                 active: ActiveDirectory {
                     path: directory,
@@ -2730,6 +2744,20 @@ impl Worker {
                 None
             }
         }
+    }
+
+    fn read_topology_directory(
+        &mut self,
+        state: &SubscriptionState,
+        directory: &Path,
+    ) -> io::Result<fs::ReadDir> {
+        #[cfg(test)]
+        if state.root_recovery.is_some() && std::mem::take(&mut self.fail_next_root_recovery_read) {
+            return Err(io::Error::from_raw_os_error(libc::EIO));
+        }
+        #[cfg(not(test))]
+        let _ = state;
+        fs::read_dir(directory)
     }
 
     fn progress_exclusion_update(&mut self, state: &mut SubscriptionState) {
@@ -3240,10 +3268,14 @@ impl Worker {
             }
             let Some(opened) = opened.filter(|_| state.watched_paths.contains_key(&root)) else {
                 state.remove_deferred_subtree(&root);
-                self.finish_root_recovery_failure(
-                    state,
+                state
+                    .root_recovery
+                    .as_mut()
+                    .expect("root recovery must exist")
+                    .phase = RootRecoveryPhase::CleaningFailure(
                     RootRecoveryFailureReason::RootWatchUnavailable,
                 );
+                self.progress_root_recovery(state);
                 return;
             };
             state.stats.topology_scans.fetch_add(1, Ordering::Relaxed);
@@ -6138,6 +6170,62 @@ mod tests {
             RootRecoveryBarrier::BeforeFinalValidation,
             false,
         );
+    }
+
+    #[test]
+    fn unavailable_root_recovery_read_joins_candidate_watch_cleanup() {
+        let parent = TestRoot::new("root-recovery-read-failure");
+        let root = parent.0.join("root");
+        let original = parent.0.join("original");
+        fs::create_dir(&root).unwrap();
+        let runtime = Runtime::start_with_root_recovery_read_failure(None).unwrap();
+        let stats = Arc::new(SharedStats::new());
+        let subscription = runtime
+            .subscribe(
+                root.clone(),
+                SubscriptionOptions::default(),
+                Arc::clone(&stats),
+            )
+            .unwrap();
+
+        fs::rename(&root, &original).unwrap();
+        fs::create_dir(&root).unwrap();
+        wait_for_root_attachment(&subscription.root_state, RootAttachment::Lost);
+
+        let failed = runtime
+            .queue_root_recovery(subscription.id, RootIdentityPolicy::AcceptReplacement)
+            .unwrap()
+            .wait()
+            .unwrap();
+        assert_eq!(failed.attachment, RootRecoveryAttachment::NotAttached);
+        assert_eq!(
+            failed.reason,
+            Some(RootRecoveryFailureReason::RootWatchUnavailable)
+        );
+        assert_eq!(failed.current_root_state.attachment, RootAttachment::Lost);
+        assert_eq!(stats.snapshot().watched_directories, 0);
+        assert_eq!(stats.snapshot().deferred_directories, 0);
+        assert_eq!(runtime.stats().native_watches, 0);
+        assert_eq!(runtime.stats().deferred_interests, 0);
+
+        let retried = runtime
+            .queue_root_recovery(subscription.id, RootIdentityPolicy::AcceptReplacement)
+            .unwrap()
+            .wait()
+            .unwrap();
+        assert_eq!(
+            retried.attachment,
+            RootRecoveryAttachment::ReplacementAdopted
+        );
+        assert_eq!(
+            retried.current_root_state.attachment,
+            RootAttachment::Attached
+        );
+        assert_eq!(runtime.stats().native_watches, 1);
+
+        runtime.dispose(subscription.id).unwrap();
+        runtime.shutdown_and_join().unwrap();
+        assert_eq!(runtime.stats(), RuntimeStats::default());
     }
 
     fn install_synthetic_watch(

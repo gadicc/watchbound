@@ -54,6 +54,8 @@ async function runSeed(engine, seed) {
   let callbacksInFlight = 0;
   let maximumCallbacksInFlight = 0;
   let lastSequence = 0n;
+  let lastDeliveredExclusionGeneration = 0n;
+  let initialRootState = null;
   let subscription;
 
   try {
@@ -61,6 +63,9 @@ async function runSeed(engine, seed) {
       root,
       async (batch) => {
         callbacksInFlight += 1;
+        const liveExclusionGenerationAtEntry =
+          subscription?.exclusionGeneration ?? null;
+        const liveRootStateAtEntry = subscription?.rootState ?? null;
         maximumCallbacksInFlight = Math.max(
           maximumCallbacksInFlight,
           callbacksInFlight,
@@ -75,7 +80,68 @@ async function runSeed(engine, seed) {
             }),
           );
           lastSequence = batch.sequence;
+          assert.notEqual(
+            liveExclusionGenerationAtEntry,
+            null,
+            diagnostic(
+              seed,
+              "callback entered before live generation was available",
+              {
+                sequence: batch.sequence,
+                batchGeneration: batch.exclusionGeneration,
+              },
+            ),
+          );
+          assert.ok(
+            batch.exclusionGeneration >= lastDeliveredExclusionGeneration,
+            diagnostic(seed, "delivered exclusion generation decreased", {
+              sequence: batch.sequence,
+              generation: batch.exclusionGeneration,
+              lastDeliveredExclusionGeneration,
+            }),
+          );
+          assert.ok(
+            batch.exclusionGeneration <= liveExclusionGenerationAtEntry,
+            diagnostic(
+              seed,
+              "batch exceeded the live committed generation at callback entry",
+              {
+                sequence: batch.sequence,
+                generation: batch.exclusionGeneration,
+                liveExclusionGenerationAtEntry,
+              },
+            ),
+          );
+          assert.notEqual(
+            initialRootState,
+            null,
+            diagnostic(seed, "callback entered before initial root state was available", {
+              sequence: batch.sequence,
+            }),
+          );
+          assert.notEqual(
+            liveRootStateAtEntry,
+            null,
+            diagnostic(seed, "callback entered before live root state was available", {
+              sequence: batch.sequence,
+            }),
+          );
+          assertStableRootState(
+            batch.rootState,
+            initialRootState,
+            seed,
+            "batch",
+            batch.sequence,
+          );
+          assertStableRootState(
+            liveRootStateAtEntry,
+            initialRootState,
+            seed,
+            "live getter at callback entry",
+            batch.sequence,
+          );
           validateBatch(root, batch, exclusionsByGeneration, seed);
+          lastDeliveredExclusionGeneration = batch.exclusionGeneration;
           batches.push(batch);
         } catch (error) {
           callbackFailures.push(error);
@@ -92,6 +158,9 @@ async function runSeed(engine, seed) {
     );
 
     assert.deepEqual(subscription.initialCoverage, { state: "complete" });
+    initialRootState = subscription.initialRootState;
+    assert.equal(initialRootState.generation, 0n);
+    assert.equal(initialRootState.attachment, "attached");
     assert.equal(subscription.exclusionGeneration, generation);
     assertExactWatchAccounting(
       engine,
@@ -123,6 +192,33 @@ async function runSeed(engine, seed) {
         );
       }
 
+      const ordinaryBatchIndex = batches.length;
+      const ordinaryTarget = deliverGuaranteedIncludedMutation({
+        root,
+        staging,
+        seed,
+        step,
+      });
+      await waitFor(
+        () => batches.slice(ordinaryBatchIndex).some((batch) =>
+          batch.invalidatedPaths.includes(ordinaryTarget)),
+        diagnostic(
+          seed,
+          "included mutation did not enter JavaScript before reconciliation",
+          {
+            step,
+            generation,
+            ordinaryTarget,
+            batches: batches.length - ordinaryBatchIndex,
+            callbackFailures,
+          },
+        ),
+      );
+      const ordinaryBatch = batches.slice(ordinaryBatchIndex).find((batch) =>
+        batch.invalidatedPaths.includes(ordinaryTarget));
+      assert.ok(ordinaryBatch);
+      assert.deepEqual(callbackFailures, []);
+
       mutateTopology({ root, staging, seed, step, random });
       const batchIndex = batches.length;
       const reconciliation = await subscription.reconcile();
@@ -153,6 +249,19 @@ async function runSeed(engine, seed) {
           callbackFailures,
         }),
       );
+      const reconciliationBatch = batches.slice(batchIndex).find((batch) =>
+        batch.exclusionGeneration === generation &&
+        batch.invalidatedPaths.length === 1 &&
+        batch.invalidatedPaths[0] === root &&
+        batch.coverage.state === "complete");
+      assert.ok(
+        reconciliationBatch.sequence > ordinaryBatch.sequence,
+        diagnostic(seed, "ordinary mutation was not distinct from reconciliation", {
+          step,
+          ordinarySequence: ordinaryBatch.sequence,
+          reconciliationSequence: reconciliationBatch.sequence,
+        }),
+      );
       assert.deepEqual(callbackFailures, []);
       assertExactWatchAccounting(
         engine,
@@ -164,20 +273,20 @@ async function runSeed(engine, seed) {
       );
     }
 
-    const callbackCountBeforeDisposal = batches.length;
     await Promise.all([subscription.dispose(), subscription.dispose()]);
     await subscription.dispose();
     assert.equal(subscription.stats().disposed, true);
     assert.equal(maximumCallbacksInFlight, 1);
     assert.deepEqual(callbackFailures, []);
     assert.equal(callbacksInFlight, 0);
+    const callbackCountAfterDisposal = batches.length;
     fs.writeFileSync(path.join(root, "after-disposal.txt"), "after\n");
     await delay(25);
     assert.equal(
       batches.length,
-      callbackCountBeforeDisposal,
+      callbackCountAfterDisposal,
       diagnostic(seed, "callback entered after joined disposal", {
-        before: callbackCountBeforeDisposal,
+        before: callbackCountAfterDisposal,
         after: batches.length,
       }),
     );
@@ -185,6 +294,16 @@ async function runSeed(engine, seed) {
     await subscription?.dispose();
     fs.rmSync(parent, { recursive: true, force: true });
   }
+}
+
+function deliverGuaranteedIncludedMutation({ root, staging, seed, step }) {
+  const filename =
+    `included-${formatSeed(seed)}-${String(step).padStart(2, "0")}.txt`;
+  const prepared = path.join(staging, filename);
+  const target = path.join(root, filename);
+  fs.writeFileSync(prepared, `${seed}:${step}\n`);
+  fs.renameSync(prepared, target);
+  return target;
 }
 
 function mutateTopology({ root, staging, seed, step, random }) {
@@ -229,6 +348,35 @@ function mutateTopology({ root, staging, seed, step, random }) {
   fs.mkdirSync(path.join(source, "nested"), { recursive: true });
   fs.rmSync(destination, { recursive: true, force: true });
   fs.renameSync(source, destination);
+}
+
+function assertStableRootState(actual, expected, seed, source, sequence) {
+  assert.equal(
+    actual.generation,
+    expected.generation,
+    diagnostic(seed, `${source} changed root generation`, {
+      sequence,
+      actual: actual.generation,
+      expected: expected.generation,
+    }),
+  );
+  assert.deepEqual(
+    actual.identity,
+    expected.identity,
+    diagnostic(seed, `${source} changed root identity`, {
+      sequence,
+      actual: actual.identity,
+      expected: expected.identity,
+    }),
+  );
+  assert.equal(
+    actual.attachment,
+    "attached",
+    diagnostic(seed, `${source} detached the stable root`, {
+      sequence,
+      actual,
+    }),
+  );
 }
 
 function validateBatch(root, batch, exclusionsByGeneration, seed) {

@@ -3,8 +3,11 @@
 Status: release `1.1.0` is published. The native, distro, Electron, Nix,
 reproducibility, pinned-kernel, and both supervised-overflow scenarios are green
 for x64 and ARM64, and post-publication npm and JSR Node-route smokes passed on
-both architectures. This repository records the package boundary; acceptance
-of the local Codex Desktop integration remains consumer-owned.
+both architectures. A maintainer-reported, locally unpublished Codex Desktop
+pilot is running without observed crashes as of 2026-07-30, but has not yet
+exercised every integration path deliberately. This repository records the
+package boundary; acceptance of the local Codex Desktop integration remains
+consumer-owned.
 
 ## Package and loader contract
 

@@ -122,16 +122,17 @@ integration command was run.
 Those are possible later additions, but each creates a larger compatibility
 surface and needs its own boundedness and lifecycle design.
 
-## Release follow-up
+## Post-release and consumer follow-up
 
-- Exercise the callback model in a separately authorized real consumer pilot
-  before calling the API v1-stable. In particular, test cancellation
-  cooperation and operation calls made from callbacks.
+- A maintainer-reported, locally unpublished Codex Desktop pilot is running
+  without observed crashes as of 2026-07-30. This is useful exploratory
+  evidence, not comprehensive consumer acceptance: cancellation cooperation,
+  operation calls made from callbacks, callback pressure, and joined shutdown
+  still need deliberate consumer-side exercises.
 - The public `0.0.1` bootstrap provides an earlier 0.x line but does not contain
-  this callback contract. The prospective v1 wrapper/native/engine versions are
-  committed in lockstep; the exact status-bearing commit must still obtain
-  clean target-host evidence. Do not infer qualification from a local
-  development run.
+  this callback contract. Releases `1.0.0`, `1.0.1`, and `1.1.0` are published;
+  `1.1.0` has clean exact-commit x64 and ARM64 target-host evidence. Package
+  qualification does not substitute for Codex Desktop acceptance evidence.
 - Re-run final conformance and performance trials only on a confirmed quiet,
   prepared host. Forced-overflow evidence remains separately supervised.
 - Revisit whether `PromiseLike<unknown>` should narrow to `PromiseLike<void>`

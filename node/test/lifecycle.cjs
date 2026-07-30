@@ -497,15 +497,15 @@ test("native root recovery rejects an unknown identity policy", async () => {
   }
 });
 
-test("concurrent native dispose calls join once and resolve together", async () => {
+test("repeated native dispose calls share one joined Promise", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-dispose-"));
   const subscription = await binding.subscribe(root, {}, () => {});
   try {
-    await Promise.all([
-      subscription.dispose(),
-      subscription.dispose(),
-      subscription.dispose(),
-    ]);
+    const disposal = subscription.dispose();
+    assert.equal(subscription.dispose(), disposal);
+    assert.equal(subscription.dispose(), disposal);
+    await disposal;
+    assert.equal(subscription.dispose(), disposal);
     assert.equal(subscription.stats().disposed, true);
   } finally {
     await subscription.dispose();
@@ -523,6 +523,22 @@ test("native explicit disposal retains callback ownership after receiver GC", {
       path.join(__dirname, "fixtures", "gc-during-explicit-dispose.cjs"),
     ],
     { timeout: 10_000 },
+  );
+});
+
+test("joined wrapper disposal does not occupy the sole libuv worker", {
+  timeout: 15_000,
+}, async () => {
+  await execFileAsync(
+    process.execPath,
+    [path.join(__dirname, "fixtures", "uv-threadpool-dispose-abort-fs.cjs")],
+    {
+      env: {
+        ...process.env,
+        UV_THREADPOOL_SIZE: "1",
+      },
+      timeout: 10_000,
+    },
   );
 });
 

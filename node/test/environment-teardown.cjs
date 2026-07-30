@@ -183,6 +183,50 @@ test("destroying a Node environment releases its live native subscription", { ti
   }
 });
 
+test("environment teardown aborts a pending explicit-disposal Promise bridge", {
+  timeout: 20_000,
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-env-dispose-"));
+  const workerChange = path.join(root, "worker-change.txt");
+  const observer = binding.createEngine();
+  let worker;
+
+  try {
+    worker = new Worker(path.join(__dirname, "fixtures", "environment-teardown-worker.cjs"), {
+      workerData: {
+        root,
+        expectedPath: workerChange,
+        holdDeliveryCompletion: true,
+        startExplicitDispose: true,
+      },
+    });
+    await waitForWorkerMessage(worker, "ready");
+    const disposalStarted = waitForWorkerMessage(worker, "dispose-started");
+    fs.writeFileSync(workerChange, "worker");
+    await disposalStarted;
+
+    await terminateWorker(worker);
+    worker = undefined;
+    await waitFor(
+      () => isDeepStrictEqual(normalizedRuntimeStats(observer), ZERO_RUNTIME_STATS),
+      () => `pending dispose teardown left runtime resources active: ${JSON.stringify(normalizedRuntimeStats(observer))}`,
+    );
+    await waitFor(() => {
+      const diagnostics = binding.deliveryDiagnostics();
+      return diagnostics.dispatcherEnvironments === 0
+        && diagnostics.dispatcherThreads === 0
+        && diagnostics.registrations === 0
+        && diagnostics.outstandingCallbacks === 0
+        && diagnostics.cleanupCoordinatorThreads === 0
+        && diagnostics.cleanupRequests === 0
+        && diagnostics.activeThreadsafeFunctions === 0;
+    }, "pending dispose teardown left Node delivery resources active");
+  } finally {
+    if (worker) await terminateWorker(worker).catch(() => {});
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("independent Worker environments isolate blocked callbacks and teardown", { timeout: 20_000 }, async () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-worker-isolation-"));
   const rootA = path.join(parent, "a");

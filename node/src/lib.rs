@@ -3,14 +3,16 @@
 use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use napi::bindgen_prelude::{
-    AsyncTask, BigInt, Buffer, Either, FnArgs, Function, Null, ToNapiValue,
+    AsyncTask, BigInt, Buffer, Either, FnArgs, Function, JsValue, Null, ObjectFinalize, PromiseRaw,
+    ToNapiValue,
 };
-use napi::{Env, Error, Result, Status, Task};
+use napi::{Env, Error, Result, Status, Task, sys};
 use napi_derive::napi;
 use watchbound_engine::{
     ChangeBatch, Coverage, Engine, ErrorCode, EstablishmentCancellation, ExclusionHandle,
@@ -22,6 +24,7 @@ use watchbound_engine::{
 };
 
 mod delivery;
+mod dispose_completion;
 
 type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
 type TaskOutcome<T> = NodeResult<T>;
@@ -1238,13 +1241,17 @@ impl Task for SubscribeTask {
     fn resolve(&mut self, env: Env, state: Self::Output) -> Result<Self::JsValue> {
         let state = task_result(&env, state)?;
         self.attempt.mark_handoff_ready();
-        Ok(NativeSubscription { state })
+        Ok(NativeSubscription {
+            state,
+            dispose_promise: Mutex::new(None),
+        })
     }
 }
 
-#[napi]
+#[napi(custom_finalize)]
 pub struct NativeSubscription {
     state: Arc<SubscriptionState>,
+    dispose_promise: Mutex<Option<DisposePromiseReference>>,
 }
 
 #[napi]
@@ -1341,12 +1348,32 @@ impl NativeSubscription {
     }
 
     #[napi(ts_return_type = "Promise<void>")]
-    pub fn dispose(&self) -> AsyncTask<DisposeTask> {
-        self.state.mark_explicit_disposal_requested();
+    pub fn dispose(&self, env: Env) -> Result<PromiseRaw<'static, ()>> {
+        let mut cached = lock_unpoisoned(&self.dispose_promise);
+        if let Some(cached) = cached.as_ref() {
+            return cached.get(&env).map_err(|error| sync_error(&env, error));
+        }
+
+        // Preserve the synchronous admission barrier of the former AsyncTask
+        // path: no new callback may be admitted while Promise resources are
+        // being allocated for this disposal request.
         self.state.close_delivery_admission();
-        AsyncTask::new(DisposeTask {
-            state: Arc::clone(&self.state),
-        })
+        let (completion, promise) = dispose_completion::RawDisposeCompletion::new(&env)
+            .map_err(|error| sync_error(&env, error))?;
+        let reference = DisposePromiseReference::new(&env, promise.raw())
+            .map_err(|error| sync_error(&env, error))?;
+        *cached = Some(reference);
+        self.state.begin_explicit_disposal(completion);
+        Ok(promise)
+    }
+}
+
+impl ObjectFinalize for NativeSubscription {
+    fn finalize(self, env: Env) -> Result<()> {
+        if let Some(reference) = lock_unpoisoned(&self.dispose_promise).take() {
+            reference.release(&env);
+        }
+        Ok(())
     }
 }
 
@@ -1364,10 +1391,6 @@ impl Drop for NativeSubscription {
         }
         self.state.request_background_cleanup();
     }
-}
-
-pub struct DisposeTask {
-    state: Arc<SubscriptionState>,
 }
 
 pub struct ReplaceExclusionsTask {
@@ -1434,19 +1457,6 @@ impl Task for RecoverRootTask {
     }
 }
 
-impl Task for DisposeTask {
-    type Output = TaskOutcome<()>;
-    type JsValue = ();
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        Ok(self.state.dispose_join_and_drain())
-    }
-
-    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        task_result(&env, output)
-    }
-}
-
 pub struct SubscriptionState {
     initial_coverage: Coverage,
     initial_root_state: RootState,
@@ -1461,6 +1471,7 @@ pub struct SubscriptionState {
     environment: Arc<delivery::EnvironmentRecord>,
     shutdown: Arc<ShutdownGate>,
     explicit_disposal_requested: AtomicBool,
+    dispose_completion: Mutex<Option<Arc<dispose_completion::RawDisposeCompletion>>>,
     cleanup_started: AtomicBool,
     cleanup_finalizing: AtomicBool,
     cleanup_requested: AtomicBool,
@@ -1502,6 +1513,7 @@ impl SubscriptionState {
             environment,
             shutdown,
             explicit_disposal_requested: AtomicBool::new(false),
+            dispose_completion: Mutex::new(None),
             cleanup_started: AtomicBool::new(false),
             cleanup_finalizing: AtomicBool::new(false),
             cleanup_requested: AtomicBool::new(false),
@@ -1522,6 +1534,27 @@ impl SubscriptionState {
 
     fn explicit_disposal_requested(&self) -> bool {
         self.explicit_disposal_requested.load(Ordering::Acquire)
+    }
+
+    fn begin_explicit_disposal(
+        self: &Arc<Self>,
+        completion: Arc<dispose_completion::RawDisposeCompletion>,
+    ) {
+        self.mark_explicit_disposal_requested();
+        let terminal_result = {
+            let result = lock_unpoisoned(&self.cleanup_result);
+            if let Some(result) = result.as_ref() {
+                Some(result.clone())
+            } else {
+                *lock_unpoisoned(&self.dispose_completion) = Some(Arc::clone(&completion));
+                None
+            }
+        };
+        if let Some(result) = terminal_result {
+            completion.complete(Arc::clone(&self.environment), result);
+        } else {
+            self.request_background_cleanup();
+        }
     }
 
     fn publish_delivery(self: &Arc<Self>) -> NodeResult<()> {
@@ -1610,6 +1643,12 @@ impl SubscriptionState {
     pub(crate) fn abort_delivery_for_environment(&self) {
         self.delivery.close_admission_with_barrier_held();
         let _ = self.threadsafe_function.release(true);
+    }
+
+    pub(crate) fn abort_dispose_completion_for_environment(&self) {
+        if let Some(completion) = lock_unpoisoned(&self.dispose_completion).as_ref() {
+            completion.abort();
+        }
     }
 
     fn request_background_cleanup(self: &Arc<Self>) {
@@ -1746,12 +1785,59 @@ impl SubscriptionState {
         );
         result = cleanup_result_with_delivery_error(result, self.delivery.delivery_error());
         lock_unpoisoned(&self.cleanup_registration).take();
-        *lock_unpoisoned(&self.cleanup_result) = Some(result);
+        let completion = {
+            let mut cleanup_result = lock_unpoisoned(&self.cleanup_result);
+            *cleanup_result = Some(result.clone());
+            lock_unpoisoned(&self.dispose_completion).take()
+        };
         if self.cleanup_requested.swap(false, Ordering::AcqRel) {
             delivery::cleanup_request_finished();
         }
         self.cleanup_condition.notify_all();
         self.environment.notify_dispatcher();
+        if let Some(completion) = completion {
+            completion.complete(Arc::clone(&self.environment), result);
+        }
+    }
+}
+
+struct DisposePromiseReference {
+    raw: sys::napi_ref,
+}
+
+unsafe impl Send for DisposePromiseReference {}
+
+impl DisposePromiseReference {
+    fn new(env: &Env, promise: sys::napi_value) -> NodeResult<Self> {
+        let mut raw = ptr::null_mut();
+        let status = unsafe { sys::napi_create_reference(env.raw(), promise, 1, &mut raw) };
+        if status != sys::Status::napi_ok {
+            return Err(NodeErrorDetails::from_napi_status(
+                ErrorCode::ResourceUnavailable,
+                Operation::Dispose,
+                Status::from(status),
+                "Node disposal Promise reference could not be created",
+            ));
+        }
+        Ok(Self { raw })
+    }
+
+    fn get(&self, env: &Env) -> NodeResult<PromiseRaw<'static, ()>> {
+        let mut promise = ptr::null_mut();
+        let status = unsafe { sys::napi_get_reference_value(env.raw(), self.raw, &mut promise) };
+        if status != sys::Status::napi_ok {
+            return Err(NodeErrorDetails::from_napi_status(
+                ErrorCode::Internal,
+                Operation::Dispose,
+                Status::from(status),
+                "Node disposal Promise reference could not be read",
+            ));
+        }
+        Ok(PromiseRaw::new(env.raw(), promise))
+    }
+
+    fn release(self, env: &Env) {
+        let _ = unsafe { sys::napi_delete_reference(env.raw(), self.raw) };
     }
 }
 

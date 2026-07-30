@@ -32,13 +32,25 @@ async function main() {
       disposalSettled = true;
     });
     const pendingPromise = binding.subscribe(root, { batchWindowMs: 8 }, () => {});
+    let pendingSettled = false;
+    pendingPromise.finally(() => {
+      pendingSettled = true;
+    });
 
     await immediate();
-    assert.equal(disposalSettled, false, "disposal bypassed the occupied libuv worker");
+    await waitFor(
+      () => disposalSettled,
+      "disposal waited behind the occupied libuv worker",
+    );
+    assert.equal(
+      pendingSettled,
+      false,
+      "pending establishment bypassed the occupied libuv worker",
+    );
     await waitFor(() => {
       const diagnostics = binding.deliveryDiagnostics();
       return diagnostics.dispatcherThreads === 1
-        && diagnostics.activeThreadsafeFunctions === 2;
+        && diagnostics.activeThreadsafeFunctions === 1;
     }, "the pending registration did not retain the shared dispatcher");
 
     blocker.release();

@@ -805,6 +805,7 @@ impl EnvironmentRecord {
                 }
                 let state = registration.state.as_ref().and_then(Weak::upgrade);
                 if let Some(state) = state {
+                    state.abort_dispose_completion_for_environment();
                     state.abort_delivery_for_environment();
                     if registration.cleanup_hold.is_none() {
                         state.mark_environment_cleanup_requested();

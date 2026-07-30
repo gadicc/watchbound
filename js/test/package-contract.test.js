@@ -91,6 +91,15 @@ test("private manifests retain source-build development and architecture-neutral
   assert.equal(root.scripts.release, "semantic-release");
   assert.match(root.scripts.check, /check:source-version/u);
   assert.equal(root.devDependencies["semantic-release"], "25.0.8");
+  assert.equal(root.devDependencies["@parcel/watcher"], "2.5.6");
+  const dependabot = fs.readFileSync(
+    path.join(workspaceRoot, ".github/dependabot.yml"),
+    "utf8",
+  );
+  assert.match(
+    dependabot,
+    /package-ecosystem: npm[\s\S]*?ignore:[\s\S]*?- dependency-name: "@parcel\/watcher"/u,
+  );
   for (const crate of ["engine/Cargo.toml", "node/Cargo.toml"]) {
     const source = fs.readFileSync(path.join(workspaceRoot, crate), "utf8");
     assert.match(source, /^publish = false$/mu);

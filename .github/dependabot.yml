@@ -17,6 +17,10 @@ updates:
     groups:
       javascript:
         patterns: ["*"]
+    ignore:
+      # This is the exact conformance comparator, not an ordinary dependency.
+      # Change it only with an explicit benchmark-methodology review.
+      - dependency-name: "@parcel/watcher"
 
   - package-ecosystem: github-actions
     directory: /

@@ -32,6 +32,21 @@ test("installed smoke rejects excluded-prefix and descendant invalidations", () 
     ], excluded),
     false,
   );
+
+  const delayedHistory = [
+    { exclusionGeneration: 0n, invalidatedPaths: [path.join(root, "visible.txt")] },
+    { exclusionGeneration: 1n, invalidatedPaths: [path.join(excluded, "now-visible.txt")] },
+  ];
+  assert.equal(
+    hasInvalidatedPathAtOrBelow(delayedHistory, excluded, 0n),
+    false,
+    "later generations must not be charged to an earlier exclusion phase",
+  );
+  assert.equal(
+    hasInvalidatedPathAtOrBelow(delayedHistory, excluded, 1n),
+    true,
+    "the matching generation must retain excluded-namespace evidence",
+  );
 });
 
 test("installed smoke keeps its short default and accepts a bounded override", () => {

@@ -314,6 +314,18 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       () => batches.some((batch) => batch.invalidatedPaths.includes(afterRecovery)),
       "root-recovery smoke did not restore real delivery",
     );
+    await subscription.dispose();
+    subscription = undefined;
+    assert.equal(
+      hasInvalidatedPathAtOrBelow(batches, initialExcluded, 0n),
+      false,
+      "joined history exposed an initial-exclusion namespace leak",
+    );
+    assert.equal(
+      hasInvalidatedPathAtOrBelow(batches, dynamicExcluded, 1n),
+      false,
+      "joined history exposed a dynamic-exclusion namespace leak",
+    );
   } finally {
     await subscription?.dispose();
     fs.rmSync(parent, { recursive: true, force: true });

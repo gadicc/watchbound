@@ -533,15 +533,15 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(installedPackageSmoke, /options\["wait-timeout-ms"\]/u);
   assert.match(
     installedPackageSmoke,
-    /hasInvalidatedPathAtOrBelow\(batches, initialExcluded\)/u,
+    /hasInvalidatedPathAtOrBelow\(batches, initialExcluded, 0n\)/u,
   );
   assert.match(
     installedPackageSmoke,
-    /hasInvalidatedPathAtOrBelow\(batches, dynamicExcluded\)/u,
+    /hasInvalidatedPathAtOrBelow\(batches, dynamicExcluded, 1n\)/u,
   );
   assert.match(
     electronAsarSmoke,
-    /hasInvalidatedPathAtOrBelow\(batches, excluded\)/u,
+    /hasInvalidatedPathAtOrBelow\(batches, excluded, 0n\)/u,
   );
   assert.match(electronAsarCheck, /exclusion-smoke-helpers\.cjs/u);
   assert.match(distroPackageSmoke, /--wait-timeout-ms/u);

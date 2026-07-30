@@ -57,6 +57,13 @@ async function main() {
     );
     const reconciliation = await subscription.reconcile();
     assert.equal(reconciliation.coverage.state, "complete");
+    await subscription.dispose();
+    subscription = undefined;
+    assert.equal(
+      hasInvalidatedPathAtOrBelow(batches, excluded, 0n),
+      false,
+      "joined Electron ASAR history exposed an exclusion namespace leak",
+    );
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });

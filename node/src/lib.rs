@@ -1342,6 +1342,7 @@ impl NativeSubscription {
 
     #[napi(ts_return_type = "Promise<void>")]
     pub fn dispose(&self) -> AsyncTask<DisposeTask> {
+        self.state.mark_explicit_disposal_requested();
         self.state.close_delivery_admission();
         AsyncTask::new(DisposeTask {
             state: Arc::clone(&self.state),
@@ -1354,9 +1355,13 @@ impl Drop for NativeSubscription {
         if self.state.cleanup_finished() {
             return;
         }
-        // A collected JavaScript subscription has no explicit joiner. Do not
-        // let a never-settling user promise retain native watcher state.
-        self.state.delivery.abandon_in_flight();
+        // A collected JavaScript subscription without an explicit joiner must
+        // not let a never-settling user promise retain native watcher state.
+        // Once dispose() has returned its Promise, however, receiver GC cannot
+        // weaken that Promise's joined callback-completion guarantee.
+        if !self.state.explicit_disposal_requested() {
+            self.state.delivery.abandon_in_flight();
+        }
         self.state.request_background_cleanup();
     }
 }
@@ -1455,6 +1460,7 @@ pub struct SubscriptionState {
     delivery: Arc<delivery::DeliveryState>,
     environment: Arc<delivery::EnvironmentRecord>,
     shutdown: Arc<ShutdownGate>,
+    explicit_disposal_requested: AtomicBool,
     cleanup_started: AtomicBool,
     cleanup_finalizing: AtomicBool,
     cleanup_requested: AtomicBool,
@@ -1495,6 +1501,7 @@ impl SubscriptionState {
             delivery,
             environment,
             shutdown,
+            explicit_disposal_requested: AtomicBool::new(false),
             cleanup_started: AtomicBool::new(false),
             cleanup_finalizing: AtomicBool::new(false),
             cleanup_requested: AtomicBool::new(false),
@@ -1506,6 +1513,15 @@ impl SubscriptionState {
         });
         state.delivery.attach_state(&state);
         state
+    }
+
+    fn mark_explicit_disposal_requested(&self) {
+        self.explicit_disposal_requested
+            .store(true, Ordering::Release);
+    }
+
+    fn explicit_disposal_requested(&self) -> bool {
+        self.explicit_disposal_requested.load(Ordering::Acquire)
     }
 
     fn publish_delivery(self: &Arc<Self>) -> NodeResult<()> {

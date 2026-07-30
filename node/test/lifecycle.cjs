@@ -513,6 +513,19 @@ test("concurrent native dispose calls join once and resolve together", async () 
   }
 });
 
+test("native explicit disposal retains callback ownership after receiver GC", {
+  timeout: 15_000,
+}, async () => {
+  await execFileAsync(
+    process.execPath,
+    [
+      "--expose-gc",
+      path.join(__dirname, "fixtures", "gc-during-explicit-dispose.cjs"),
+    ],
+    { timeout: 10_000 },
+  );
+});
+
 test("native binding reports partial coverage at a caller watch limit", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-limit-"));
   let subscription;

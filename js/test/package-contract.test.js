@@ -267,6 +267,14 @@ test("manual qualification is read-only while semantic release stays push-only",
     path.join(workspaceRoot, "scripts/run-kernel-baseline-qualification.mjs"),
     "utf8",
   );
+  const installedPackageSmoke = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
+    "utf8",
+  );
+  const distroPackageSmoke = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/fixtures/distro-package-smoke.sh"),
+    "utf8",
+  );
   const selectReleasePlan = fs.readFileSync(
     path.join(workspaceRoot, "scripts/select-release-plan.mjs"),
     "utf8",
@@ -491,7 +499,21 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(kernelBaseline, /architectureEvidence/u);
   assert.match(kernelBaseline, /not provided by this QEMU lane/u);
   assert.match(kernelBaseline, /installed-package-smoke-helpers\.mjs/u);
+  assert.match(
+    kernelBaseline,
+    /const KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS = 30_000;/u,
+  );
+  assert.match(
+    kernelBaseline,
+    /target\.architecture === "arm64"[\s\S]*?KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS/u,
+  );
+  assert.match(
+    kernelBaseline,
+    /variables\.WATCHBOUND_WAIT_TIMEOUT_MS = String\(waitTimeoutMs\)/u,
+  );
   assert.match(kernelBaseline, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed/u);
+  assert.match(installedPackageSmoke, /options\["wait-timeout-ms"\]/u);
+  assert.match(distroPackageSmoke, /--wait-timeout-ms/u);
   assert.match(selectReleasePlan, /watchbound-release-plan/u);
   assert.match(selectReleasePlan, /plan\.schemaVersion, 2/u);
   assert.match(selectReleasePlan, /plan\.sourceVersion, SOURCE_VERSION/u);

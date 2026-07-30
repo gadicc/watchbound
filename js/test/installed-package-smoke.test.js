@@ -1,7 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { recoverStableReplacement } from "../../scripts/installed-package-smoke-helpers.mjs";
+import {
+  DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+  parseInstalledSmokeWaitTimeoutMs,
+  recoverStableReplacement,
+} from "../../scripts/installed-package-smoke-helpers.mjs";
+
+test("installed smoke keeps its short default and accepts a bounded override", () => {
+  assert.equal(
+    parseInstalledSmokeWaitTimeoutMs(undefined),
+    DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+  );
+  assert.equal(parseInstalledSmokeWaitTimeoutMs("30000"), 30_000);
+});
+
+test("installed smoke rejects malformed or excessive wait overrides", () => {
+  for (const value of [
+    "0",
+    "-1",
+    "4.5",
+    " 4000",
+    "4000ms",
+    "60001",
+    "9007199254740992",
+  ]) {
+    assert.throws(
+      () => parseInstalledSmokeWaitTimeoutMs(value),
+      /integer from 1 through 60000/u,
+    );
+  }
+});
 
 test("installed smoke retries transient identity instability", async () => {
   const attempts = [

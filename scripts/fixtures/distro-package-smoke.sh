@@ -13,6 +13,10 @@ test "$($node --version)" = v24.15.0
 test "$($node -p 'process.arch')" = "$WATCHBOUND_NODE_ARCH"
 project="$(mktemp -d)"
 trap 'rm -rf "$project"' EXIT
+wait_timeout_args=()
+if [[ -n "${WATCHBOUND_WAIT_TIMEOUT_MS:-}" ]]; then
+  wait_timeout_args=(--wait-timeout-ms "$WATCHBOUND_WAIT_TIMEOUT_MS")
+fi
 cd "$project"
 printf '{"private":true,"type":"module"}\n' > package.json
 "$node" "$npm" install \
@@ -32,4 +36,5 @@ printf '{"private":true,"type":"module"}\n' > package.json
   --native-target "$WATCHBOUND_TARGET_ID" \
   --native-sha256 "$WATCHBOUND_NATIVE_SHA256" \
   --route "distro:$WATCHBOUND_LANE" \
-  --evidence "$WATCHBOUND_EVIDENCE"
+  --evidence "$WATCHBOUND_EVIDENCE" \
+  "${wait_timeout_args[@]}"

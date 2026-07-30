@@ -5,13 +5,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+} from "./installed-package-smoke-helpers.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
+const KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS = 30_000;
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseOptions(process.argv.slice(2));
 const matrix = loadNativeMatrix(workspaceRoot);
 const target = targetForId(matrix, options.target);
+const guestWaitTimeoutOverrideMs =
+  target.architecture === "arm64"
+    ? KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS
+    : undefined;
 const baseline = matrix.kernelBaselineQualification;
 const artifactSet = baseline.artifacts[target.architecture];
 assert.ok(artifactSet, `kernel baseline omits ${target.architecture}`);
@@ -74,7 +82,14 @@ try {
   fs.chmodSync(guestInit, 0o755);
   fs.writeFileSync(
     path.join(rootfs, "etc/watchbound-kernel-baseline.env"),
-    guestEnvironment({ baseline, nativeSha256, target, tarballs, version }),
+    guestEnvironment({
+      baseline,
+      nativeSha256,
+      target,
+      tarballs,
+      version,
+      waitTimeoutMs: guestWaitTimeoutOverrideMs,
+    }),
   );
 
   fs.closeSync(fs.openSync(disk, "w"));
@@ -120,6 +135,10 @@ try {
   assert.equal(smoke.host.architecture, target.architecture);
   assert.equal(smoke.host.kernel, baseline.kernelRelease);
   assert.equal(smoke.host.glibc, "2.35");
+  assert.equal(
+    smoke.waitTimeoutMs,
+    guestWaitTimeoutOverrideMs ?? DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+  );
   assert.equal(smoke.native.sha256, nativeSha256);
 
   const evidence = {
@@ -170,7 +189,14 @@ try {
   fs.rmSync(temporaryRoot, { recursive: true, force: true });
 }
 
-function guestEnvironment({ baseline: selectedBaseline, nativeSha256: nativeHash, target: selectedTarget, tarballs: selectedTarballs, version: selectedVersion }) {
+function guestEnvironment({
+  baseline: selectedBaseline,
+  nativeSha256: nativeHash,
+  target: selectedTarget,
+  tarballs: selectedTarballs,
+  version: selectedVersion,
+  waitTimeoutMs,
+}) {
   const variables = {
     WATCHBOUND_TARGET_ID: selectedTarget.id,
     WATCHBOUND_TARGET_PACKAGE: selectedTarget.package,
@@ -185,6 +211,9 @@ function guestEnvironment({ baseline: selectedBaseline, nativeSha256: nativeHash
     WATCHBOUND_EVIDENCE: "/tmp/watchbound-kernel-baseline-smoke.json",
     WATCHBOUND_KERNEL_RELEASE: selectedBaseline.kernelRelease,
   };
+  if (waitTimeoutMs !== undefined) {
+    variables.WATCHBOUND_WAIT_TIMEOUT_MS = String(waitTimeoutMs);
+  }
   return `${Object.entries(variables).map(([name, value]) => `export ${name}=${shellQuote(value)}`).join("\n")}\n`;
 }
 

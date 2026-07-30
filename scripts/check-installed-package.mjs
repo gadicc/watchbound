@@ -6,13 +6,19 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { recoverStableReplacement } from "./installed-package-smoke-helpers.mjs";
+import {
+  parseInstalledSmokeWaitTimeoutMs,
+  recoverStableReplacement,
+} from "./installed-package-smoke-helpers.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const waitTimeoutMs = parseInstalledSmokeWaitTimeoutMs(
+  options["wait-timeout-ms"],
+);
 const projectRoot = path.resolve(options.project);
 const wrapperRoot = options["wrapper-path"]
   ? path.resolve(options["wrapper-path"])
@@ -40,6 +46,7 @@ const evidence = {
   expectedVersion: options.version,
   expectedNativeTarget: options["native-target"] ?? nativeTarget.id,
   expectedNativeSha256: options["native-sha256"],
+  waitTimeoutMs,
   startedAt: new Date().toISOString(),
   host: {
     platform: process.platform,
@@ -287,7 +294,9 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       () => subscription.rootState.attachment === "lost",
       "root replacement did not become explicitly lost",
     );
-    const recovery = await recoverStableReplacement(subscription);
+    const recovery = await recoverStableReplacement(subscription, {
+      timeoutMs: waitTimeoutMs,
+    });
     assert.equal(
       recovery.attachment,
       "replacement-adopted",
@@ -476,7 +485,7 @@ function processResources() {
 }
 
 async function waitFor(predicate, message) {
-  const deadline = Date.now() + 4_000;
+  const deadline = Date.now() + waitTimeoutMs;
   while (!predicate() && Date.now() < deadline) await delay(10);
   assert.ok(predicate(), message);
 }
@@ -498,7 +507,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-installed-package.mjs --project <path> --wrapper <name> --version <version> --native-sha256 <digest> --route <route> [--native-target <id>] [--wrapper-path <path>] [--evidence <path>]",
+        "usage: check-installed-package.mjs --project <path> --wrapper <name> --version <version> --native-sha256 <digest> --route <route> [--native-target <id>] [--wrapper-path <path>] [--evidence <path>] [--wait-timeout-ms <milliseconds>]",
       );
     }
     parsed[flag.slice(2)] = value;

@@ -129,6 +129,7 @@
             mkdir -p "$TMPDIR/app"
             cp -R ${watchboundPackage}/lib/node_modules "$TMPDIR/app/node_modules"
             cp ${sourceRoot}/scripts/fixtures/electron-asar-smoke.cjs "$TMPDIR/app/index.cjs"
+            cp ${sourceRoot}/scripts/fixtures/exclusion-smoke-helpers.cjs "$TMPDIR/app/exclusion-smoke-helpers.cjs"
             echo '{"private":true,"main":"index.cjs"}' > "$TMPDIR/app/package.json"
             asar pack "$TMPDIR/app" "$TMPDIR/app.asar" --unpack "*.node"
             native="${watchboundPackage}/lib/node_modules/${target.package}/${target.binary}"

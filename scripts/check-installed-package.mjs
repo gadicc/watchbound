@@ -6,10 +6,13 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import exclusionSmokeHelpers from "./fixtures/exclusion-smoke-helpers.cjs";
 import {
   parseInstalledSmokeWaitTimeoutMs,
   recoverStableReplacement,
 } from "./installed-package-smoke-helpers.mjs";
+
+const { hasInvalidatedPathAtOrBelow } = exclusionSmokeHelpers;
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -235,8 +238,10 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
   );
   const root = path.join(parent, "root");
   const movedRoot = path.join(parent, "root-old");
-  fs.mkdirSync(path.join(root, "initial-hidden"), { recursive: true });
-  fs.mkdirSync(path.join(root, "dynamic-hidden"), { recursive: true });
+  const initialExcluded = path.join(root, "initial-hidden");
+  const dynamicExcluded = path.join(root, "dynamic-hidden");
+  fs.mkdirSync(initialExcluded, { recursive: true });
+  fs.mkdirSync(dynamicExcluded, { recursive: true });
   const batches = [];
   let subscription;
   try {
@@ -251,7 +256,7 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
     );
     assert.equal(subscription.initialCoverage.state, "complete");
 
-    const initialHidden = path.join(root, "initial-hidden", "hidden.txt");
+    const initialHidden = path.join(initialExcluded, "hidden.txt");
     const initialVisible = path.join(root, "visible.txt");
     fs.writeFileSync(initialHidden, "hidden");
     fs.writeFileSync(initialVisible, "visible");
@@ -260,9 +265,9 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       "initial-exclusion smoke did not deliver the visible path",
     );
     assert.equal(
-      batches.some((batch) => batch.invalidatedPaths.includes(initialHidden)),
+      hasInvalidatedPathAtOrBelow(batches, initialExcluded),
       false,
-      "initial exclusion leaked a hidden path",
+      "initial exclusion leaked its prefix or a descendant path",
     );
 
     const replacementCoverage = await subscription.replaceExclusions(
@@ -270,7 +275,7 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       ["dynamic-hidden"],
     );
     assert.equal(replacementCoverage.state, "complete");
-    const dynamicHidden = path.join(root, "dynamic-hidden", "hidden.txt");
+    const dynamicHidden = path.join(dynamicExcluded, "hidden.txt");
     const nowVisible = path.join(root, "initial-hidden", "now-visible.txt");
     fs.writeFileSync(dynamicHidden, "hidden");
     fs.writeFileSync(nowVisible, "visible");
@@ -279,9 +284,9 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       "dynamic-exclusion smoke did not deliver the newly visible path",
     );
     assert.equal(
-      batches.some((batch) => batch.invalidatedPaths.includes(dynamicHidden)),
+      hasInvalidatedPathAtOrBelow(batches, dynamicExcluded),
       false,
-      "dynamic exclusion leaked a hidden path",
+      "dynamic exclusion leaked its prefix or a descendant path",
     );
 
     const reconciliation = await subscription.reconcile();

@@ -35,6 +35,10 @@ try {
     path.join(workspaceRoot, "scripts/fixtures/electron-asar-smoke.cjs"),
     path.join(appRoot, "index.cjs"),
   );
+  fs.copyFileSync(
+    path.join(workspaceRoot, "scripts/fixtures/exclusion-smoke-helpers.cjs"),
+    path.join(appRoot, "exclusion-smoke-helpers.cjs"),
+  );
   writeJson(path.join(appRoot, "package.json"), {
     private: true,
     main: "index.cjs",

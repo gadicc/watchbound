@@ -5,6 +5,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
+const {
+  hasInvalidatedPathAtOrBelow,
+} = require("./exclusion-smoke-helpers.cjs");
 
 void main().catch((error) => {
   process.stderr.write(`${error?.stack ?? error}\n`);
@@ -38,7 +41,8 @@ async function main() {
       { initialExclusions: ["hidden"], batchWindowMs: 5 },
     );
     assert.equal(subscription.initialCoverage.state, "complete");
-    const hidden = path.join(root, "hidden", "ignored.txt");
+    const excluded = path.join(root, "hidden");
+    const hidden = path.join(excluded, "ignored.txt");
     const visible = path.join(root, "visible.txt");
     fs.writeFileSync(hidden, "ignored");
     fs.writeFileSync(visible, "visible");
@@ -47,8 +51,9 @@ async function main() {
       "Electron ASAR callback was not delivered",
     );
     assert.equal(
-      batches.some((batch) => batch.invalidatedPaths.includes(hidden)),
+      hasInvalidatedPathAtOrBelow(batches, excluded),
       false,
+      "Electron ASAR initial exclusion leaked its prefix or a descendant path",
     );
     const reconciliation = await subscription.reconcile();
     assert.equal(reconciliation.coverage.state, "complete");

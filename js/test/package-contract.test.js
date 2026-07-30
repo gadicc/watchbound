@@ -280,6 +280,14 @@ test("manual qualification is read-only while semantic release stays push-only",
     path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
     "utf8",
   );
+  const electronAsarCheck = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/check-electron-asar.mjs"),
+    "utf8",
+  );
+  const electronAsarSmoke = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/fixtures/electron-asar-smoke.cjs"),
+    "utf8",
+  );
   const distroPackageSmoke = fs.readFileSync(
     path.join(workspaceRoot, "scripts/fixtures/distro-package-smoke.sh"),
     "utf8",
@@ -521,7 +529,21 @@ test("manual qualification is read-only while semantic release stays push-only",
     /variables\.WATCHBOUND_WAIT_TIMEOUT_MS = String\(waitTimeoutMs\)/u,
   );
   assert.match(kernelBaseline, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed/u);
+  assert.match(kernelBaseline, /exclusion-smoke-helpers\.cjs/u);
   assert.match(installedPackageSmoke, /options\["wait-timeout-ms"\]/u);
+  assert.match(
+    installedPackageSmoke,
+    /hasInvalidatedPathAtOrBelow\(batches, initialExcluded\)/u,
+  );
+  assert.match(
+    installedPackageSmoke,
+    /hasInvalidatedPathAtOrBelow\(batches, dynamicExcluded\)/u,
+  );
+  assert.match(
+    electronAsarSmoke,
+    /hasInvalidatedPathAtOrBelow\(batches, excluded\)/u,
+  );
+  assert.match(electronAsarCheck, /exclusion-smoke-helpers\.cjs/u);
   assert.match(distroPackageSmoke, /--wait-timeout-ms/u);
   assert.match(selectReleasePlan, /watchbound-release-plan/u);
   assert.match(selectReleasePlan, /plan\.schemaVersion, 2/u);
@@ -543,6 +565,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(flake, /patchelf/u);
   assert.match(flake, /generate-nix-package\.mjs/u);
   assert.match(flake, /asar pack/u);
+  assert.match(flake, /exclusion-smoke-helpers\.cjs/u);
   assert.doesNotMatch(flake, /npm (?:install|ci)/u);
 });
 

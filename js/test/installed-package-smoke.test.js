@@ -1,11 +1,38 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
+import exclusionSmokeHelpers from "../../scripts/fixtures/exclusion-smoke-helpers.cjs";
 import {
   DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
   parseInstalledSmokeWaitTimeoutMs,
   recoverStableReplacement,
 } from "../../scripts/installed-package-smoke-helpers.mjs";
+
+const { hasInvalidatedPathAtOrBelow } = exclusionSmokeHelpers;
+
+test("installed smoke rejects excluded-prefix and descendant invalidations", () => {
+  const root = path.join(path.sep, "tmp", "watchbound-smoke");
+  const excluded = path.join(root, "hidden");
+  const batch = (invalidatedPaths) => ({ invalidatedPaths });
+
+  assert.equal(
+    hasInvalidatedPathAtOrBelow([batch([excluded])], excluded),
+    true,
+  );
+  assert.equal(
+    hasInvalidatedPathAtOrBelow([
+      batch([path.join(excluded, "deep", "changed.txt")]),
+    ], excluded),
+    true,
+  );
+  assert.equal(
+    hasInvalidatedPathAtOrBelow([
+      batch([root, `${excluded}-sibling`, path.join(root, "visible.txt")]),
+    ], excluded),
+    false,
+  );
+});
 
 test("installed smoke keeps its short default and accepts a bounded override", () => {
   assert.equal(

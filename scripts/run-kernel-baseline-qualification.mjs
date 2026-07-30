@@ -77,7 +77,10 @@ try {
     path.join(rootfs, "work/scripts"),
   );
   copyFiles(
-    [path.join(workspaceRoot, "scripts/fixtures/distro-package-smoke.sh")],
+    [
+      path.join(workspaceRoot, "scripts/fixtures/distro-package-smoke.sh"),
+      path.join(workspaceRoot, "scripts/fixtures/exclusion-smoke-helpers.cjs"),
+    ],
     path.join(rootfs, "work/scripts/fixtures"),
   );
   const guestInit = path.join(rootfs, "watchbound-init");

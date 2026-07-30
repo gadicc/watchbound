@@ -903,6 +903,7 @@ struct PendingRootRecovery {
     candidate_identity: RootIdentity,
     starting_uncertainty: Option<UncertainReason>,
     starting_uncertainty_epoch: u64,
+    later_uncertainty: Option<UncertainReason>,
     candidate_unstable: bool,
 }
 
@@ -1111,12 +1112,11 @@ impl SubscriptionState {
 
     fn mark_uncertain(&mut self, reason: UncertainReason, invalidated_path: PathBuf) {
         self.uncertainty_epoch = self.uncertainty_epoch.saturating_add(1);
-        self.uncertain_reason = Some(match self.uncertain_reason {
-            Some(current) if uncertainty_priority(current) >= uncertainty_priority(reason) => {
-                current
-            }
-            _ => reason,
-        });
+        if let Some(recovery) = self.root_recovery.as_mut() {
+            recovery.later_uncertainty =
+                Some(strongest_uncertainty(recovery.later_uncertainty, reason));
+        }
+        self.uncertain_reason = Some(strongest_uncertainty(self.uncertain_reason, reason));
         self.queue_path(invalidated_path);
     }
 
@@ -1829,6 +1829,7 @@ impl Worker {
                                     candidate_identity,
                                     starting_uncertainty: state.uncertain_reason,
                                     starting_uncertainty_epoch: state.uncertainty_epoch,
+                                    later_uncertainty: None,
                                     candidate_unstable: false,
                                 });
                                 self.progress_root_recovery(&mut state);
@@ -3339,12 +3340,16 @@ impl Worker {
         state.root_lost = false;
         state.root_loss_evidence = None;
         state.next_root_identity_check = Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
-        let clears_root_uncertainty = state.uncertainty_epoch
-            == recovery.starting_uncertainty_epoch
-            && state.uncertain_reason == recovery.starting_uncertainty
-            && state.uncertain_reason == Some(UncertainReason::RootReplaced);
-        if clears_root_uncertainty {
-            state.uncertain_reason = None;
+        // The committed traversal discharges the root-loss reason that started
+        // recovery, but it cannot discharge uncertainty observed after capture.
+        if recovery.starting_uncertainty == Some(UncertainReason::RootReplaced) {
+            match recovery.later_uncertainty {
+                Some(reason) => state.uncertain_reason = Some(reason),
+                None if state.uncertainty_epoch == recovery.starting_uncertainty_epoch => {
+                    state.uncertain_reason = None;
+                }
+                None => {}
+            }
         }
         state.pending_paths.clear();
         state.pending_started = None;
@@ -4544,6 +4549,18 @@ fn uncertainty_priority(reason: UncertainReason) -> u8 {
         UncertainReason::TopologyRace => 2,
         UncertainReason::RootReplaced => 3,
         UncertainReason::EventOverflow => 4,
+    }
+}
+
+fn strongest_uncertainty(
+    current: Option<UncertainReason>,
+    candidate: UncertainReason,
+) -> UncertainReason {
+    match current {
+        Some(current) if uncertainty_priority(current) >= uncertainty_priority(candidate) => {
+            current
+        }
+        _ => candidate,
     }
 }
 
@@ -6342,6 +6359,53 @@ mod tests {
             })
         );
         assert!(worker.exhausted_watch_descriptors.contains(&descriptor));
+    }
+
+    #[test]
+    fn root_recovery_retains_the_strongest_later_recoverable_uncertainty() {
+        let root = TestRoot::new("root-recovery-later-uncertainty");
+        let (mut state, batches) = state(&root.0, SubscriptionOptions::default());
+        state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
+        let previous_root_state = state.root_state();
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        state.root_recovery = Some(PendingRootRecovery {
+            acknowledgement,
+            phase: RootRecoveryPhase::Scanning,
+            previous_root_state,
+            candidate_identity: state.root_identity,
+            starting_uncertainty: state.uncertain_reason,
+            starting_uncertainty_epoch: state.uncertainty_epoch,
+            later_uncertainty: None,
+            candidate_unstable: false,
+        });
+
+        state.mark_uncertain(UncertainReason::ConsumerBackpressure, root.0.clone());
+        state.mark_uncertain(UncertainReason::TopologyRace, root.0.clone());
+        state.mark_uncertain(UncertainReason::ConsumerBackpressure, root.0.clone());
+        let mut worker = worker();
+        worker.commit_root_recovery(&mut state);
+
+        let expected = Coverage::Uncertain {
+            reason: UncertainReason::TopologyRace,
+        };
+        let result = acknowledged.recv().unwrap().value.unwrap();
+        assert_eq!(result.attachment, RootRecoveryAttachment::OriginalRestored);
+        assert_eq!(
+            result.current_root_state.attachment,
+            RootAttachment::Attached
+        );
+        assert_eq!(result.coverage, expected);
+        assert_eq!(batches.recv().unwrap().coverage, expected);
+        assert_eq!(state.coverage(), expected);
+
+        let reconciliation = prepare_reconciliation(&mut state, UncertainReason::TopologyRace);
+        worker.commit_reconciliation(&mut state);
+
+        assert_eq!(
+            reconciliation.recv().unwrap().value.unwrap().coverage,
+            Coverage::Complete
+        );
+        assert_eq!(batches.recv().unwrap().coverage, Coverage::Complete);
     }
 
     #[test]

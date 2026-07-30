@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
 } from "./installed-package-smoke-helpers.mjs";
+import {
+  assertCleanQemuCompletion,
+} from "./kernel-baseline-qualification-helpers.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
@@ -126,7 +129,7 @@ try {
   });
   const serial = `${qemu.stdout ?? ""}${qemu.stderr ?? ""}`;
   process.stdout.write(serial);
-  if (qemu.error) throw qemu.error;
+  assertCleanQemuCompletion(qemu);
   assert.match(serial, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed\r?$/mu);
   const encoded = serial.match(/^WATCHBOUND_KERNEL_BASELINE_EVIDENCE=([A-Za-z0-9+/=]+)\r?$/mu)?.[1];
   assert.ok(encoded, "kernel baseline guest did not return its smoke evidence");

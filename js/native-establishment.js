@@ -24,6 +24,7 @@ export async function establishNativeSubscription({
   options,
   callback,
   buildSubscription,
+  prepareProvisionalDisposal = () => {},
 }) {
   validateNativeIntegerOptions(options);
   let signal;
@@ -43,7 +44,11 @@ export async function establishNativeSubscription({
       "subscribe",
       () => nativeEngine.subscribe(root, nativeOptions, callback),
     );
-    return buildOrDispose(nativeSubscription, buildSubscription);
+    return buildOrDispose(
+      nativeSubscription,
+      buildSubscription,
+      prepareProvisionalDisposal,
+    );
   }
   if (signalAccess.aborted()) {
     throw operationCancelledError();
@@ -117,10 +122,17 @@ export async function establishNativeSubscription({
         throw operationCancelledError();
       }
     } catch (error) {
-      await disposeProvisional(nativeSubscription);
+      await disposeProvisional(
+        nativeSubscription,
+        prepareProvisionalDisposal,
+      );
       throw error;
     }
-    return buildOrDispose(nativeSubscription, buildSubscription);
+    return buildOrDispose(
+      nativeSubscription,
+      buildSubscription,
+      prepareProvisionalDisposal,
+    );
   } finally {
     if (listenerAddAttempted && !listenerRemoved) {
       try {
@@ -223,20 +235,33 @@ function validateAbortSignal(signal) {
   };
 }
 
-async function buildOrDispose(nativeSubscription, buildSubscription) {
+async function buildOrDispose(
+  nativeSubscription,
+  buildSubscription,
+  prepareProvisionalDisposal,
+) {
   try {
     return buildSubscription(nativeSubscription);
   } catch (error) {
-    await disposeProvisional(nativeSubscription);
+    await disposeProvisional(
+      nativeSubscription,
+      prepareProvisionalDisposal,
+    );
     return invokeWatchbound("subscribe", () => {
       throw error;
     });
   }
 }
 
-function disposeProvisional(nativeSubscription) {
+function disposeProvisional(
+  nativeSubscription,
+  prepareProvisionalDisposal,
+) {
   return invokeWatchbound(
     "dispose",
-    () => nativeSubscription.dispose(),
+    () => {
+      prepareProvisionalDisposal();
+      return nativeSubscription.dispose();
+    },
   );
 }

@@ -101,13 +101,19 @@ function createFixture({
   return { calls, nativeEngine, token };
 }
 
-async function establish(nativeEngine, options, buildSubscription = (value) => value) {
+async function establish(
+  nativeEngine,
+  options,
+  buildSubscription = (value) => value,
+  prepareProvisionalDisposal = () => {},
+) {
   return establishNativeSubscription({
     nativeEngine,
     root: "/tmp/watchbound-cancellation-test",
     options,
     callback: () => {},
     buildSubscription,
+    prepareProvisionalDisposal,
   });
 }
 
@@ -495,8 +501,14 @@ test("cancellation after provisional native success joins disposal before reject
   const signal = new FakeAbortSignal();
   const disposal = deferred();
   let disposed = 0;
+  let callbackContextAborted = false;
   const provisional = {
     dispose() {
+      assert.equal(
+        callbackContextAborted,
+        true,
+        "provisional callback context was not aborted before joined disposal",
+      );
       disposed += 1;
       return disposal.promise;
     },
@@ -509,7 +521,14 @@ test("cancellation after provisional native success joins disposal before reject
     commitPublicSuccess: () => false,
   });
   let settled = false;
-  const result = establish(nativeEngine, { signal }).finally(() => {
+  const result = establish(
+    nativeEngine,
+    { signal },
+    undefined,
+    () => {
+      callbackContextAborted = true;
+    },
+  ).finally(() => {
     settled = true;
   });
 
@@ -645,10 +664,16 @@ test("a post-handoff signal getter failure joins provisional disposal", async ()
 test("public wrapper construction failure joins native disposal", async () => {
   const signal = new FakeAbortSignal();
   let disposed = 0;
+  let callbackContextAborted = false;
   const constructionFailure = new Error("wrapper construction failed");
   const { calls, nativeEngine } = createFixture({
     subscribe: () => ({
       dispose: async () => {
+        assert.equal(
+          callbackContextAborted,
+          true,
+          "provisional callback context was not aborted before construction rollback",
+        );
         disposed += 1;
       },
     }),
@@ -657,6 +682,8 @@ test("public wrapper construction failure joins native disposal", async () => {
   await assert.rejects(
     establish(nativeEngine, { signal }, () => {
       throw constructionFailure;
+    }, () => {
+      callbackContextAborted = true;
     }),
     (error) => {
       assert.equal(error.code, "WATCHBOUND_INTERNAL");

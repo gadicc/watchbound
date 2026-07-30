@@ -142,6 +142,9 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
     root: absoluteRoot,
     options: nativeOptions,
     callback: createNativeCallback(weakCallbackHolder, resolvedRoot),
+    prepareProvisionalDisposal() {
+      callbackHolder.abortController.abort();
+    },
     buildSubscription(nativeSubscription) {
       const automaticPolicy = automaticConfig === null
         ? null

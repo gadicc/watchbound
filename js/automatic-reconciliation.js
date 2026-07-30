@@ -271,6 +271,14 @@ export function createAutomaticReconciliationPolicy(
         }),
       );
     }
+    if (activePromise !== null) {
+      return Promise.reject(
+        new WatchboundError("automatic reconciliation is already in progress", {
+          code: WatchboundErrorCode.TOPOLOGY_TRANSACTION_CONFLICT,
+          operation: "recover-root",
+        }),
+      );
+    }
     const previous = {
       status: currentStatus,
       terminalLatch,

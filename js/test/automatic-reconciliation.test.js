@@ -313,6 +313,53 @@ test("root recovery ignores an older-generation loss batch but retains a later o
   assert.deepEqual(policy.status(), { state: "blocked", reason: "root-replaced" });
 });
 
+test("explicit root recovery rejects while automatic reconciliation owns the topology gate", async () => {
+  const clock = createClock();
+  const activeAttempt = deferred();
+  let nativeRecoveries = 0;
+  const policy = createAutomaticReconciliationPolicy(
+    { maxAttempts: 3, initialDelayMs: 5, maxDelayMs: 20 },
+    async () => {
+      await activeAttempt.promise;
+      return { exclusionGeneration: 6n, coverage: complete };
+    },
+    clock,
+  );
+
+  policy.observe({ state: "uncertain", reason: "event-overflow" });
+  clock.runNext();
+  await flush();
+  assert.equal(policy.status().state, "reconciling");
+
+  await assert.rejects(
+    policy.recoverRoot("accept-replacement", async () => {
+      nativeRecoveries += 1;
+      return {
+        attachment: "replacement-adopted",
+        currentRootState: { generation: 1n, attachment: "attached" },
+        coverage: complete,
+      };
+    }),
+    (error) => {
+      assert.equal(error.code, WatchboundErrorCode.TOPOLOGY_TRANSACTION_CONFLICT);
+      assert.equal(error.operation, "recover-root");
+      return true;
+    },
+  );
+  assert.equal(nativeRecoveries, 0);
+  assert.equal(policy.status().state, "reconciling");
+
+  activeAttempt.resolve();
+  await flush();
+  assert.deepEqual(policy.status(), {
+    state: "recovered",
+    reason: "event-overflow",
+    attempts: 1,
+    exclusionGeneration: 6n,
+    coverage: complete,
+  });
+});
+
 test("disposal joins an explicit root recovery already in flight", async () => {
   const clock = createClock();
   const rootRecovery = deferred();

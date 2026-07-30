@@ -32,17 +32,35 @@ export async function recoverStableReplacement(
   } = {},
 ) {
   const deadline = now() + timeoutMs;
-  while (true) {
-    const recovery = await subscription.recoverRoot({
-      identityPolicy: "accept-replacement",
-    });
-    if (
-      recovery.attachment !== "not-attached" ||
-      recovery.reason !== "identity-unstable" ||
-      now() >= deadline
-    ) {
-      return recovery;
+  const deadlineController = new AbortController();
+  const deadlineReached = delay(
+    timeoutMs,
+    undefined,
+    { signal: deadlineController.signal },
+  ).then(() => {
+    throw new Error(`root recovery did not settle within ${timeoutMs}ms`);
+  });
+  try {
+    while (true) {
+      const recovery = await Promise.race([
+        Promise.resolve().then(() => subscription.recoverRoot({
+          identityPolicy: "accept-replacement",
+        })),
+        deadlineReached,
+      ]);
+      if (
+        recovery.attachment !== "not-attached" ||
+        recovery.reason !== "identity-unstable" ||
+        now() >= deadline
+      ) {
+        return recovery;
+      }
+      await Promise.race([
+        Promise.resolve().then(() => sleep(retryDelayMs)),
+        deadlineReached,
+      ]);
     }
-    await sleep(retryDelayMs);
+  } finally {
+    deadlineController.abort();
   }
 }

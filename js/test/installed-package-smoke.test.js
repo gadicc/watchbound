@@ -143,3 +143,22 @@ test("installed smoke bounds repeated identity instability", async () => {
   assert.equal(calls, 2);
   assert.equal(sleeps, 1);
 });
+
+test("installed smoke bounds a recovery operation that never settles", {
+  timeout: 1_000,
+}, async () => {
+  let calls = 0;
+  await assert.rejects(
+    recoverStableReplacement(
+      {
+        recoverRoot: async () => {
+          calls += 1;
+          await new Promise(() => {});
+        },
+      },
+      { timeoutMs: 25 },
+    ),
+    /root recovery did not settle within 25ms/u,
+  );
+  assert.equal(calls, 1);
+});

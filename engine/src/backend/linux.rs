@@ -2711,6 +2711,12 @@ impl Worker {
                 && state.topology_barriers == 0
         });
         if ready_to_start {
+            let root_stable = RootIdentity::capture(&state.root)
+                .is_ok_and(|identity| identity == state.root_identity);
+            if !root_stable {
+                state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
+                return;
+            }
             state.flush();
             let boundary_dropped = !state.pending_paths.is_empty();
             if boundary_dropped {
@@ -2819,6 +2825,12 @@ impl Worker {
                 && state.topology_barriers == 1
         });
         if ready_to_commit {
+            let root_stable = RootIdentity::capture(&state.root)
+                .is_ok_and(|identity| identity == state.root_identity);
+            if !root_stable {
+                state.mark_root_lost(RootLossEvidence::PathIdentityMismatch);
+                return;
+            }
             let update = state
                 .exclusion_update
                 .take()
@@ -4697,6 +4709,83 @@ mod tests {
                 reason: UncertainReason::EventOverflow
             }
         );
+    }
+
+    #[test]
+    fn exclusion_update_rejects_a_changed_root_before_scanning() {
+        let parent = TestRoot::new("exclusion-root-change-before-scan");
+        let root = parent.0.join("root");
+        let original = parent.0.join("original");
+        fs::create_dir(&root).unwrap();
+        let previous_exclusion = root.join("previously-hidden");
+        let previous_exclusions = BTreeSet::from([previous_exclusion.clone()]);
+        let (mut state, _batches) = state(&root, SubscriptionOptions::default());
+        state.exclusions = previous_exclusions.clone();
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        state.exclusion_update = Some(PendingExclusionUpdate {
+            generation: 1,
+            exclusions: BTreeSet::new(),
+            previous_exclusions: previous_exclusions.clone(),
+            newly_excluded: VecDeque::new(),
+            newly_included: vec![previous_exclusion],
+            acknowledgement,
+            phase: ExclusionUpdatePhase::WaitingForTopology,
+        });
+
+        fs::rename(&root, &original).unwrap();
+        fs::create_dir(&root).unwrap();
+        worker().progress_exclusion_update(&mut state);
+
+        let error = acknowledged
+            .recv_timeout(Duration::from_millis(100))
+            .expect("changed root must reject the exclusion update before scanning")
+            .value
+            .expect_err("changed root must not commit an exclusion update");
+        assert_eq!(error.code(), ErrorCode::RootStateConflict);
+        assert!(state.root_lost);
+        assert_eq!(state.exclusion_generation, 0);
+        assert_eq!(state.selection_generation, 0);
+        assert_eq!(state.exclusions, previous_exclusions);
+        assert!(state.topology_jobs.is_empty());
+    }
+
+    #[test]
+    fn exclusion_update_revalidates_root_before_commit() {
+        let parent = TestRoot::new("exclusion-root-change-before-commit");
+        let root = parent.0.join("root");
+        let original = parent.0.join("original");
+        fs::create_dir(&root).unwrap();
+        let previous_exclusions = BTreeSet::from([root.join("previously-hidden")]);
+        let replacement_exclusions = BTreeSet::from([root.join("newly-hidden")]);
+        let (mut state, _batches) = state(&root, SubscriptionOptions::default());
+        state.exclusions = replacement_exclusions.clone();
+        state.selection_generation = 1;
+        state.topology_barriers = 1;
+        let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
+        state.exclusion_update = Some(PendingExclusionUpdate {
+            generation: 1,
+            exclusions: replacement_exclusions,
+            previous_exclusions: previous_exclusions.clone(),
+            newly_excluded: VecDeque::new(),
+            newly_included: Vec::new(),
+            acknowledgement,
+            phase: ExclusionUpdatePhase::ScanningIncluded,
+        });
+
+        fs::rename(&root, &original).unwrap();
+        fs::create_dir(&root).unwrap();
+        worker().progress_exclusion_update(&mut state);
+
+        let error = acknowledged
+            .recv_timeout(Duration::from_millis(100))
+            .expect("changed root must reject the exclusion update before commit")
+            .value
+            .expect_err("changed root must not commit an exclusion update");
+        assert_eq!(error.code(), ErrorCode::RootStateConflict);
+        assert!(state.root_lost);
+        assert_eq!(state.exclusion_generation, 0);
+        assert_eq!(state.selection_generation, 0);
+        assert_eq!(state.exclusions, previous_exclusions);
     }
 
     fn prepare_reconciliation(

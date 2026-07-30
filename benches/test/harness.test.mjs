@@ -9,6 +9,7 @@ import {
 import { parseOptions, strictSummaryFailed } from "../lib/cli.mjs";
 import {
   aggregateResults,
+  isolatedResultAfterExit,
   workspaceSourceIdentity,
 } from "../lib/controller.mjs";
 import { outcomeFromChecks } from "../lib/outcomes.mjs";
@@ -63,6 +64,48 @@ test("strict summaries fail skips and zero-work reports", () => {
   assert.equal(strictSummaryFailed(base), false);
   assert.equal(strictSummaryFailed({ ...base, skipped: 1 }), true);
   assert.equal(strictSummaryFailed({ ...base, completed: 0 }), true);
+});
+
+test("isolated results are accepted only after a clean child exit", () => {
+  const payload = {
+    kind: "conformance",
+    adapterId: "watchbound",
+    scenario: "burst-files",
+    run: 1,
+  };
+  const reported = {
+    ...payload,
+    status: "completed",
+    outcome: "pass",
+  };
+
+  assert.equal(
+    isolatedResultAfterExit(payload, reported, {
+      timeoutMs: 1_000,
+      exitCode: 0,
+      signal: null,
+    }),
+    reported,
+  );
+
+  const crashed = isolatedResultAfterExit(payload, reported, {
+    timeoutMs: 1_000,
+    exitCode: 1,
+    signal: null,
+  });
+  assert.equal(crashed.status, "error");
+  assert.equal(crashed.error.name, "ChildProcessError");
+  assert.match(crashed.error.message, /after reporting a result/u);
+
+  const hung = isolatedResultAfterExit(payload, reported, {
+    timeoutMs: 1_000,
+    timedOut: true,
+    exitCode: null,
+    signal: "SIGKILL",
+  });
+  assert.equal(hung.status, "error");
+  assert.equal(hung.error.name, "TimeoutError");
+  assert.equal(hung.error.code, "WATCHBOUND_BENCH_TIMEOUT");
 });
 
 test("capability-gated contracts cannot pass from diagnostic evidence", () => {

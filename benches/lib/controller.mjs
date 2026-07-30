@@ -20,6 +20,44 @@ function appendDiagnostic(current, chunk) {
   return (current + chunk.toString()).slice(0, MAX_DIAGNOSTIC_BYTES);
 }
 
+export function isolatedResultAfterExit(
+  payload,
+  reportedResult,
+  {
+    timeoutMs,
+    timedOut = false,
+    exitCode = null,
+    signal = null,
+    processError = null,
+  },
+) {
+  const cleanExit =
+    !timedOut && processError === null && exitCode === 0 && signal === null;
+  if (cleanExit && reportedResult !== null) return reportedResult;
+
+  const reportedSuffix =
+    reportedResult === null
+      ? "before reporting a result"
+      : "after reporting a result";
+  return {
+    kind: payload.kind,
+    adapterId: payload.adapterId,
+    scenario: payload.scenario ?? null,
+    run: payload.run ?? null,
+    status: "error",
+    error: processError
+      ? serializeError(processError)
+      : {
+          name: timedOut ? "TimeoutError" : "ChildProcessError",
+          message: timedOut
+            ? `Isolated child exceeded ${timeoutMs} ms`
+            : `Isolated child exited ${reportedSuffix} (code=${exitCode}, signal=${signal})`,
+          code: timedOut ? "WATCHBOUND_BENCH_TIMEOUT" : exitCode,
+          stack: null,
+        },
+  };
+}
+
 export function runIsolated(payload, timeoutMs) {
   return new Promise((resolve) => {
     const child = fork(childPath, [JSON.stringify(payload)], {
@@ -86,25 +124,13 @@ export function runIsolated(payload, timeoutMs) {
           fs.rmSync(runDirectory, { recursive: true, force: true });
         } catch {}
       }
-      if (!result) {
-        result = {
-          kind: payload.kind,
-          adapterId: payload.adapterId,
-          scenario: payload.scenario ?? null,
-          run: payload.run ?? null,
-          status: "error",
-          error: processError
-            ? serializeError(processError)
-            : {
-                name: timedOut ? "TimeoutError" : "ChildProcessError",
-                message: timedOut
-                  ? `Isolated child exceeded ${timeoutMs} ms`
-                  : `Isolated child exited before reporting a result (code=${exitCode}, signal=${signal})`,
-                code: timedOut ? "WATCHBOUND_BENCH_TIMEOUT" : exitCode,
-                stack: null,
-              },
-        };
-      }
+      result = isolatedResultAfterExit(payload, result, {
+        timeoutMs,
+        timedOut,
+        exitCode,
+        signal,
+        processError,
+      });
       if (stdout || stderr) {
         result.diagnostics = {
           stdout: stdout || null,

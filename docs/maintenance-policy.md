@@ -90,6 +90,12 @@ Type declarations are checked by compiled consumer fixtures. Source-build and
 loader changes additionally exercise clean build/load, unsupported-platform,
 version-mismatch, and environment-teardown behavior.
 
+The ordinary JavaScript suite also replays fixed seeded operation sequences
+across exclusion replacement, topology mutation, moved-in trees, in-root
+renames, reconciliation, asynchronous callback delivery, exact watch
+accounting, and joined teardown. Keep seeds and failure diagnostics replayable;
+this is bounded correctness coverage, not a benchmark or uncontrolled fuzzer.
+
 Forced overflow remains a supervised milestone/release gate and is never an
 automatic per-commit test. Local performance-bearing runs require fresh
 quiet-host confirmation; hosted release qualification is correctness-only,

@@ -14,10 +14,11 @@ continues to report `target-pending-clean-ci`. The post-bootstrap async callback
 candidate requires separate exact-commit evidence.
 
 This section is a historical decision record. Later registry releases and the
-unpublished multi-target package work supersede its delivery assumptions but
-not its semantic and evidence discipline.
+published multi-target package work supersede its delivery assumptions but not
+its semantic and evidence discipline. Status language in the tables below is
+intentionally preserved as it stood at that decision point.
 
-## Current decision
+## Decision at that time
 
 Recognize the frozen private `0.1.0` package as maintained-unpublished once the
 exact support-declaration commit is green. The work
@@ -37,7 +38,7 @@ state stay explicit; work, queues, timers, traversals, diagnostics, and
 disposal remain bounded. No result claims reconstructed detail after
 uncertainty.
 
-## Resulting contract audit
+## Historical resulting contract audit
 
 | Area | Implemented contract | Remaining boundary |
 | --- | --- | --- |

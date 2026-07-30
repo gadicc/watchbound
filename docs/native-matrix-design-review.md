@@ -1,5 +1,11 @@
 # Native matrix design and adversarial reviews
 
+Status: historical pre-publication review. The items blocked at review time
+were subsequently completed by the exact qualification evidence for commit
+`361562d60e79a6337b0b19cbd3c163ea999ac6b3` and the published `1.1.0`
+release. See `qualification-evidence-2026-07-26.md` and `support-matrix.md` for
+the authoritative outcome.
+
 ## Pre-implementation design review
 
 The accepted design makes the wrapper and loader architecture-neutral and puts
@@ -67,7 +73,7 @@ Resolved findings:
 - Removed stale `1.1.0`/single-target claims from the principal architecture,
   API, delivery, support, release, maintenance, README, and skill documents.
 
-Explicitly blocked rather than waived:
+Explicitly blocked rather than waived at review time:
 
 - native ARM64 build/runtime, ARM64 Electron, and ARM64 Nix execution;
 - both Nix closures, because Nix is unavailable on the local workstation;
@@ -77,3 +83,7 @@ Explicitly blocked rather than waived:
   mutation were forbidden; and
 - target promotion, which changes to `supported` only when the exact
   status-bearing commit completes all gates.
+
+All of these publication-bound items later closed for the two exact GNU/Linux
+targets in `1.1.0`. They remain required gates for a new target or future
+release rather than becoming permanent waivers.

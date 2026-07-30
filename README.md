@@ -24,14 +24,16 @@ that implementation baseline, but the immutable bootstrap metadata was not
 rewritten. The `1.0.0` source added promise-aware callbacks, callback
 cancellation context, binding API 3, and capability schema 3. Its source and
 npm packages qualified, but its JSR Node route exposed a normalized-manifest
-incompatibility. The corrected `1.0.1` package is the current qualified
-release. The unpublished multi-target source candidate keeps generation-zero
+incompatibility. The corrected `1.0.1` package restored that route. Release
+`1.1.0` keeps generation-zero
 `initialExclusions`, targets Node `>=24.15.0 <25` for Electron 42, and adds an
 architecture-neutral loader with exact x64 and ARM64 GNU/Linux target packages.
 Both new targets now report `supported` in the source matrix after complete
 native/distro/Electron/Nix, kernel-5.15, reproducibility, and separately
-supervised overflow qualification. They remain unpublished candidates rather
-than official registry packages.
+supervised overflow qualification. The wrapper, neutral loader, and both target
+packages are published on npm; the wrapper is also published on JSR. Native x64
+and ARM64 post-publication registry smokes passed for both npm and the JSR Node
+route.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits and release tags as the sole
@@ -41,7 +43,7 @@ semantic-release's planned version across every builder, package, checksum,
 and SBOM without committing it. The workflow runs only for pushes to `main`;
 pushes to `dev` and other branches run CI but cannot publish.
 The qualified `1.0.1` registry artifact retains its historical Ubuntu 24.04
-x64 contract. Candidate generated artifacts identify their exact packaged
+x64 contract. Release `1.1.0` generated artifacts identify their exact packaged
 target separately from observed runtime and per-target qualification; source
 workspaces continue to identify as controlled builds. Watchbound remains
 independent of Codex Desktop and does not contain Git-ignore or application
@@ -65,7 +67,7 @@ stable `WATCHBOUND_*` codes under the versioned
 [structured error contract](docs/error-contract.md); human messages are
 diagnostic rather than a policy surface.
 
-The multi-target candidate is documented in the
+The multi-target release is documented in the
 [Codex platform audit](docs/platform-audit.md),
 [native-matrix migration](docs/native-matrix-migration.md),
 [adversarial design and implementation review](docs/native-matrix-design-review.md),
@@ -177,11 +179,9 @@ its platform support are the required contract.
 Watchbound is a poor fit for exact filesystem journals, per-event audit logs,
 consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own native delivery and a
-joined-disposal lifecycle. The published `1.0.1` target remains historically
-narrow. The unpublished multi-target candidate defines x64 and ARM64 GNU/Linux
-packages, a qualified kernel 5.15/glibc 2.35 baseline, and Node
-`>=24.15.0 <25`; both targets are supported by the checked-in source matrix,
-but official packages for that candidate have not been published.
+joined-disposal lifecycle. Release `1.1.0` publishes x64 and ARM64 GNU/Linux
+packages against a qualified kernel 5.15/glibc 2.35 baseline and Node
+`>=24.15.0 <25`; both targets are supported by the checked-in source matrix.
 WSL, network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, ARMv7, and all non-Linux platforms remain
 unqualified or unsupported. See
@@ -227,10 +227,10 @@ typed file events plus historical snapshot queries. This repository compares
 Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
 inotify backend.
 
-| Capability | Current Watchbound source candidate | `@parcel/watcher` 2.5.6 |
+| Capability | Current Watchbound source | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout; `1.0.1` is the qualified historical one-target npm/JSR release. The unpublished multi-target candidate generates a neutral loader and qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout or published `1.1.0` neutral loader with exact qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -317,7 +317,7 @@ and the complete caveats.
 ## Build and test
 
 The manifests intentionally admit only Node `>=24.15.0 <25` and Linux glibc.
-The unpublished candidate defines supported native x64 and ARM64 targets with
+Release `1.1.0` defines supported native x64 and ARM64 targets with
 a kernel 5.15/glibc 2.35 baseline, Rust 1.88+, pnpm 10.33.2, and a working C
 toolchain. See
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
@@ -440,9 +440,9 @@ policy: it never chooses a
 replacement identity. A caller may instead invoke the distinct
 `recoverRoot({ identityPolicy })` operation, which revalidates and scans the
 same lexical root under an explicit `original-only` or `accept-replacement`
-decision and emits one conservative root boundary on success. Non-Linux
-backends and published prebuilds remain unsupported and outside the approved
-stabilization scope.
+decision and emits one conservative root boundary on success. Native packages
+outside the exact published x64/ARM64 GNU/Linux matrix and non-Linux backends
+remain unsupported and outside the approved stabilization scope.
 
 ## Maintainer and license
 

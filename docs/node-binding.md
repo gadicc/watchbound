@@ -3,9 +3,10 @@
 Status: selected for controlled source builds and the one-target public
 bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
 baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
-source qualified, and the corrected `1.0.1` package is the current release.
-The unpublished multi-target candidate retains generation-zero exclusions and adds
-exact x64/ARM64 package selection; both targets completed native qualification.
+source qualified, and the corrected `1.0.1` package restored the JSR route.
+Release `1.1.0` retains generation-zero exclusions and adds exact x64/ARM64
+package selection; both targets completed native qualification and were
+published.
 
 ## Choice
 

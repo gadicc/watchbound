@@ -1,9 +1,8 @@
 # Native matrix migration
 
-The unpublished multi-target candidate changes generated delivery from one bundled
-x64 addon to an architecture-neutral loader plus exact optional target
-packages. Source development still uses `pnpm build:node` and loads the one
-local host artifact.
+Release `1.1.0` changed generated delivery from one bundled x64 addon to an
+architecture-neutral loader plus exact optional target packages. Source
+development still uses `pnpm build:node` and loads the one local host artifact.
 
 Consumers that only call the JavaScript API require no code change. Lockfiles,
 artifact allowlists, offline mirrors, ASAR staging, and application packagers
@@ -19,7 +18,6 @@ source artifact that has not been built. There is no legacy x64 fallback. An
 offline installation must include `watchbound`, `@gadicc/watchbound-node`, and
 the target package selected for that host.
 
-The new target package names require one-time npm package creation before the
-first ordinary OIDC semantic release. That administrative bootstrap is not
-performed by this branch and must not create a semantic-release tag or imply
-qualification.
+The new target package names received their one-time inert npm bootstrap before
+the first ordinary OIDC semantic release. Release `1.1.0` then published the
+qualified target packages through the normal semantic-release path.

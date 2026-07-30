@@ -1,22 +1,23 @@
 # Support and qualification matrix
 
-Status: the multi-target work is an unpublished source candidate. Its x64 and
-ARM64 GNU/Linux target statuses are `supported` in the checked-in source
-matrix. The current qualified registry release is still `1.0.1` under its
-historical Ubuntu 24.04 x64 contract.
+Status: release `1.1.0` publishes the exact x64 and ARM64 GNU/Linux targets
+whose statuses are `supported` in the checked-in source matrix. The historical
+`1.0.1` release remains limited to its Ubuntu 24.04 x64 contract.
 
-Candidate `361562d60e79a6337b0b19cbd3c163ea999ac6b3` completed the native
+Qualification commit `361562d60e79a6337b0b19cbd3c163ea999ac6b3` completed the native
 x64/ARM64 source, reproducibility, distro, Electron, Nix, pinned-kernel 5.15,
 and both separately supervised overflow scenarios. Its canonical ELFs require
 at most `GLIBC_2.34`; see
 [`qualification-evidence-2026-07-26.md`](qualification-evidence-2026-07-26.md).
+The tagged release commit is `9f207599f828ba8a4d5a3f7c1033745cea7e47ff`;
+post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 
-## Candidate target contract
+## Published target contract
 
-| Target | Package | Buildable | Candidate baseline | Qualification |
+| Target | Package | Buildable | Release baseline | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Supported in the source matrix; package unpublished |
-| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Supported in the source matrix; package unpublished |
+| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.1.0` |
+| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.1.0` |
 
 “Buildable” describes implemented build and packaging paths. It is not a
 support claim. `supported` becomes true only when the exact runtime matches a

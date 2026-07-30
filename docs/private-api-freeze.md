@@ -1,11 +1,11 @@
-# API revision history and current candidate
+# API revision history and current contract
 
 Status: the private `0.2.0` contract is carried by the published public `0.0.1`
 bootstrap. Its later documentation commit passed both support lanes, although
 the immutable bootstrap still emits `target-pending-clean-ci`. Releases
 `1.0.0` and `1.0.1` added and then corrected the promise-aware callback
-contract. The unpublished multi-target candidate retains generation-zero initial
-exclusions and Node `>=24.15.0 <25` while adding exact x64/ARM64 delivery. Both
+contract. Release `1.1.0` retains generation-zero initial exclusions and Node
+`>=24.15.0 <25` while adding exact x64/ARM64 delivery. Both
 target entries are `supported` after exact-commit qualification. Capability
 schema 4 is an additive delivery
 extension: the schema-3 single-target fields retain their historical meaning
@@ -18,10 +18,10 @@ historical first qualified baseline.
 Callback-specific follow-up items are retained in
 [`callback-contract-review.md`](callback-contract-review.md).
 
-The `0.0.1` bootstrap was separately approved and published from generated
-JavaScript package trees. The current candidate does not itself authorize a
-subsequent publication or consumer integration; source JavaScript packages
-remain private and both Rust crates remain `publish = false`.
+The `0.0.1` bootstrap and later releases were separately approved and published
+from generated JavaScript package trees. A completed release does not itself
+authorize a subsequent publication or consumer integration; source JavaScript
+packages remain private and both Rust crates remain `publish = false`.
 
 ## Entry points and exports
 
@@ -161,8 +161,8 @@ enter afterward.
 
 ## Target and exclusions
 
-The unpublished candidate defines controlled x64 and ARM64 GNU/Linux source
-and package targets, a kernel 5.15/glibc 2.35 candidate baseline, Node
+Release `1.1.0` defines controlled x64 and ARM64 GNU/Linux source and package
+targets, a kernel 5.15/glibc 2.35 baseline, Node
 `>=24.15.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer, and
 pnpm 10.33.2 under trusted stable local roots. Each status-bearing target must
 pass its full exact matrix; a target description or successful load is not
@@ -173,5 +173,5 @@ architectures; non-Linux systems; WSL,
 non-ordinary mounts, network/FUSE/overlay filesystems unless separately
 qualified; cross-compilation alone, install-time compiler
 fallback; and hostile or adversarially mutated roots. Support does not include
-publication, prebuilds, consumer integration, Git-ignore policy, UI behavior,
-or logical workspace mapping.
+consumer integration, Git-ignore policy, UI behavior, or logical workspace
+mapping.

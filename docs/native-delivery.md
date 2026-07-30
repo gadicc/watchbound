@@ -1,10 +1,8 @@
 # Native delivery contract
 
-Status: the multi-target work is an unpublished source candidate. The current
-qualified registry release remains `1.0.1` with its historical one-target
-contract. The candidate's exact x64 and ARM64 GNU/Linux targets are supported
-by the checked-in source matrix; that does not claim official registry
-availability before an approved publication.
+Status: release `1.1.0` publishes the architecture-neutral loader and exact x64
+and ARM64 GNU/Linux target packages supported by the checked-in source matrix.
+The historical `1.0.1` release retains its one-target contract.
 
 ## One matrix, three package roles
 

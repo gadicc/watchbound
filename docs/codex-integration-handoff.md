@@ -1,9 +1,10 @@
 # Codex Desktop Linux handoff
 
-Status: qualified source matrix, pre-publication. The native, distro, Electron,
-Nix, reproducibility, pinned-kernel, and both supervised-overflow scenarios are
-green for x64 and ARM64, but do not enable or pin this candidate in Codex until
-official immutable packages exist. The sibling repository was not modified.
+Status: release `1.1.0` is published. The native, distro, Electron, Nix,
+reproducibility, pinned-kernel, and both supervised-overflow scenarios are green
+for x64 and ARM64, and post-publication npm and JSR Node-route smokes passed on
+both architectures. This repository records the package boundary; acceptance
+of the local Codex Desktop integration remains consumer-owned.
 
 ## Package and loader contract
 
@@ -19,36 +20,52 @@ versions, Node-API, triple, and release profile. Capability schema 4 adds
 `build.packagedTarget`, per-target qualification, and current-runtime matching;
 the JavaScript subscription API is otherwise compatible.
 
-## Registry coordinates not yet available
+## Published 1.1.0 registry coordinates
 
-Because this task explicitly forbids publication, there are no official
-tarballs for the multi-target candidate and therefore no truthful npm integrity, npm shasum, registry
-tarball digest, ARM64 native SHA-256, or official URL to place in Codex's
-artifact manifest. Expected registry URL forms after an approved publication
-are:
+Release tag `v1.1.0` points to
+`9f207599f828ba8a4d5a3f7c1033745cea7e47ff`. The following values were read
+from the npm registry and verified against downloaded immutable tarballs:
+
+| Package | npm shasum | Tarball SHA-256 |
+| --- | --- | --- |
+| `watchbound` | `9b8268b18e463e34ce1cda03702a2af675567c5c` | `4b2c187947323ba6a5d77ef463528f4ab48891cdbe2b92193e825b94cb909b71` |
+| `@gadicc/watchbound-node` | `e73b6266cc89bda6089e83bca42f3cdf2b35215c` | `2dcbba9c3492a405cfaf5adc80c89faea53b18a10323a9ea9a2393854732c3e9` |
+| `@gadicc/watchbound-node-linux-x64-gnu` | `b8f128447e88b2c0f288f7de1af0076207d4f7e3` | `ab322b0118ef9b3937f3a30c4556e608ddbf75dd8c74334c1cc74f651d50d2d9` |
+| `@gadicc/watchbound-node-linux-arm64-gnu` | `ec9b349fc5d282256ae9027841b73846f19e327f` | `7f3f2b9e4cb7138a1565f7bb301b98ec911172a6d0a7c655ac9e6436789866eb` |
+
+The exact tarballs are:
 
 ```text
-https://registry.npmjs.org/watchbound/-/watchbound-<version>.tgz
-https://registry.npmjs.org/@gadicc/watchbound-node/-/watchbound-node-<version>.tgz
-https://registry.npmjs.org/@gadicc/watchbound-node-linux-x64-gnu/-/watchbound-node-linux-x64-gnu-<version>.tgz
-https://registry.npmjs.org/@gadicc/watchbound-node-linux-arm64-gnu/-/watchbound-node-linux-arm64-gnu-<version>.tgz
+https://registry.npmjs.org/watchbound/-/watchbound-1.1.0.tgz
+https://registry.npmjs.org/@gadicc/watchbound-node/-/watchbound-node-1.1.0.tgz
+https://registry.npmjs.org/@gadicc/watchbound-node-linux-x64-gnu/-/watchbound-node-linux-x64-gnu-1.1.0.tgz
+https://registry.npmjs.org/@gadicc/watchbound-node-linux-arm64-gnu/-/watchbound-node-linux-arm64-gnu-1.1.0.tgz
 ```
 
-Treat those as coordinates, not existing artifacts. After publication, obtain
-the exact `dist.tarball`, `dist.integrity`, and `dist.shasum` with
-`npm view <package>@<version> --json`; download once, verify integrity, record the
-tarball SHA-256 and the package-declared/computed native SHA-256, and pin all
-four immutable packages. Never synthesize integrity from a local rehearsal.
+Their registry `dist.integrity` values, in the same order, are:
 
-## Codex changes after publication
+```text
+sha512-PnsFQ/nxZdQtwCy5mdCG8URk8sorOSE6XE2+RjVNPrqAi/UZF3orrgFVlBUuXY1VGGQhYuBWKVOymw3a6ymqcA==
+sha512-2fpaPB0RkD8TTmdaqrpFPxgTuydoMchTFmG8m/fFW8khxX9FAA4qNLVXyScXb72O/91zuQIvtw4d8BQ9Fw98dg==
+sha512-57RbiAXwt9JkjceHUm07bveSd+U8COpQyof9+dwrgGjUjTNkZqPacK3Z80BQEXdvWFv6ilbpgU1cu4yvkDLpPw==
+sha512-f9rvGOjbSO33jiBN8yQHSOJuBuuySH9J7aWCIAFwirEWeS301Skl2pDIFAR2FmO79gUVkLKmjhSChPRgy4ek7w==
+```
+
+The x64 package declares and verifies native SHA-256
+`a58f01eb09ae8f5c7a2c2a06bf97ea88fd7c5a9371611cc3dff461b7680648d9`;
+the ARM64 package declares and verifies
+`fc89bb178304c20315b5a74a0e531fbe066c55791288ddcdf4d418e2e6bbd33b`.
+Re-read the registry metadata when deliberately adopting a later version; do
+not substitute `latest` or synthesize integrity from a local build.
+
+## Codex integration requirements
 
 1. Replace the single x64 Watchbound artifact record with wrapper, neutral
    loader, x64 target, and ARM64 target records in lockstep.
 2. Select the target record from Codex's normalized `x64`/`arm64` Linux target;
    reject ARMv7 and musl. Do not add a fallback.
-3. Remove the current x64-only staging rejection only after both target records
-   contain official URL, npm integrity/shasum, tarball SHA-256, native path,
-   and native SHA-256.
+3. Keep all four packages at exact version `1.1.0` and pin the official URL,
+   npm integrity/shasum, tarball SHA-256, native path, and native SHA-256.
 4. Stage the JS packages in `app.asar`, allow the `.node` file to be unpacked
    by the existing `{*.node,*.so,*.dylib}` ASAR rule, and retain the package
    directory relationship expected by Node resolution.
@@ -66,11 +83,14 @@ Re-enable the feature only after both `x86_64-linux` and `aarch64-linux` checks
 run through Codex's actual Electron closure and Codex pins the exact Watchbound
 source revision.
 
-## Handoff blockers
+## Remaining consumer-side gates
 
 - Kernel 5.15 floor evidence remains deliberately separate from native Ubuntu
-  24.04 overflow correctness evidence; both components are complete.
-- The npm target-name bootstrap is complete, but no official candidate package
-  has been published.
-- Publication, official integrity values, and Codex repository edits were
-  explicitly outside this task's authority.
+  24.04 overflow correctness evidence; both release components are complete.
+- Codex must retain exact artifact pins, target selection, ASAR staging, and
+  capability-based fail-closed checks in its own repository.
+- Codex should exercise its actual Electron startup, repository-preview,
+  cancellation, degraded-coverage, callback-pressure, and joined-shutdown
+  paths on x64 and ARM64 before treating the integration as production-ready.
+- Codex repository changes and production enablement remain consumer-owned;
+  Watchbound's registry smokes do not substitute for that acceptance evidence.

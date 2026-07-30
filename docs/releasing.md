@@ -1,9 +1,9 @@
 # Release and registry runbook
 
-Status: `1.0.1` remains the qualified published release. The multi-target work
-is an unpublished source candidate whose version will be selected only by
-semantic-release. This repository configuration is preparation, not blanket
-permission to publish.
+Status: `1.1.0` is the completed first multi-target release. Semantic-release
+selected and materialized its version while the checked-in source remained at
+`0.0.0-development`. This runbook continues to govern future releases; the
+repository configuration is not blanket permission to publish.
 
 ## Fail-closed release boundary
 

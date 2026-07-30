@@ -1,7 +1,8 @@
 # Maintenance and release policy
 
-Status: `0.0.1` registry bootstrap published on 2026-07-23; production
-readiness remains gated.
+Status: the first multi-target release, `1.1.0`, is published and passed native
+x64/ARM64 npm and JSR Node-route registry smokes. Future releases and consumer
+production readiness remain separately gated.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved
@@ -10,9 +11,9 @@ publication still requires an explicit maintainer merge or push, a
 release-worthy Conventional Commit, and completion of the distribution gates
 below. Bootstrap publication does not itself authorize consumer integration.
 The maintainer has since separately authorized the opt-in Codex Desktop Linux
-integration recorded in `docs/architecture.md`; it remains gated on exact
-multi-target qualification, official immutable artifacts, and consumer-side
-artifact pinning.
+integration recorded in `docs/architecture.md`. Exact multi-target
+qualification and official immutable artifacts are complete for `1.1.0`;
+consumer-side artifact pinning and acceptance remain Codex-owned.
 
 ## Ownership
 
@@ -29,11 +30,10 @@ per-environment delivery. The public registry line reset with a `0.0.1`
 bootstrap package containing that revision; later public versions are owned by
 semantic-release. The immutable bootstrap reports `target-pending-clean-ci`,
 although a later exact commit qualified its implementation baseline. The
-corrected `1.0.1` package is the current release. The unpublished multi-target
-candidate adds the x64/ARM64 target-package matrix while retaining
-generation-zero exclusions, promise-aware callbacks, and binding API 3; its
-capability schema 4 target entries are `supported` after complete exact-commit
-qualification.
+corrected `1.0.1` package restored the JSR route. Release `1.1.0` adds the
+x64/ARM64 target-package matrix while retaining generation-zero exclusions,
+promise-aware callbacks, and binding API 3; its capability schema 4 target
+entries are `supported` after complete exact-commit qualification.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
 
@@ -98,13 +98,14 @@ one scenario per guarded dispatch, with non-authoritative timings.
 ## Release and distribution gates
 
 The historical maintained-unpublished status did not authorize a release. The
-separately approved bootstrap is now published. The unpublished multi-target
-bundled-native candidate now includes target-specific naming,
+separately approved bootstrap and `1.1.0` multi-target release are now
+published. The multi-target bundled-native design includes target-specific naming,
 checksums, provenance, CycloneDX SBOM, binary inspection, version/delivery
 lockstep, independent-builder byte comparison, same-runner defense in depth,
-fail-closed loading, and an incident runbook. Before publication, separately
-review package visibility and versioning, the exact release commit, remaining
-production blockers, the narrow support statement, and the generated evidence.
+fail-closed loading, and an incident runbook. Before each future publication,
+separately review package visibility and versioning, the exact release commit,
+remaining production blockers, the narrow support statement, and the generated
+evidence.
 
 An intentional maintainer merge or push of the exact qualified commit to
 `main` is the fresh publication approval. No branch-protection rule, protected

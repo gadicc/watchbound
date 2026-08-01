@@ -2,7 +2,10 @@
 
 Status: release `1.1.0` publishes the architecture-neutral loader and exact x64
 and ARM64 GNU/Linux target packages supported by the checked-in source matrix.
-The historical `1.0.1` release retains its one-target contract.
+The historical `1.0.1` release retains its one-target contract. The current
+`1.2.0` source candidate keeps these package roles and binary filenames while
+advancing the native contract; it has not been published or qualified as an
+exact release artifact.
 
 ## One matrix, three package roles
 
@@ -43,7 +46,7 @@ The public-package path verifies package name, version, delivery kind, target
 identifier, Rust triple, architecture, libc, filename, declared SHA-256, one
 regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,
 class, endianness, and machine before `require()`. After load it verifies
-metadata schema 1, binding API 3, wrapper/native/engine version lockstep,
+metadata schema 1, binding API 4, wrapper/native/engine version lockstep,
 Node-API floor 6, target triple, and release profile.
 
 Node is restricted to `>=24.15.0 <25`. The Codex boundary is Electron 42.3.0,
@@ -71,7 +74,7 @@ For each registry native artifact, release qualification requires:
   runtime);
 - bounded size, tarball allowlists, offline installation, production loader
   handshake, and resource teardown;
-- callback serialization, cancellation, initial and dynamic exclusions,
+- callback serialization, cancellation, initial and dynamic whole-policy exclusions,
   reconciliation, root recovery, and joined disposal;
 - checksum-pinned Ubuntu 22.04 kernel-5.15 execution under bounded QEMU as a
   kernel-floor component, combined with separate native architecture evidence;

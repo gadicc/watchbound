@@ -19,7 +19,7 @@ export declare class NativeSubscription {
   stats(): JsStats
   get exclusionGeneration(): bigint
   get rootState(): JsRootState
-  replaceExclusions(generation: bigint, prefixes: Array<Buffer>): Promise<JsCoverage>
+  replaceExclusions(generation: bigint, exclusions: Array<Buffer> | JsExclusionPolicy): Promise<JsCoverage>
   reconcile(): Promise<JsReconciliationResult>
   recoverRoot(identityPolicy: string): Promise<JsRootRecoveryResult>
   dispose(): Promise<void>
@@ -156,6 +156,8 @@ export interface JsCapabilities {
   overflowReporting: boolean
   initialExclusions: boolean
   dynamicExclusions: boolean
+  directoryNameExclusions: boolean
+  observedExcludedPaths: boolean
   reconciliation: boolean
   rootReplacementRecovery: boolean
   exactPathBytes: boolean
@@ -272,10 +274,18 @@ export interface JsSubscriptionDefaults {
 
 export interface JsSubscriptionOptions {
   initialExclusions?: Array<Buffer>
+  excludedDirectoryNames?: Array<Buffer>
+  observedExcludedPaths?: Array<Buffer>
   watchLimit?: number
   batchWindowMs?: number
   maxBatchPaths?: number
   outputQueueCapacity?: number
+}
+
+export interface JsExclusionPolicy {
+  prefixes?: Array<Buffer>
+  excludedDirectoryNames?: Array<Buffer>
+  observedExcludedPaths?: Array<Buffer>
 }
 
 export declare function subscribe(root: string, options: JsSubscriptionOptions | undefined | null, callback: (batch: JsChangeBatch, deliveryId: bigint) => boolean, cancellation?: NativeEstablishmentCancellation | undefined | null): Promise<NativeSubscription>

@@ -12,6 +12,15 @@ extension: the schema-3 single-target fields retain their historical meaning
 under `support.scope = "legacy-primary-target"`, while packaged-target,
 per-target qualification, lane, and current-runtime-match fields are new.
 
+The current checked-in change is the additive `1.2.0` release candidate. It
+extends the exclusion policy with recursive exact directory-name pruning and
+explicitly observed excluded boundaries, retains the legacy prefix-array form,
+and advances the public capability schema to 5 and native binding API to 4.
+The source manifests intentionally remain `0.0.0-development`; the `feat`
+release commit makes semantic-release the authority that will plan `1.2.0`.
+This paragraph is API revision history, not evidence of publication or target
+qualification for the candidate.
+
 The exact private `0.1.0` freeze and its support declaration remain the
 historical first qualified baseline.
 
@@ -50,6 +59,15 @@ exact normalized root-relative directory prefixes. It is validated before
 runtime acquisition and committed at exclusion generation zero before topology
 traversal, so excluded directories are not opened or watched during
 establishment. The empty prefix excludes the root.
+
+`SubscriptionOptions.excludedDirectoryNames` supplies exact nonempty directory
+components to prune at every depth, including future and renamed-in
+directories. `SubscriptionOptions.observedExcludedPaths` supplies exact
+nonempty root-relative boundaries whose descendants stay pruned while boundary
+creation, deletion, rename, replacement, and identity change remain observable.
+All three sets share exclusion generation zero. `ExclusionPolicy` names the
+whole replacement shape with `prefixes`, `excludedDirectoryNames`, and
+`observedExcludedPaths`.
 
 ## Observation and callback authority
 
@@ -114,12 +132,17 @@ already-admitted callback to quiesce before finalization.
 
 The native boundary preserves exact Linux path bytes. Roots are JavaScript
 strings whose lexical components are retained through native symlink
-validation. Exclusion prefixes accept strings or `Uint8Array`; invalid UTF-8
+validation. All exclusion inputs accept strings or `Uint8Array`; invalid UTF-8
 child paths remain available as bytes and collapse string invalidation to the
 representable root. Directory symlinks are never followed.
 
-`replaceExclusions` atomically commits a complete root-relative prefix set and
-generation. `reconcile` preserves root identity and exclusions, scans with
+`replaceExclusions` accepts either the compatible complete root-relative prefix
+array or the complete `ExclusionPolicy` object and atomically commits its shared
+generation. Omitted policy-object fields are empty; the array form clears the
+two newer sets. Exact directory-name matches prune topology and delivery at
+every depth. An observed path overrides only delivery of that excluded boundary
+and never topology pruning or symlink policy. `reconcile` preserves root
+identity and the whole policy, scans with
 watch-before-read ordering, and can earn only a conservative root boundary.
 `recoverRoot({ identityPolicy })` is the sole replacement-adoption operation;
 it accepts exactly `original-only` or `accept-replacement`, preserves the
@@ -134,9 +157,10 @@ codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; both candidate target entries emit the
 supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
-Capability schema 4 and binding API 3 expose cancellation,
-shared-delivery, and promise-aware callback-completion facts; loader metadata
-remains schema 1.
+Capability schema 5 and binding API 4 additionally expose
+`directoryNameExclusions` and `observedExcludedPaths`; loader metadata remains
+schema 1 and raw native capabilities advance to schema 4. Wrappers and loaders
+fail closed against older or newer unproved native contracts.
 
 Patch releases may make compatible fixes, documentation/test changes, and
 internal changes that preserve this contract. Any externally observable option,

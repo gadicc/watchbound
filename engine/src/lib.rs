@@ -15,6 +15,7 @@ pub use error::{
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
@@ -347,12 +348,33 @@ pub struct ReconciliationResult {
     pub coverage: Coverage,
 }
 
+/// The complete exclusion policy committed under one exclusion generation.
+///
+/// Prefixes and observed paths are normalized root-relative paths. Directory
+/// names are exact single components matched at every depth. All values retain
+/// their exact Linux bytes.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExclusionPolicy {
+    /// Exact root-relative directory namespace prefixes.
+    pub prefixes: Vec<PathBuf>,
+    /// Exact directory component names pruned wherever they occur below root.
+    pub excluded_directory_names: Vec<OsString>,
+    /// Exact excluded paths whose boundary lifecycle remains observable.
+    pub observed_excluded_paths: Vec<PathBuf>,
+}
+
 /// Per-subscription tuning. No application-specific watch limit is implied.
 #[derive(Clone, Debug)]
 pub struct SubscriptionOptions {
     /// Exact normalized root-relative directory prefixes excluded during
     /// initial establishment at exclusion generation zero.
     pub initial_exclusions: Vec<PathBuf>,
+    /// Exact directory component names excluded at every depth from generation
+    /// zero onward.
+    pub excluded_directory_names: Vec<OsString>,
+    /// Exact root-relative excluded paths whose boundary remains observable at
+    /// generation zero. Their descendants remain pruned and unwatched.
+    pub observed_excluded_paths: Vec<PathBuf>,
     pub watch_limit: Option<usize>,
     pub batch_window: Duration,
     pub max_batch_paths: usize,
@@ -363,6 +385,8 @@ impl Default for SubscriptionOptions {
     fn default() -> Self {
         Self {
             initial_exclusions: Vec::new(),
+            excluded_directory_names: Vec::new(),
+            observed_excluded_paths: Vec::new(),
             watch_limit: None,
             batch_window: Duration::from_millis(10),
             max_batch_paths: 1_024,
@@ -413,6 +437,8 @@ pub struct Capabilities {
     pub overflow_reporting: bool,
     pub initial_exclusions: bool,
     pub dynamic_exclusions: bool,
+    pub directory_name_exclusions: bool,
+    pub observed_excluded_paths: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
     pub process_native_watch_budget: bool,
@@ -534,6 +560,8 @@ impl Engine {
             overflow_reporting: true,
             initial_exclusions: true,
             dynamic_exclusions: true,
+            directory_name_exclusions: true,
+            observed_excluded_paths: true,
             reconciliation: true,
             root_replacement_recovery: true,
             process_native_watch_budget: true,
@@ -622,11 +650,14 @@ impl Engine {
             Ok(root) => root,
             Err(error) => return Err(commit_pre_runtime_failure(&cancellation.shared, error)),
         };
-        if let Err(error) = backend::linux::validate_exclusion_prefixes(
-            &root,
-            options.initial_exclusions.clone(),
-            Operation::Subscribe,
-        ) {
+        let initial_policy = ExclusionPolicy {
+            prefixes: options.initial_exclusions.clone(),
+            excluded_directory_names: options.excluded_directory_names.clone(),
+            observed_excluded_paths: options.observed_excluded_paths.clone(),
+        };
+        if let Err(error) =
+            backend::linux::validate_exclusion_policy(&root, initial_policy, Operation::Subscribe)
+        {
             return Err(commit_pre_runtime_failure(&cancellation.shared, error));
         }
         self.begin_subscribe_admitted_root(root, options, cancellation)
@@ -899,6 +930,17 @@ impl Subscription {
             .replace_exclusions(generation, prefixes)
     }
 
+    /// Atomically replaces the complete prefix, directory-name, and observed-
+    /// boundary exclusion policy.
+    pub fn replace_exclusion_policy(
+        &self,
+        generation: u64,
+        policy: ExclusionPolicy,
+    ) -> Result<Coverage> {
+        self.exclusion_handle()
+            .replace_exclusion_policy(generation, policy)
+    }
+
     /// Rebuilds this subscription's included topology under its currently
     /// committed exclusion generation and returns only after the conservative
     /// root invalidation and final coverage snapshot are committed.
@@ -996,6 +1038,20 @@ impl ExclusionHandle {
     }
 
     pub fn replace_exclusions(&self, generation: u64, prefixes: Vec<PathBuf>) -> Result<Coverage> {
+        self.replace_exclusion_policy(
+            generation,
+            ExclusionPolicy {
+                prefixes,
+                ..ExclusionPolicy::default()
+            },
+        )
+    }
+
+    pub fn replace_exclusion_policy(
+        &self,
+        generation: u64,
+        policy: ExclusionPolicy,
+    ) -> Result<Coverage> {
         if self
             .control
             .topology_transaction_in_flight
@@ -1026,7 +1082,7 @@ impl ExclusionHandle {
                     "subscription is disposing or disposed",
                 ));
             };
-            runtime.queue_replace_exclusions(*subscription_id, generation, prefixes)?
+            runtime.queue_replace_exclusions(*subscription_id, generation, policy)?
         };
         let coverage = pending.wait()?;
         self.control

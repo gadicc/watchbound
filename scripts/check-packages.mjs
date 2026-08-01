@@ -81,7 +81,7 @@ try {
         "import assert from 'node:assert/strict';",
         "import { capabilities } from 'watchbound';",
         `assert.equal(capabilities.versions.wrapper, ${JSON.stringify(version)});`,
-        "assert.equal(capabilities.schemaVersion, 4);",
+        "assert.equal(capabilities.schemaVersion, 5);",
         `assert.equal(capabilities.build.packagedTarget.id, ${JSON.stringify(currentTarget.id)});`,
         "assert.equal(capabilities.build.delivery, 'bundled-native-package');",
         "assert.equal(capabilities.build.prebuilt, true);",

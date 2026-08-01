@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -5,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use watchbound_engine::{
-    Coverage, Engine, ErrorCode, Operation, PartialReason, Subscription, SubscriptionOptions,
+    Coverage, Engine, ErrorCode, ExclusionPolicy, Operation, PartialReason, Subscription,
+    SubscriptionOptions,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -207,14 +209,27 @@ fn current_and_future_excluded_prefixes_stay_excluded_during_reconciliation() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = TestDir::new("excluded");
     fs::create_dir_all(root.path().join("hidden/current/deep")).unwrap();
+    fs::create_dir_all(root.path().join(".git/objects")).unwrap();
+    fs::create_dir_all(root.path().join("visible/.git/objects")).unwrap();
     let subscription = Engine::new().subscribe(root.path(), options()).unwrap();
     subscription
-        .replace_exclusions(1, vec![PathBuf::from("hidden")])
+        .replace_exclusion_policy(
+            1,
+            ExclusionPolicy {
+                prefixes: vec![PathBuf::from("hidden")],
+                excluded_directory_names: vec![OsString::from(".git")],
+                observed_excluded_paths: vec![PathBuf::from(".git")],
+            },
+        )
         .unwrap();
     let result = subscription.reconcile().unwrap();
     assert_eq!(result.exclusion_generation, 1);
-    assert_eq!(subscription.stats().watched_directories, 1);
+    assert_eq!(subscription.stats().watched_directories, 2);
     wait_for_root(&subscription, root.path());
+
+    fs::remove_dir_all(root.path().join(".git")).unwrap();
+    let observed = wait_for_root(&subscription, &root.path().join(".git"));
+    assert_eq!(observed.exclusion_generation, 1);
 
     let future = root.path().join("hidden/future/deep");
     fs::create_dir_all(&future).unwrap();
@@ -224,13 +239,12 @@ fn current_and_future_excluded_prefixes_stay_excluded_during_reconciliation() {
             .recv_timeout(Duration::from_millis(100))
             .is_err()
     );
-    assert_eq!(subscription.stats().watched_directories, 1);
+    assert_eq!(subscription.stats().watched_directories, 2);
     subscription.dispose().unwrap();
 }
 
 #[test]
 fn reconciliation_preserves_non_utf8_included_and_excluded_path_bytes() {
-    use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
     let _serial = SERIAL

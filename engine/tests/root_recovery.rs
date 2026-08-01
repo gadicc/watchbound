@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -8,9 +9,9 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use watchbound_engine::{
-    ChangeBatch, Coverage, Engine, ErrorCode, Operation, PartialReason, RootAttachment,
-    RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
-    Subscription, SubscriptionOptions, UncertainReason,
+    ChangeBatch, Coverage, Engine, ErrorCode, ExclusionPolicy, Operation, PartialReason,
+    RootAttachment, RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment,
+    RootRecoveryFailureReason, Subscription, SubscriptionOptions, UncertainReason,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -235,14 +236,23 @@ fn replacement_recovery_preserves_exclusions_and_committed_generation() {
     let moved = parent.path().join("moved");
     fs::create_dir_all(root.join("visible")).unwrap();
     fs::create_dir_all(root.join("hidden/current")).unwrap();
+    fs::create_dir_all(root.join(".git/objects")).unwrap();
     let subscription = Engine::new().subscribe(&root, options()).unwrap();
     subscription
-        .replace_exclusions(1, vec![PathBuf::from("hidden")])
+        .replace_exclusion_policy(
+            1,
+            ExclusionPolicy {
+                prefixes: vec![PathBuf::from("hidden")],
+                excluded_directory_names: vec![OsString::from(".git")],
+                observed_excluded_paths: vec![PathBuf::from(".git")],
+            },
+        )
         .unwrap();
 
     fs::rename(&root, &moved).unwrap();
     fs::create_dir_all(root.join("visible/deep")).unwrap();
     fs::create_dir_all(root.join("hidden/current")).unwrap();
+    fs::create_dir_all(root.join(".git/objects")).unwrap();
     wait_for_root_loss(&subscription, &root);
     let recovered = subscription
         .recover_root(RootIdentityPolicy::AcceptReplacement)
@@ -254,6 +264,11 @@ fn replacement_recovery_preserves_exclusions_and_committed_generation() {
     let boundary = subscription.recv_timeout(TIMEOUT).unwrap();
     assert_eq!(boundary.exclusion_generation, 1);
     assert_eq!(boundary.invalidated_paths, vec![root.clone()]);
+
+    fs::remove_dir_all(root.join(".git")).unwrap();
+    wait_for_path(&subscription, &root.join(".git"));
+    assert_eq!(subscription.exclusion_generation(), 1);
+    assert_eq!(subscription.stats().watched_directories, 3);
 
     let hidden = root.join("hidden/current/ignored");
     fs::write(&hidden, b"ignored").unwrap();

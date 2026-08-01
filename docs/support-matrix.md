@@ -2,7 +2,10 @@
 
 Status: release `1.1.0` publishes the exact x64 and ARM64 GNU/Linux targets
 whose statuses are `supported` in the checked-in source matrix. The historical
-`1.0.1` release remains limited to its Ubuntu 24.04 x64 contract.
+`1.0.1` release remains limited to its Ubuntu 24.04 x64 contract. The current
+`1.2.0` exclusion-API source candidate inherits the same intended target matrix
+but is not an exact qualified or published artifact; all passing evidence below
+continues to identify the immutable `1.1.0` delivery.
 
 Qualification commit `361562d60e79a6337b0b19cbd3c163ea999ac6b3` completed the native
 x64/ARM64 source, reproducibility, distro, Electron, Nix, pinned-kernel 5.15,
@@ -63,11 +66,12 @@ and never creates another binary. WSL, unusual containers, network filesystems,
 FUSE, overlay filesystems, and adversarially mutated roots remain outside the
 ordinary-host claim unless separately qualified.
 
-## Capability schema 4
+## Capability schema 5
 
-The additive schema keeps the old single-target `support` fields with
+The additive schema keeps the schema-4 target and old single-target `support`
+fields with
 `scope: "legacy-primary-target"`; their Ubuntu 24.04/x64 meaning is not silently
-changed. New consumers use:
+changed. Schema 5 adds only exclusion feature/option facts. New consumers use:
 
 - `build.packagedTarget` for the selected package, binary, triple, and SHA;
 - `support.targets[]` for target-specific qualification;

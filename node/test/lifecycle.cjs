@@ -375,6 +375,48 @@ test("native initial exclusions preserve byte prefixes at generation zero", asyn
   }
 });
 
+test("native directory names and observed paths preserve exact Buffer policy", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-observed-exclusion-"));
+  const git = path.join(root, ".git");
+  fs.mkdirSync(path.join(git, "objects"), { recursive: true });
+  fs.mkdirSync(path.join(root, "nested", ".git", "objects"), { recursive: true });
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await binding.subscribe(root, {
+      excludedDirectoryNames: [Buffer.from(".git")],
+      observedExcludedPaths: [Buffer.from(".git")],
+      batchWindowMs: 8,
+    }, (batch) => batches.push(batch));
+    assert.equal(subscription.stats().watchedDirectories, 2);
+    fs.writeFileSync(path.join(git, "objects", "ignored"), "ignored");
+    await delay(30);
+    assert.equal(batches.length, 0);
+
+    fs.rmSync(git, { recursive: true });
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.invalidatedPaths.some((value) => value.equals(Buffer.from(git)))),
+      "raw observed boundary deletion was not delivered",
+    );
+    batches.length = 0;
+    await subscription.replaceExclusions(1n, {
+      prefixes: [],
+      excludedDirectoryNames: [],
+      observedExcludedPaths: [],
+    });
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.invalidatedPaths.some((value) => value.equals(Buffer.from(root)))),
+      "raw whole-policy replacement did not invalidate the re-included root",
+    );
+    assert.ok(batches.every((batch) => batch.exclusionGeneration === 1n));
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("native reconciliation commits coverage, generation, and a root invalidation", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-reconcile-"));
   let subscription;
@@ -678,14 +720,16 @@ test("native engine validation and capability metadata are machine-readable", ()
   assert.equal(binding.createEngine().nativeWatchBudget ?? null, null);
   const metadata = binding.bindingMetadata();
   assert.equal(metadata.schemaVersion, 1);
-  assert.equal(metadata.bindingApiVersion, 3);
+  assert.equal(metadata.bindingApiVersion, 4);
   assert.equal(metadata.nativeVersion, metadata.engineVersion);
   assert.equal(metadata.nodeApiVersion, 6);
   assert.match(metadata.targetTriple, /linux/);
   assert.equal(metadata.buildProfile, "release");
 
   const capabilities = binding.capabilities();
-  assert.equal(capabilities.schemaVersion, 3);
+  assert.equal(capabilities.schemaVersion, 4);
+  assert.equal(capabilities.directoryNameExclusions, true);
+  assert.equal(capabilities.observedExcludedPaths, true);
   assert.equal(capabilities.cancellableEstablishment, true);
   assert.equal(capabilities.sharedNodeDelivery, true);
   assert.equal(capabilities.nativeCallbackQueueCapacity, 1);

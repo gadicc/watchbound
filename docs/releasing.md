@@ -5,6 +5,12 @@ selected and materialized its version while the checked-in source remained at
 `0.0.0-development`. This runbook continues to govern future releases; the
 repository configuration is not blanket permission to publish.
 
+The current feature commit is expected to make semantic-release plan `1.2.0`.
+Do not edit checked-in package, Cargo, or lockfile placeholders to that value.
+The candidate advances public capability schema 5, raw native capability
+schema 4, and binding API 4; generated wrapper, loader, target packages,
+checksums, SBOM, and provenance must all carry the one planned version.
+
 ## Fail-closed release boundary
 
 Only a push to `main` can enter the publication path in
@@ -43,8 +49,8 @@ For each x64 and ARM64 registry target, the release workflow:
 6. runs the canonical package from `app.asar`/`app.asar.unpacked` under exact
    Electron 42.3.0 and Node 24.15.0;
 7. boots the checksum-pinned Canonical Ubuntu 22.04 kernel 5.15 under bounded
-   QEMU and reruns the offline package, loader, real-delivery, recovery, and
-   joined-disposal smoke on each architecture; this is kernel-floor evidence
+   QEMU and reruns the offline package, loader, real-delivery, exclusion-policy,
+   recovery, and joined-disposal smoke on each architecture; this is kernel-floor evidence
    only and composes with, rather than replaces, native runner evidence;
 8. runs the I/O-heavy forced-overflow and automatic overflow-reconciliation
    scenarios against the canonical artifact on native GitHub-hosted Ubuntu
@@ -118,7 +124,7 @@ environment constraints exact.
 The immutable release is only verified after npm and JSR Node routes install
 the exact version on native x64 and ARM64 runners. Each smoke confirms the
 selected target package and digest, production loader/capability handshake,
-real delivery, initial/dynamic exclusions, root recovery, reconciliation,
+real delivery, initial/dynamic whole-policy exclusions, root recovery, reconciliation,
 cancellation, callback serialization, joined disposal, and resource return.
 
 If any route fails after publication, stop. Do not replace, unpublish, or

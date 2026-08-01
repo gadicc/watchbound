@@ -16,6 +16,10 @@ passed post-publication registry smokes. An opt-in Codex Desktop Linux
 integration must pin those official immutable artifacts and retain its own
 consumer-side acceptance gates.
 
+The current `1.2.0` source candidate adds exact recursive directory-name
+pruning and observed excluded boundaries. It advances binding API 4 and public
+capability schema 5 but has no publication or new immutable target evidence.
+
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support
 target. That historical decision did not authorize packaging, publishing,
@@ -228,7 +232,7 @@ The current implementation assigns work to these execution contexts:
 
 | Context | Work and scaling |
 | --- | --- |
-| JavaScript thread in each Node environment | Loads and verifies the addon; validates and copies wrapper inputs; registers and removes abort listeners; encodes exclusion prefixes; updates `observedState`; runs automatic-reconciliation policy and consumer callbacks; resolves napi-rs task results |
+| JavaScript thread in each Node environment | Loads and verifies the addon; validates and copies wrapper inputs; registers and removes abort listeners; encodes exclusion policies; updates `observedState`; runs automatic-reconciliation policy and consumer callbacks; resolves napi-rs task results |
 | Shared libuv worker pool | Runs one compute task for each establishment, exclusion replacement, reconciliation, root recovery, or joined disposal and waits synchronously for its engine acknowledgement |
 | `watchbound-linux-runtime` | One lazy Rust thread for the loaded binding; owns inotify, eventfd, topology, watch allocation, batching, bounded engine queues, establishment rollback, disposal, and engine acknowledgements for all subscriptions |
 | `watchbound-node-dispatcher` | At most one Rust thread for each Node environment with a pending, active, or retained fallback-cleanup registration; fairly inspects registrations and attempts single-credit callback admission |
@@ -412,13 +416,14 @@ engine's active configuration rather than its own request.
 
 ### Versioned public capabilities
 
-The wrapper combines native capability-schema-version-3 feature/default metadata, loaded
+The wrapper combines native capability-schema-version-4 feature/default metadata, loaded
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 4`. Features distinguish
+and `observability`, under `schemaVersion: 5`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
-watches, and expose cancellable establishment and shared Node delivery. Options
+watches, and expose recursive name exclusions, observed excluded boundaries,
+cancellable establishment, and shared Node delivery. Options
 publish exact defaults, `u32` hard bounds, scope, units, and accounting.
 Observability publishes ordered-batch authority, callback-entry state,
 result/getter lead, stats scope, counter encodings, the one-entry native
@@ -427,7 +432,7 @@ promise-aware serialized callback completion, error/disposal/teardown policy,
 and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded a
-native binary, not evidence that the host is supported. Schema 4 separately
+native binary, not evidence that the host is supported. Schema 5 separately
 reports the packaged target, per-target qualification, and current-runtime
 match while retaining legacy single-target fields without reinterpreting them.
 Matching facts do not widen `support-matrix.md`.
@@ -481,11 +486,13 @@ final runtime/allocator teardown.
 
 ### Generation-based atomic exclusions
 
-`Subscription::replace_exclusions(generation, prefixes)` replaces the complete
-set; it is not an incremental add/remove API and does not resubscribe. The Rust
-surface accepts `PathBuf`s, the native Node surface accepts `Buffer`s, and the
-JavaScript wrapper accepts strings or exact-byte `Uint8Array`s. Linux path bytes
-remain unchanged at the native boundary, including non-UTF-8 names.
+`Subscription::replace_exclusions(generation, prefixes)` remains the compatible
+prefix-only form. `replace_exclusion_policy(generation, policy)` replaces the
+complete prefix, directory-name, and observed-boundary sets; neither operation
+is incremental or resubscribes. The raw Node method accepts a `Buffer[]` or
+policy object, and the JavaScript wrapper accepts strings or exact-byte
+`Uint8Array`s. Linux path bytes remain unchanged at the native boundary,
+including non-UTF-8 names.
 
 Each prefix is a byte-exact, normalized, root-relative directory namespace.
 Absolute paths, `.`, `..`, repeated or trailing separators, NUL, and any other
@@ -498,10 +505,29 @@ of that name is created. Redundant duplicate or descendant prefixes are folded
 to their equivalent minimal set. There is no filesystem canonicalization and no
 UTF-8 conversion.
 
-Generation zero denotes the exclusion set supplied by
-`SubscriptionOptions.initialExclusions`, which defaults to empty. The set is
-validated before runtime acquisition and applied before establishment
-traversal. A requested generation may skip values but must be greater than the
+An excluded directory name is one nonempty normal byte-exact component. It
+matches a directory's complete basename at every depth, never a substring,
+path, glob, case variant, regular file, or symlink. Initial traversal,
+watch-before-read discovery, moved-in discovery, reconciliation, promotion, and
+root recovery all apply the same predicate before allocating a logical/native
+watch or opening the directory. Existing and future matches therefore consume
+no descendant watches and produce no boundary or descendant delivery.
+
+An observed excluded path is a nonempty normalized root-relative boundary. Its
+descendants use the same pruning predicate, but parent-watch events for its
+exact path produce a conservative boundary invalidation. A bounded periodic
+audit additionally compares symlink-aware `(device, inode, mode)` identity so
+same-path replacement cannot depend solely on a detailed inotify history.
+Existing files and symlinks are valid boundaries and are never followed. If a
+name exclusion also matches, observation changes only boundary delivery. An
+observed path below a separately excluded proper parent is rejected because the
+engine could not truthfully observe that boundary.
+
+Generation zero denotes the policy supplied by
+`SubscriptionOptions.initialExclusions`, `excludedDirectoryNames`, and
+`observedExcludedPaths`, all defaulting to empty. The whole policy is validated
+before runtime acquisition and applied before establishment traversal. A
+requested generation may skip values but must be greater than the
 committed value. Duplicate, stale,
 and lower values fail with `WATCHBOUND_INVALID_ARGUMENT`; a second call while
 one transaction is active fails with
@@ -515,18 +541,21 @@ An update is one subscription-local scheduler transaction:
    pending paths as an old-generation batch; if backpressure prevents that
    enqueue, retain the existing conservative root/uncertainty behavior;
 2. install the new selection generation privately, remove logical interests and
-   deferred/promotion state below newly excluded prefixes in bounded chunks,
+   deferred/promotion state below newly excluded topology in bounded chunks,
    and return any final native-watch tokens to the fair allocator between
    chunks;
-3. scan newly included prefixes in bounded turns, installing or sharing each
+3. scan newly included prefixes in bounded turns; when a name exclusion is
+   relaxed, rescan from the root because matching paths may exist anywhere;
+   install or share each
    watch before reading that directory and skipping prefixes still excluded by
    the replacement set;
 4. when a subscription or runtime limit prevents that watch-before-read step,
    retain the nearest directory as an explicit deferred interest for ordinary
    round-robin promotion instead of reading ahead and claiming coverage;
 5. after every inclusion topology barrier finishes, queue conservative
-   invalidations for the newly included prefixes, commit the coverage/resource
-   snapshot and generation, and only then acknowledge the caller.
+   invalidations for the newly included prefixes and new observed boundaries,
+   commit the coverage/resource snapshot and generation, and only then
+   acknowledge the caller.
 
 Pending paths carry their selection generation separately from the committed
 generation. The transaction may yield to other subscriptions but its topology
@@ -555,7 +584,7 @@ Rust engine.
 
 `Subscription::reconcile()` and its cloneable command handle run a
 subscription-local topology transaction under the currently committed
-exclusion set. The exclusion generation is captured by ownership of the worker
+exclusion policy. The exclusion generation is captured by ownership of the worker
 state, is not advanced, and tags the required root batch. One shared
 per-subscription transaction gate rejects a concurrent reconciliation or
 exclusion replacement with `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`; commands
@@ -574,7 +603,9 @@ Traversal records encountered logical paths. After the scan barrier, bounded
 cursor-based passes sweep unencountered watched interests, deferred interests,
 the deferred-order queue, and pending promotions. Removing a final shared
 interest returns its native token; removing only one overlapping interest
-leaves the other subscription and descriptor intact. Subscription limits and
+leaves the other subscription and descriptor intact. Prefix, directory-name,
+and observed-boundary pruning stays active throughout the transaction.
+Subscription limits and
 the runtime unique-watch budget produce the same truthful partial coverage and
 ordinary round-robin deferred promotion as establishment. An unwatched
 directory is retained as one deferred subtree root and is not read merely to

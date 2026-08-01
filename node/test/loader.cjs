@@ -27,7 +27,7 @@ const arm64Target = nativeMatrix.targets.find((target) => target.architecture ==
 
 const validMetadata = Object.freeze({
   schemaVersion: 1,
-  bindingApiVersion: 3,
+  bindingApiVersion: 4,
   nativeVersion: packageVersion,
   engineVersion: packageVersion,
   nodeApiVersion: 6,
@@ -241,7 +241,8 @@ test("loader rejects malformed or unreadable binding metadata as an API mismatch
 test("loader distinguishes metadata API and version mismatches", () => {
   for (const metadata of [
     { ...validMetadata, schemaVersion: 2 },
-    { ...validMetadata, bindingApiVersion: 1 },
+    { ...validMetadata, bindingApiVersion: 3 },
+    { ...validMetadata, bindingApiVersion: 5 },
     { ...validMetadata, nodeApiVersion: 5 },
     { ...validMetadata, targetTriple: "aarch64-unknown-linux-gnu" },
     { ...validMetadata, buildProfile: "debug" },

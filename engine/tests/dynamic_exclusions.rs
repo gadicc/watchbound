@@ -3,14 +3,16 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use watchbound_engine::{
-    Coverage, Engine, ErrorCode, Operation, PartialReason, Subscription, SubscriptionOptions,
+    Coverage, Engine, ErrorCode, ExclusionPolicy, Operation, PartialReason, Subscription,
+    SubscriptionOptions,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -64,11 +66,19 @@ fn wait_for_batch(subscription: &Subscription) -> watchbound_engine::ChangeBatch
 }
 
 fn wait_for_path(subscription: &Subscription, expected: &Path) -> watchbound_engine::ChangeBatch {
+    wait_for_path_at(subscription, expected, "unspecified transition")
+}
+
+fn wait_for_path_at(
+    subscription: &Subscription,
+    expected: &Path,
+    transition: &str,
+) -> watchbound_engine::ChangeBatch {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let batch = subscription
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .expect("timed out waiting for path");
+            .unwrap_or_else(|_| panic!("timed out waiting for path after {transition}"));
         if batch.invalidated_paths.iter().any(|path| path == expected) {
             return batch;
         }
@@ -416,6 +426,330 @@ fn non_utf8_prefixes_round_trip_without_loss() {
 }
 
 #[test]
+fn directory_names_prune_existing_and_future_subtrees_at_every_depth() {
+    let _serial = serial();
+    let root = TestDir::new("directory-name-establishment");
+    fs::create_dir_all(root.path().join(".git/objects/deep")).unwrap();
+    fs::create_dir_all(root.path().join("project/.git/objects/deep")).unwrap();
+    fs::create_dir_all(root.path().join("project/cache/deep")).unwrap();
+    fs::create_dir_all(root.path().join("project/visible/deep")).unwrap();
+    let mut configured = options();
+    configured.excluded_directory_names = vec![OsString::from(".git"), OsString::from("cache")];
+
+    let engine = Engine::new();
+    let subscription = engine.subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.initial_coverage(), &Coverage::Complete);
+    assert_eq!(subscription.stats().watched_directories, 4);
+    assert_eq!(engine.runtime_stats().native_watches, 4);
+
+    fs::write(
+        root.path().join("project/.git/objects/deep/ignored"),
+        b"ignored",
+    )
+    .unwrap();
+    fs::create_dir_all(root.path().join("project/visible/cache/deep")).unwrap();
+    fs::write(
+        root.path().join("project/visible/cache/deep/ignored"),
+        b"ignored",
+    )
+    .unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+    assert_eq!(subscription.stats().watched_directories, 4);
+
+    let visible = root.path().join("project/visible/deep/changed");
+    fs::write(&visible, b"visible").unwrap();
+    assert_eq!(
+        wait_for_path(&subscription, &visible).exclusion_generation,
+        0
+    );
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn directory_name_matching_is_exact_and_directory_only() {
+    let _serial = serial();
+    let root = TestDir::new("directory-name-exactness");
+    fs::create_dir(root.path().join(".gitfoo")).unwrap();
+    fs::create_dir(root.path().join(".Git")).unwrap();
+    fs::write(root.path().join(".git"), b"gitfile").unwrap();
+    let mut configured = options();
+    configured.excluded_directory_names = vec![OsString::from(".git")];
+    let subscription = Engine::new().subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.stats().watched_directories, 3);
+
+    let similar = root.path().join(".gitfoo/changed");
+    fs::write(&similar, b"visible").unwrap();
+    wait_for_path(&subscription, &similar);
+    fs::write(root.path().join(".git"), b"changed").unwrap();
+    wait_for_path(&subscription, &root.path().join(".git"));
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn rename_into_and_out_of_an_excluded_directory_name_never_reopens_it() {
+    let _serial = serial();
+    let root = TestDir::new("directory-name-rename");
+    fs::create_dir_all(root.path().join("visible/deep")).unwrap();
+    let mut configured = options();
+    configured.excluded_directory_names = vec![OsString::from(".git")];
+    let subscription = Engine::new().subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.stats().watched_directories, 3);
+
+    fs::rename(root.path().join("visible"), root.path().join(".git")).unwrap();
+    wait_for_path(&subscription, &root.path().join("visible"));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while subscription.stats().watched_directories != 1 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert_eq!(subscription.stats().watched_directories, 1);
+    fs::write(root.path().join(".git/deep/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    fs::rename(root.path().join(".git"), root.path().join("restored")).unwrap();
+    let restored = wait_for_path(&subscription, &root.path().join("restored"));
+    assert_eq!(restored.exclusion_generation, 0);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while subscription.stats().watched_directories != 3 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert_eq!(subscription.stats().watched_directories, 3);
+    let changed = root.path().join("restored/deep/changed");
+    fs::write(&changed, b"changed").unwrap();
+    wait_for_path(&subscription, &changed);
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn observed_excluded_boundary_reports_lifecycle_without_descendant_watches_or_events() {
+    let _serial = serial();
+    let root = TestDir::new("observed-boundary");
+    let git = root.path().join(".git");
+    fs::create_dir_all(git.join("objects/deep")).unwrap();
+    fs::create_dir_all(root.path().join("nested/.git/objects")).unwrap();
+    let mut configured = options();
+    configured.excluded_directory_names = vec![OsString::from(".git")];
+    configured.observed_excluded_paths = vec![PathBuf::from(".git")];
+    let engine = Engine::new();
+    let subscription = engine.subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.stats().watched_directories, 2);
+    assert_eq!(engine.runtime_stats().native_watches, 2);
+
+    fs::write(git.join("objects/deep/ignored"), b"ignored").unwrap();
+    fs::write(root.path().join("nested/.git/objects/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    fs::remove_dir_all(&git).unwrap();
+    let deleted = wait_for_path(&subscription, &git);
+    assert_eq!(deleted.exclusion_generation, 0);
+    assert_eq!(subscription.stats().watched_directories, 2);
+
+    fs::create_dir_all(git.join("objects")).unwrap();
+    wait_for_path(&subscription, &git);
+    assert_eq!(subscription.stats().watched_directories, 2);
+    fs::write(git.join("objects/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn dynamic_whole_policy_replacement_is_atomic_and_name_removal_rescans_from_root() {
+    let _serial = serial();
+    let root = TestDir::new("dynamic-whole-policy");
+    fs::create_dir_all(root.path().join("project/.git/deep")).unwrap();
+    let subscription = Engine::new().subscribe(root.path(), options()).unwrap();
+    assert_eq!(subscription.stats().watched_directories, 4);
+
+    subscription
+        .replace_exclusion_policy(
+            1,
+            ExclusionPolicy {
+                excluded_directory_names: vec![OsString::from(".git")],
+                observed_excluded_paths: vec![PathBuf::from("project/.git")],
+                ..ExclusionPolicy::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(subscription.exclusion_generation(), 1);
+    assert_eq!(subscription.stats().watched_directories, 2);
+    assert_eq!(
+        wait_for_path(&subscription, &root.path().join("project/.git")).exclusion_generation,
+        1
+    );
+    fs::write(root.path().join("project/.git/deep/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    subscription
+        .replace_exclusion_policy(2, ExclusionPolicy::default())
+        .unwrap();
+    let boundary = wait_for_path(&subscription, root.path());
+    assert_eq!(boundary.exclusion_generation, 2);
+    assert_eq!(subscription.stats().watched_directories, 4);
+    let changed = root.path().join("project/.git/deep/changed");
+    fs::write(&changed, b"changed").unwrap();
+    assert_eq!(
+        wait_for_path(&subscription, &changed).exclusion_generation,
+        2
+    );
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn invalid_directory_names_and_unobservable_paths_fail_closed() {
+    let _serial = serial();
+    let root = TestDir::new("exclusion-policy-validation");
+    let subscription = Engine::new().subscribe(root.path(), options()).unwrap();
+    for invalid in ["", ".", "..", "a/b", "/absolute"] {
+        let error = subscription
+            .replace_exclusion_policy(
+                1,
+                ExclusionPolicy {
+                    excluded_directory_names: vec![OsString::from(invalid)],
+                    ..ExclusionPolicy::default()
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidArgument);
+        assert_eq!(subscription.exclusion_generation(), 0);
+    }
+    let error = subscription
+        .replace_exclusion_policy(
+            1,
+            ExclusionPolicy {
+                excluded_directory_names: vec![OsString::from_vec(b"bad\0name".to_vec())],
+                ..ExclusionPolicy::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::InvalidArgument);
+    for invalid in [
+        PathBuf::new(),
+        PathBuf::from("../outside"),
+        PathBuf::from("a//b"),
+    ] {
+        let error = subscription
+            .replace_exclusion_policy(
+                1,
+                ExclusionPolicy {
+                    observed_excluded_paths: vec![invalid],
+                    ..ExclusionPolicy::default()
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidArgument);
+        assert_eq!(subscription.exclusion_generation(), 0);
+    }
+    let error = subscription
+        .replace_exclusion_policy(
+            1,
+            ExclusionPolicy {
+                prefixes: vec![PathBuf::from("parent")],
+                observed_excluded_paths: vec![PathBuf::from("parent/.git")],
+                ..ExclusionPolicy::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::InvalidArgument);
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn observed_boundary_accepts_files_and_symlinks_without_following_them() {
+    let _serial = serial();
+    let root = TestDir::new("observed-file-symlink");
+    let outside = TestDir::new("observed-file-symlink-outside");
+    fs::create_dir_all(outside.path().join("descendant")).unwrap();
+    let boundary = root.path().join(".git");
+    symlink(outside.path(), &boundary).unwrap();
+    let mut configured = options();
+    configured.excluded_directory_names = vec![OsString::from(".git")];
+    configured.observed_excluded_paths = vec![PathBuf::from(".git")];
+    let subscription = Engine::new().subscribe(root.path(), configured).unwrap();
+    assert_eq!(subscription.stats().watched_directories, 1);
+
+    fs::write(outside.path().join("descendant/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    fs::remove_file(&boundary).unwrap();
+    wait_for_path_at(&subscription, &boundary, "removing the symlink");
+    fs::write(&boundary, b"gitdir: elsewhere").unwrap();
+    wait_for_path_at(&subscription, &boundary, "creating the regular file");
+    let file_replacement = root.path().join("replacement-file");
+    fs::write(&file_replacement, b"gitdir: replacement").unwrap();
+    fs::rename(&file_replacement, &boundary).unwrap();
+    wait_for_path_at(&subscription, &boundary, "replacing the file identity");
+    fs::remove_file(&boundary).unwrap();
+    wait_for_path_at(&subscription, &boundary, "removing the regular file");
+    let replacement = root.path().join("replacement");
+    fs::create_dir_all(replacement.join("objects")).unwrap();
+    fs::rename(&replacement, &boundary).unwrap();
+    wait_for_path_at(&subscription, &boundary, "renaming in the directory");
+    assert_eq!(subscription.stats().watched_directories, 1);
+    fs::write(boundary.join("objects/ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+    subscription.dispose().unwrap();
+}
+
+#[test]
+fn non_utf8_directory_names_and_observed_paths_remain_exact() {
+    let _serial = serial();
+    let root = TestDir::new("non-utf8-policy");
+    let excluded_name = OsString::from_vec(vec![b'c', b'a', b'c', b'h', b'e', 0xff]);
+    let observed_relative = PathBuf::from(OsString::from_vec(vec![b'.', b'g', b'i', b't', 0xfe]));
+    let mut configured = options();
+    configured.excluded_directory_names = vec![excluded_name.clone()];
+    configured.observed_excluded_paths = vec![observed_relative.clone()];
+    let subscription = Engine::new().subscribe(root.path(), configured).unwrap();
+
+    fs::create_dir(root.path().join(&excluded_name)).unwrap();
+    fs::write(root.path().join(&excluded_name).join("ignored"), b"ignored").unwrap();
+    assert!(
+        subscription
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+    assert_eq!(subscription.stats().watched_directories, 1);
+
+    let observed = root.path().join(&observed_relative);
+    fs::create_dir(&observed).unwrap();
+    let batch = wait_for_path(&subscription, &observed);
+    assert_eq!(batch.invalidated_paths.len(), 1);
+    assert_eq!(
+        batch.invalidated_paths[0].as_os_str().as_bytes(),
+        observed.as_os_str().as_bytes()
+    );
+    assert_eq!(subscription.stats().watched_directories, 1);
+    subscription.dispose().unwrap();
+}
+
+#[test]
 fn concurrent_conflicting_updates_are_rejected_and_disposal_remains_joined() {
     let _serial = serial();
     let root = TestDir::new("exclusion-concurrent");
@@ -579,13 +913,21 @@ fn disposal_waits_for_an_active_update_and_final_shutdown_releases_all_state() {
     let engine = Engine::new();
     let subscription = Arc::new(engine.subscribe(root.path(), options()).unwrap());
     subscription
-        .replace_exclusions(1, vec![PathBuf::from("tree")])
+        .replace_exclusion_policy(
+            1,
+            ExclusionPolicy {
+                prefixes: vec![PathBuf::from("tree")],
+                observed_excluded_paths: vec![PathBuf::from("tree")],
+                ..ExclusionPolicy::default()
+            },
+        )
         .unwrap();
     for index in 0..1_000 {
         fs::create_dir_all(root.path().join(format!("tree/d{index}"))).unwrap();
     }
     let handle = subscription.exclusion_handle();
-    let update = std::thread::spawn(move || handle.replace_exclusions(2, Vec::new()));
+    let update =
+        std::thread::spawn(move || handle.replace_exclusion_policy(2, ExclusionPolicy::default()));
     subscription.dispose().unwrap();
     let result = update.join().unwrap();
     assert!(

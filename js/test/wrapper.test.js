@@ -325,7 +325,7 @@ test("wrapper replaces exclusions atomically and validates its representation", 
     assert.ok(batches.every((batch) => batch.exclusionGeneration === 2n));
     assert.equal(subscription.exclusionGeneration, 2n);
     assert.throws(() => subscription.replaceExclusions(3, []), /bigint/);
-    assert.throws(() => subscription.replaceExclusions(3n, null), /array/);
+    assert.throws(() => subscription.replaceExclusions(3n, null), /prefix array or exclusion-policy object/);
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });
@@ -366,6 +366,57 @@ test("wrapper applies exact exclusions during initial establishment", async () =
   }
 });
 
+test("wrapper prunes exact directory names and observes only an excluded boundary", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-observed-exclusion-"));
+  const git = path.join(root, ".git");
+  fs.mkdirSync(path.join(git, "objects", "deep"), { recursive: true });
+  fs.mkdirSync(path.join(root, "nested", ".git", "objects"), { recursive: true });
+  let subscription;
+  try {
+    const batches = [];
+    subscription = await subscribe(root, (batch) => batches.push(batch), {
+      excludedDirectoryNames: [".git"],
+      observedExcludedPaths: [".git"],
+      batchWindowMs: 8,
+    });
+    assert.equal(capabilities.features.directoryNameExclusions, true);
+    assert.equal(capabilities.features.observedExcludedPaths, true);
+    assert.equal(subscription.stats().watchedDirectories, 2);
+
+    fs.writeFileSync(path.join(git, "objects", "deep", "ignored"), "ignored");
+    fs.writeFileSync(path.join(root, "nested", ".git", "objects", "ignored"), "ignored");
+    await delay(40);
+    assert.equal(batches.length, 0);
+
+    fs.rmSync(git, { recursive: true });
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(git)),
+      "observed excluded boundary deletion was not delivered",
+    );
+    assert.ok(
+      batches.every((batch) =>
+        batch.invalidatedPaths.every((changedPath) =>
+          changedPath === git || !changedPath.startsWith(`${git}${path.sep}`))),
+      "an excluded descendant leaked through boundary observation",
+    );
+
+    batches.length = 0;
+    await subscription.replaceExclusions(1n, {
+      prefixes: [],
+      excludedDirectoryNames: [],
+      observedExcludedPaths: [],
+    });
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(root)),
+      "removing a directory-name exclusion did not conservatively invalidate the root",
+    );
+    assert.ok(batches.every((batch) => batch.exclusionGeneration === 1n));
+  } finally {
+    await subscription?.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("wrapper rejects malformed initial exclusions before establishment", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-invalid-initial-exclusions-"));
   try {
@@ -380,6 +431,14 @@ test("wrapper rejects malformed initial exclusions before establishment", async 
     await assert.rejects(
       subscribe(root, () => {}, { initialExclusions: ["../outside"] }),
       /normalized/u,
+    );
+    await assert.rejects(
+      subscribe(root, () => {}, { excludedDirectoryNames: ["a/b"] }),
+      /one non-empty normal path component/u,
+    );
+    await assert.rejects(
+      subscribe(root, () => {}, { observedExcludedPaths: [""] }),
+      /must not name the watched root/u,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

@@ -15,8 +15,9 @@ export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
 
 export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   if (
-    native?.schemaVersion !== 3 ||
+    native?.schemaVersion !== 4 ||
     metadata?.schemaVersion !== 1 ||
+    metadata?.bindingApiVersion !== 4 ||
     deliveryMetadata?.schemaVersion !== 1 ||
     matrix?.schemaVersion !== 1
   ) {
@@ -28,6 +29,8 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
     native.cancellableEstablishment !== true ||
     native.sharedNodeDelivery !== true ||
     native.initialExclusions !== true ||
+    native.directoryNameExclusions !== true ||
+    native.observedExcludedPaths !== true ||
     native.nativeCallbackQueueCapacity !== 1 ||
     native.deliveryDispatcherScope !== "node-environment" ||
     native.deliveryAdmission !== "single-credit" ||
@@ -77,7 +80,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   }
 
   return deepFreeze({
-    schemaVersion: 4,
+    schemaVersion: 5,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -146,6 +149,8 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
       overflowReporting: native.overflowReporting,
       initialExclusions: native.initialExclusions,
       dynamicExclusions: native.dynamicExclusions,
+      directoryNameExclusions: native.directoryNameExclusions,
+      observedExcludedPaths: native.observedExcludedPaths,
       reconciliation: native.reconciliation,
       automaticReconciliation: true,
       rootReplacementRecovery: native.rootReplacementRecovery,
@@ -172,6 +177,24 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
           scope: "subscription-establishment",
           matching: "exact-bytes",
           paths: "normalized-root-relative",
+          exclusionGeneration: 0,
+        },
+        excludedDirectoryNames: {
+          type: "directory-name-array",
+          default: [],
+          scope: "subscription-establishment",
+          matching: "exact-component-bytes",
+          depth: "every-directory-depth",
+          exclusionGeneration: 0,
+        },
+        observedExcludedPaths: {
+          type: "observed-excluded-path-array",
+          default: [],
+          scope: "subscription-establishment",
+          matching: "exact-bytes",
+          paths: "normalized-nonempty-root-relative",
+          descendants: "excluded-and-unwatched",
+          boundaryDelivery: "conservative-invalidation",
           exclusionGeneration: 0,
         },
         watchLimit: nullableIntegerOption(

@@ -118,11 +118,13 @@ async function runSmoke() {
     wrapper: options.version,
     native: options.version,
     engine: options.version,
-    bindingApi: 3,
+    bindingApi: 4,
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
   assert.equal(capabilities.build.prebuilt, true);
-  assert.equal(capabilities.schemaVersion, 4);
+  assert.equal(capabilities.schemaVersion, 5);
+  assert.equal(capabilities.features.directoryNameExclusions, true);
+  assert.equal(capabilities.features.observedExcludedPaths, true);
   assert.equal(capabilities.build.packagedTarget.id, nativeTarget.id);
   assert.equal(capabilities.build.packagedTarget.package, nativeTarget.package);
   assert.equal(capabilities.build.packagedTarget.sha256, nativeSha256);
@@ -240,8 +242,12 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
   const movedRoot = path.join(parent, "root-old");
   const initialExcluded = path.join(root, "initial-hidden");
   const dynamicExcluded = path.join(root, "dynamic-hidden");
+  const observedGit = path.join(root, ".git");
+  const nestedGit = path.join(root, "nested", ".git");
   fs.mkdirSync(initialExcluded, { recursive: true });
   fs.mkdirSync(dynamicExcluded, { recursive: true });
+  fs.mkdirSync(path.join(observedGit, "objects"), { recursive: true });
+  fs.mkdirSync(path.join(nestedGit, "objects"), { recursive: true });
   const batches = [];
   let subscription;
   try {
@@ -250,6 +256,8 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       (batch) => batches.push(batch),
       {
         initialExclusions: ["initial-hidden"],
+        excludedDirectoryNames: [".git"],
+        observedExcludedPaths: [".git"],
         batchWindowMs: 5,
         outputQueueCapacity: 16,
       },
@@ -269,10 +277,27 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
       false,
       "initial exclusion leaked its prefix or a descendant path",
     );
+    fs.writeFileSync(path.join(observedGit, "objects", "ignored"), "hidden");
+    fs.writeFileSync(path.join(nestedGit, "objects", "ignored"), "hidden");
+    await delay(30);
+    assert.equal(
+      hasInvalidatedPathAtOrBelow(batches, nestedGit),
+      false,
+      "nested directory-name exclusion leaked a descendant path",
+    );
+    fs.rmSync(observedGit, { recursive: true });
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(observedGit)),
+      "observed excluded boundary deletion was not delivered",
+    );
 
     const replacementCoverage = await subscription.replaceExclusions(
       1n,
-      ["dynamic-hidden"],
+      {
+        prefixes: ["dynamic-hidden"],
+        excludedDirectoryNames: [".git"],
+        observedExcludedPaths: [".git"],
+      },
     );
     assert.equal(replacementCoverage.state, "complete");
     const dynamicHidden = path.join(dynamicExcluded, "hidden.txt");

@@ -194,23 +194,14 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
           return automaticPolicy?.status() ?? automaticReconciliationDisabled;
         },
         stats: () => nativeSubscription.stats(),
-        replaceExclusions: (generation, prefixes) => {
+        replaceExclusions: (generation, exclusions) => {
           if (typeof generation !== "bigint" || generation < 0n) {
             throw invalidArgumentError(
               "replace-exclusions",
               "generation must be a non-negative bigint",
             );
           }
-          if (!Array.isArray(prefixes)) {
-            throw invalidArgumentError(
-              "replace-exclusions",
-              "prefixes must be an array of strings or Uint8Array values",
-            );
-          }
-          const encoded = encodeExclusionPrefixes(
-            prefixes,
-            "replace-exclusions",
-          );
+          const encoded = encodeExclusionPolicy(exclusions, "replace-exclusions");
           return invokeWatchbound(
             "replace-exclusions",
             () => nativeSubscription.replaceExclusions(generation, encoded),
@@ -254,7 +245,11 @@ function readSubscriptionOption(options, name) {
 
 function copyNativeSubscriptionOptions(options) {
   let initialExclusions;
+  let excludedDirectoryNames;
+  let observedExcludedPaths;
   let hasInitialExclusions = false;
+  let hasExcludedDirectoryNames = false;
+  let hasObservedExcludedPaths = false;
   const nativeOptions = {};
   try {
     for (const key of Reflect.ownKeys(options)) {
@@ -264,6 +259,16 @@ function copyNativeSubscriptionOptions(options) {
       if (key === "initialExclusions") {
         initialExclusions = options[key];
         hasInitialExclusions = true;
+        continue;
+      }
+      if (key === "excludedDirectoryNames") {
+        excludedDirectoryNames = options[key];
+        hasExcludedDirectoryNames = true;
+        continue;
+      }
+      if (key === "observedExcludedPaths") {
+        observedExcludedPaths = options[key];
+        hasObservedExcludedPaths = true;
         continue;
       }
       Object.defineProperty(nativeOptions, key, {
@@ -285,27 +290,80 @@ function copyNativeSubscriptionOptions(options) {
       "subscribe",
     );
   }
+  if (hasExcludedDirectoryNames && excludedDirectoryNames !== undefined) {
+    nativeOptions.excludedDirectoryNames = encodePathInputs(
+      excludedDirectoryNames,
+      "subscribe",
+      "excluded directory names",
+    );
+  }
+  if (hasObservedExcludedPaths && observedExcludedPaths !== undefined) {
+    nativeOptions.observedExcludedPaths = encodePathInputs(
+      observedExcludedPaths,
+      "subscribe",
+      "observed excluded paths",
+    );
+  }
   return nativeOptions;
 }
 
 function encodeExclusionPrefixes(prefixes, operation) {
-  if (!Array.isArray(prefixes)) {
+  return encodePathInputs(prefixes, operation, "exclusion prefixes");
+}
+
+function encodePathInputs(values, operation, label) {
+  if (!Array.isArray(values)) {
     throw invalidArgumentError(
       operation,
-      "exclusion prefixes must be an array of strings or Uint8Array values",
+      `${label} must be an array of strings or Uint8Array values`,
     );
   }
   return invokeWatchbound(
     operation,
-    () => prefixes.map((prefix) => {
-      if (typeof prefix === "string") return Buffer.from(prefix);
-      if (prefix instanceof Uint8Array) return Buffer.from(prefix);
+    () => values.map((value) => {
+      if (typeof value === "string") return Buffer.from(value);
+      if (value instanceof Uint8Array) return Buffer.from(value);
       throw invalidArgumentError(
         operation,
-        "each exclusion prefix must be a string or Uint8Array",
+        `each ${label === "exclusion prefixes" ? "exclusion prefix" : label.slice(0, -1)} must be a string or Uint8Array`,
       );
     }),
   );
+}
+
+function encodeExclusionPolicy(exclusions, operation) {
+  if (Array.isArray(exclusions)) {
+    return encodeExclusionPrefixes(exclusions, operation);
+  }
+  if (exclusions === null || typeof exclusions !== "object") {
+    throw invalidArgumentError(
+      operation,
+      "exclusions must be a prefix array or exclusion-policy object",
+    );
+  }
+  let prefixes;
+  let excludedDirectoryNames;
+  let observedExcludedPaths;
+  try {
+    prefixes = exclusions.prefixes;
+    excludedDirectoryNames = exclusions.excludedDirectoryNames;
+    observedExcludedPaths = exclusions.observedExcludedPaths;
+  } catch {
+    throw invalidArgumentError(operation, "exclusion policy properties could not be read");
+  }
+  return {
+    prefixes: encodePathInputs(prefixes ?? [], operation, "exclusion prefixes"),
+    excludedDirectoryNames: encodePathInputs(
+      excludedDirectoryNames ?? [],
+      operation,
+      "excluded directory names",
+    ),
+    observedExcludedPaths: encodePathInputs(
+      observedExcludedPaths ?? [],
+      operation,
+      "observed excluded paths",
+    ),
+  };
 }
 
 function createNativeCallback(weakCallbackHolder, resolvedRoot) {

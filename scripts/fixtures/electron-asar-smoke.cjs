@@ -19,7 +19,7 @@ async function main() {
   assert.equal(process.versions.node, "24.15.0");
   assert.ok(Number(process.versions.napi) >= 10);
   const watchbound = await import("watchbound");
-  assert.equal(watchbound.capabilities.schemaVersion, 4);
+  assert.equal(watchbound.capabilities.schemaVersion, 5);
   assert.equal(
     watchbound.capabilities.support.currentRuntime.packagedTargetId,
     process.env.WATCHBOUND_EXPECTED_TARGET,
@@ -31,6 +31,7 @@ async function main() {
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-electron-asar-"));
   fs.mkdirSync(path.join(root, "hidden"));
+  fs.mkdirSync(path.join(root, ".git", "objects"), { recursive: true });
   const batches = [];
   const engine = watchbound.createEngine();
   let subscription;
@@ -38,7 +39,12 @@ async function main() {
     subscription = await engine.subscribe(
       root,
       (batch) => batches.push(batch),
-      { initialExclusions: ["hidden"], batchWindowMs: 5 },
+      {
+        initialExclusions: ["hidden"],
+        excludedDirectoryNames: [".git"],
+        observedExcludedPaths: [".git"],
+        batchWindowMs: 5,
+      },
     );
     assert.equal(subscription.initialCoverage.state, "complete");
     const excluded = path.join(root, "hidden");
@@ -54,6 +60,19 @@ async function main() {
       hasInvalidatedPathAtOrBelow(batches, excluded),
       false,
       "Electron ASAR initial exclusion leaked its prefix or a descendant path",
+    );
+    const observedGit = path.join(root, ".git");
+    fs.writeFileSync(path.join(observedGit, "objects", "ignored"), "ignored");
+    await delay(30);
+    assert.equal(
+      hasInvalidatedPathAtOrBelow(batches, path.join(observedGit, "objects")),
+      false,
+      "Electron ASAR directory-name exclusion leaked a descendant path",
+    );
+    fs.rmSync(observedGit, { recursive: true });
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(observedGit)),
+      "Electron ASAR observed boundary was not delivered",
     );
     const reconciliation = await subscription.reconcile();
     assert.equal(reconciliation.coverage.state, "complete");

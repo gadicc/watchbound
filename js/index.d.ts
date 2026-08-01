@@ -307,6 +307,16 @@ export interface SubscriptionOptions {
    * establishment at exclusion generation zero.
    */
   initialExclusions?: readonly (string | Uint8Array)[];
+  /**
+   * Exact directory component names pruned at every depth from exclusion
+   * generation zero. Strings encode as UTF-8; Uint8Array preserves exact bytes.
+   */
+  excludedDirectoryNames?: readonly (string | Uint8Array)[];
+  /**
+   * Exact non-empty root-relative excluded paths whose boundary lifecycle is
+   * invalidated while their descendants remain unwatched.
+   */
+  observedExcludedPaths?: readonly (string | Uint8Array)[];
   /** Maximum logical directories covered by this subscription. */
   watchLimit?: number;
   /** Milliseconds used to coalesce native events into a batch. */
@@ -322,6 +332,16 @@ export interface SubscriptionOptions {
    * is a no-op and the returned subscription must be disposed explicitly.
    */
   signal?: AbortSignal;
+}
+
+/** A complete exclusion policy committed under one exclusion generation. */
+export interface ExclusionPolicy {
+  /** Exact normalized root-relative directory namespace prefixes. */
+  prefixes?: readonly (string | Uint8Array)[];
+  /** Exact directory component names pruned at every depth. */
+  excludedDirectoryNames?: readonly (string | Uint8Array)[];
+  /** Exact excluded paths whose boundary lifecycle remains observable. */
+  observedExcludedPaths?: readonly (string | Uint8Array)[];
 }
 
 /** Bounds for the optional automatic-reconciliation retry policy. */
@@ -375,13 +395,15 @@ export interface Subscription {
   /** Returns a snapshot of subscription counters and resource gauges. */
   stats(): Stats;
   /**
-   * Atomically replaces exact-byte directory-prefix exclusions.
+   * Atomically replaces the complete exact-byte exclusion policy.
    *
-   * Generations must increase monotonically.
+   * The legacy prefix array remains supported. It clears the two newer policy
+   * sets. Policy-object fields default to empty, and generations must increase
+   * monotonically.
    */
   replaceExclusions(
     generation: bigint,
-    prefixes: readonly (string | Uint8Array)[],
+    exclusions: readonly (string | Uint8Array)[] | ExclusionPolicy,
   ): Promise<Coverage>;
   /** Rebuilds topology coverage after a recoverable uncertain transition. */
   reconcile(): Promise<ReconciliationResult>;
@@ -525,7 +547,7 @@ export interface IntentionallyUnsupportedTargetCapability {
  */
 export interface Capabilities {
   /** Version of this capabilities object’s schema. */
-  readonly schemaVersion: 4;
+  readonly schemaVersion: 5;
   /** Wrapper, native engine, and binding API versions. */
   readonly versions: {
     readonly wrapper: string;
@@ -620,6 +642,8 @@ export interface Capabilities {
     readonly overflowReporting: boolean;
     readonly initialExclusions: boolean;
     readonly dynamicExclusions: boolean;
+    readonly directoryNameExclusions: boolean;
+    readonly observedExcludedPaths: boolean;
     readonly reconciliation: boolean;
     readonly automaticReconciliation: boolean;
     readonly rootReplacementRecovery: boolean;
@@ -639,6 +663,8 @@ export interface Capabilities {
     };
     readonly subscription: {
       readonly initialExclusions: InitialExclusionsOptionCapability;
+      readonly excludedDirectoryNames: DirectoryNameExclusionsOptionCapability;
+      readonly observedExcludedPaths: ObservedExcludedPathsOptionCapability;
       readonly watchLimit: NullableIntegerOptionCapability<
         "subscription",
         "logical-directories"
@@ -702,6 +728,42 @@ export interface InitialExclusionsOptionCapability {
   /** Prefixes must be normalized and relative to the watched root. */
   readonly paths: "normalized-root-relative";
   /** Initial exclusions are committed at generation zero. */
+  readonly exclusionGeneration: 0;
+}
+
+/** Metadata for exact directory-component exclusions applied at every depth. */
+export interface DirectoryNameExclusionsOptionCapability {
+  /** Accepted option form. */
+  readonly type: "directory-name-array";
+  /** Default directory-name exclusion set. */
+  readonly default: readonly [];
+  /** Lifecycle phase that consumes the option. */
+  readonly scope: "subscription-establishment";
+  /** Components preserve and compare exact Linux bytes. */
+  readonly matching: "exact-component-bytes";
+  /** Names apply to directories at every depth below the root. */
+  readonly depth: "every-directory-depth";
+  /** Initial names are committed at generation zero. */
+  readonly exclusionGeneration: 0;
+}
+
+/** Metadata for explicit excluded paths whose boundary remains observable. */
+export interface ObservedExcludedPathsOptionCapability {
+  /** Accepted option form. */
+  readonly type: "observed-excluded-path-array";
+  /** Default observed-path set. */
+  readonly default: readonly [];
+  /** Lifecycle phase that consumes the option. */
+  readonly scope: "subscription-establishment";
+  /** Paths preserve and compare exact Linux bytes. */
+  readonly matching: "exact-bytes";
+  /** Paths are normalized, non-empty, and relative to the watched root. */
+  readonly paths: "normalized-nonempty-root-relative";
+  /** Every observed boundary's descendants remain excluded and unwatched. */
+  readonly descendants: "excluded-and-unwatched";
+  /** Boundary lifecycle changes produce conservative invalidations. */
+  readonly boundaryDelivery: "conservative-invalidation";
+  /** Initial observed paths are committed at generation zero. */
   readonly exclusionGeneration: 0;
 }
 

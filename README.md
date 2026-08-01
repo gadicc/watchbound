@@ -33,7 +33,15 @@ native/distro/Electron/Nix, kernel-5.15, reproducibility, and separately
 supervised overflow qualification. The wrapper, neutral loader, and both target
 packages are published on npm; the wrapper is also published on JSR. Native x64
 and ARM64 post-publication registry smokes passed for both npm and the JSR Node
-route.
+route. Release `1.1.1` is the current published patch line; it retains that
+public API and target matrix while carrying lifecycle, qualification, and
+release-pipeline fixes.
+
+The checked-in source is now the release candidate for `1.2.0`. It adds native
+recursive directory-name exclusions and explicitly observed excluded
+boundaries under binding API 4 and capability schema 5. This candidate has not
+been published or given immutable registry integrity metadata; the `1.1.0` and
+`1.1.1` statements above remain historical publication evidence.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits and release tags as the sole
@@ -99,7 +107,7 @@ The current implementation divides work as follows:
 
 | Execution context | Current work |
 | --- | --- |
-| JavaScript thread in each Node environment | Module loading and identity checks; wrapper argument, option, and `AbortSignal` handling; prefix encoding; callback normalization; `observedState`; automatic-reconciliation policy; and the consumer callback |
+| JavaScript thread in each Node environment | Module loading and identity checks; wrapper argument, option, and `AbortSignal` handling; exclusion-policy encoding; callback normalization; `observedState`; automatic-reconciliation policy; and the consumer callback |
 | Node's shared libuv worker pool | One napi-rs asynchronous task for each pending establishment, exclusion replacement, reconciliation, root recovery, or joined disposal |
 | One lazy process-wide `watchbound-linux-runtime` Rust thread | inotify polling, recursive topology, native-watch allocation, batching, bounded engine queues, cancellation rollback, and ordered engine acknowledgements |
 | At most one `watchbound-node-dispatcher` Rust thread per Node environment with pending, active, or fallback-cleanup registrations | Fairly inspects registrations and admits at most one callback per subscription into its one-entry Node-API thread-safe-function queue |
@@ -155,11 +163,33 @@ until native success or rollback completes; queued work may therefore delay
 cancellation settlement.
 
 Subscription options may also include `initialExclusions`, an array of exact
-normalized root-relative directory prefixes. These exclusions are installed at
-generation zero before topology traversal, so excluded subtrees are neither
-opened nor assigned logical or native watches during establishment. The empty
-prefix excludes the root. Later `replaceExclusions()` calls advance the
-generation and can re-include any prefix.
+normalized root-relative directory prefixes; `excludedDirectoryNames`, an
+array of exact directory components pruned at every depth; and
+`observedExcludedPaths`, an array of nonempty normalized root-relative
+boundaries whose descendants remain excluded while the boundary itself is
+invalidated conservatively. All three sets are installed at generation zero
+before topology traversal, so excluded subtrees are neither opened nor assigned
+logical or native watches. The empty prefix still excludes the root. Later
+`replaceExclusions()` calls accept either the compatible prefix array or a
+complete policy object and advance the shared exclusion generation.
+
+```js
+const subscription = await subscribe(root, onBatch, {
+  excludedDirectoryNames: [".git", "node_modules"],
+  observedExcludedPaths: [".git"],
+});
+
+await subscription.replaceExclusions(1n, {
+  prefixes: ["generated"],
+  excludedDirectoryNames: [".git", "node_modules"],
+  observedExcludedPaths: [".git"],
+});
+```
+
+Names match complete path components using exact Linux bytes; they are not
+globs or substrings. Observation overrides pruning only for delivery of the
+named boundary. It never follows a boundary symlink, traverses its descendants,
+or turns a matching excluded directory into watched topology.
 
 Batch callbacks receive a stable frozen context with an `AbortSignal` and
 idempotent `stop(): void`. Explicit disposal aborts that signal and joins an
@@ -235,8 +265,8 @@ inotify backend.
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
 | Historical snapshot query | No | `writeSnapshot()` and `getEventsSince()` |
-| Initial static ignores | Generation-zero exact root-relative directory prefixes; no glob or Git policy in the engine | Subscribe-time path and glob ignores |
-| Active exclusion replacement | Generation-based, exact-byte directory prefixes; atomic per subscription | No public active-subscription update |
+| Initial static ignores | Generation-zero exact root-relative prefixes, recursive directory names, and observed excluded boundaries; no glob or Git policy in the engine | Subscribe-time path and glob ignores |
+| Active exclusion replacement | Generation-based whole exact-byte policy; atomic per subscription; compatible prefix-array form retained | No public active-subscription update |
 | Public watch limits and accounting | Per-subscription logical limit, process native-watch budget, and statistics | No public limit or active-watch accounting |
 | Explicit coverage and loss | `complete`, reasoned `partial`, or reasoned `uncertain` | No public coverage state |
 | Linux queue overflow | Typed `event-overflow`, root invalidation, and bounded reconciliation | No public loss result; 2.5.6's inotify backend skips `IN_Q_OVERFLOW` |
@@ -251,7 +281,7 @@ inotify backend.
 
 The Watchbound semantic and lifecycle rows are current private API guarantees.
 Its named threads, scheduling rounds, and queue construction are current
-implementation facts also exposed where applicable through capability schema 4;
+implementation facts also exposed where applicable through capability schema 5;
 their internal shape is not a public major-version stability promise.
 
 The Parcel API claims in the table come from its published
@@ -360,7 +390,7 @@ and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
 default engine. `engine.nativeWatchBudget` is its request, while
 `engine.runtimeStats()` describes actual process-global resources.
 
-The deeply frozen, JSON-serializable `capabilities` export has schema version 4
+The deeply frozen, JSON-serializable `capabilities` export has schema version 5
 and separates versions/build facts, observed runtime facts, packaged target,
 per-target qualification, the legacy single-target support fields,
 features, option defaults and bounds, and observability. It reports
@@ -423,7 +453,8 @@ the next-milestone decision.
 
 The current Linux engine shares one process-wide worker and inotify instance,
 allocates unique native watches fairly across subscriptions, and implements
-generation-based atomic dynamic exclusions. Its public conformance scenario
+generation-based atomic dynamic exclusion policies. Its public conformance
+scenario
 exercises bounded reconciliation in place on an existing subscription,
 including an unchanged exclusion generation, a conservative root boundary,
 peer-subscription isolation, post-recovery delivery, and joined cleanup. It

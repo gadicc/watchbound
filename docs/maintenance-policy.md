@@ -2,7 +2,9 @@
 
 Status: the first multi-target release, `1.1.0`, is published and passed native
 x64/ARM64 npm and JSR Node-route registry smokes. Future releases and consumer
-production readiness remain separately gated.
+production readiness remain separately gated. The checked-in `1.2.0` candidate
+adds the exclusion-policy feature under capability schema 5 and binding API 4;
+it is not published or exact-target qualified yet.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved
@@ -34,6 +36,11 @@ corrected `1.0.1` package restored the JSR route. Release `1.1.0` adds the
 x64/ARM64 target-package matrix while retaining generation-zero exclusions,
 promise-aware callbacks, and binding API 3; its capability schema 4 target
 entries are `supported` after complete exact-commit qualification.
+The next additive public minor keeps those target declarations and package
+roles while adding whole-policy replacement, recursive exact directory-name
+pruning, and observed excluded boundaries. Its source packages remain
+`0.0.0-development`; semantic-release will materialize `1.2.0` only after an
+authorized release-worthy push to `main` passes every distribution gate.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
 

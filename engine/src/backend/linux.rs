@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::ffi::CString;
+use std::ffi::{CString, OsString};
 use std::fs;
 use std::io;
 use std::ops::Bound::{Excluded, Unbounded};
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 use crate::EstablishmentCancellation;
 use crate::{
-    ChangeBatch, Coverage, ErrorCode, EstablishmentCancellationState, Operation, PartialReason,
-    ReconciliationResult, Result as WatchboundResult, RootAttachment, RootIdentity,
+    ChangeBatch, Coverage, ErrorCode, EstablishmentCancellationState, ExclusionPolicy, Operation,
+    PartialReason, ReconciliationResult, Result as WatchboundResult, RootAttachment, RootIdentity,
     RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment, RootRecoveryFailureReason,
     RootRecoveryResult, RootState, RuntimeStats, SharedStats, SubscriptionOptions, UncertainReason,
     WatchboundError, operation_cancelled_error,
@@ -50,6 +50,44 @@ const MAX_ESTABLISHMENT_TEARDOWN_ITEMS_PER_TURN: usize = 64;
 const MAX_DISPOSAL_ITEMS_PER_TURN: usize = 64;
 const MAX_ALLOCATOR_SUBSCRIPTIONS_PER_TURN: usize = 16;
 const MAX_DEFERRED_CANDIDATES_PER_TURN: usize = 64;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ValidatedExclusionPolicy {
+    prefixes: BTreeSet<PathBuf>,
+    directory_names: BTreeSet<OsString>,
+    observed_paths: BTreeSet<PathBuf>,
+}
+
+impl ValidatedExclusionPolicy {
+    fn topology_excludes(&self, root: &Path, path: &Path) -> bool {
+        self.prefixes.iter().any(|prefix| path.starts_with(prefix))
+            || self
+                .observed_paths
+                .iter()
+                .any(|boundary| path.starts_with(boundary))
+            || matches_directory_name(root, path, true, &self.directory_names)
+    }
+
+    fn event_excludes(&self, root: &Path, path: &Path, target_is_directory: bool) -> bool {
+        self.prefixes.iter().any(|prefix| path.starts_with(prefix))
+            || self
+                .observed_paths
+                .iter()
+                .any(|boundary| path.starts_with(boundary))
+            || matches_directory_name(root, path, target_is_directory, &self.directory_names)
+    }
+
+    fn observes_boundary(&self, path: &Path) -> bool {
+        self.observed_paths.contains(path)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ObservedBoundaryIdentity {
+    device: u64,
+    inode: u64,
+    mode: u32,
+}
 
 type SubscriptionId = u64;
 
@@ -448,7 +486,7 @@ impl Runtime {
         &self,
         id: SubscriptionId,
         generation: u64,
-        prefixes: Vec<PathBuf>,
+        policy: ExclusionPolicy,
     ) -> WatchboundResult<PendingExclusionAcknowledgement> {
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
         self.send_control(
@@ -456,7 +494,7 @@ impl Runtime {
                 generation,
                 command: Command::ReplaceExclusions {
                     subscription_id: id,
-                    prefixes,
+                    policy,
                     acknowledgement,
                 },
             },
@@ -713,7 +751,7 @@ enum Command {
     },
     ReplaceExclusions {
         subscription_id: SubscriptionId,
-        prefixes: Vec<PathBuf>,
+        policy: ExclusionPolicy,
         acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Coverage>>>,
     },
     Reconcile {
@@ -800,7 +838,10 @@ struct SubscriptionState {
     next_sequence: u64,
     exclusion_generation: u64,
     selection_generation: u64,
-    exclusions: BTreeSet<PathBuf>,
+    exclusion_policy: ValidatedExclusionPolicy,
+    observed_boundary_identities: BTreeMap<PathBuf, Option<ObservedBoundaryIdentity>>,
+    observed_identity_cursor: Option<PathBuf>,
+    next_observed_identity_check: Option<Instant>,
     exclusion_update: Option<PendingExclusionUpdate>,
     reconciliation: Option<PendingReconciliation>,
     root_recovery: Option<PendingRootRecovery>,
@@ -851,6 +892,8 @@ struct PendingDisposal {
     cleanup_path_sets: VecDeque<BTreeSet<PathBuf>>,
     cleanup_path_queues: VecDeque<VecDeque<PathBuf>>,
     cleanup_path_vectors: VecDeque<Vec<PathBuf>>,
+    cleanup_policies: VecDeque<ValidatedExclusionPolicy>,
+    cleanup_identity_maps: VecDeque<BTreeMap<PathBuf, Option<ObservedBoundaryIdentity>>>,
     phase: DisposalPhase,
 }
 
@@ -872,7 +915,8 @@ enum DisposalPhase {
     DeferredOrder,
     Promotions,
     TopologyJobs,
-    Exclusions,
+    ExclusionPolicy,
+    ObservedIdentities,
     CleanupPathSets,
     CleanupPathQueues,
     CleanupPathVectors,
@@ -881,12 +925,22 @@ enum DisposalPhase {
 
 struct PendingExclusionUpdate {
     generation: u64,
-    exclusions: BTreeSet<PathBuf>,
-    previous_exclusions: BTreeSet<PathBuf>,
-    newly_excluded: VecDeque<PathBuf>,
+    policy: ValidatedExclusionPolicy,
+    previous_policy: ValidatedExclusionPolicy,
     newly_included: Vec<PathBuf>,
+    commit_invalidations: Vec<PathBuf>,
+    removal_stage: ExclusionRemovalStage,
+    removal_cursor: Option<PathBuf>,
     acknowledgement: SyncSender<CommandAcknowledgement<WatchboundResult<Coverage>>>,
     phase: ExclusionUpdatePhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExclusionRemovalStage {
+    Watched,
+    Deferred,
+    Promotions,
+    Complete,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -939,7 +993,7 @@ impl SubscriptionState {
         id: SubscriptionId,
         root: PathBuf,
         root_identity: RootIdentity,
-        options: SubscriptionOptions,
+        mut options: SubscriptionOptions,
         stats: Arc<SharedStats>,
         output: SyncSender<ChangeBatch>,
         establishment: PendingEstablishment,
@@ -951,10 +1005,25 @@ impl SubscriptionState {
             attachment: RootAttachment::Attached,
             loss_evidence: None,
         };
-        let exclusions = options
-            .initial_exclusions
+        let exclusion_policy = validate_exclusion_policy(
+            &root,
+            ExclusionPolicy {
+                prefixes: std::mem::take(&mut options.initial_exclusions),
+                excluded_directory_names: std::mem::take(&mut options.excluded_directory_names),
+                observed_excluded_paths: std::mem::take(&mut options.observed_excluded_paths),
+            },
+            Operation::Subscribe,
+        )
+        .expect("subscription policy was validated before runtime admission");
+        let observed_boundary_identities = exclusion_policy
+            .observed_paths
             .iter()
-            .map(|prefix| root.join(prefix))
+            .map(|path| {
+                (
+                    path.clone(),
+                    capture_observed_boundary_identity(path).ok().flatten(),
+                )
+            })
             .collect();
         Self {
             id,
@@ -979,7 +1048,10 @@ impl SubscriptionState {
             next_sequence: 1,
             exclusion_generation: 0,
             selection_generation: 0,
-            exclusions,
+            exclusion_policy,
+            observed_boundary_identities,
+            observed_identity_cursor: None,
+            next_observed_identity_check: Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL),
             exclusion_update: None,
             reconciliation: None,
             root_recovery: None,
@@ -1061,7 +1133,8 @@ impl SubscriptionState {
         } else {
             self.topology_barriers = 0;
             if let Some(update) = self.exclusion_update.take() {
-                self.exclusions = update.previous_exclusions;
+                self.exclusion_policy = update.previous_policy;
+                self.reset_observed_boundary_identities();
                 self.selection_generation = self.exclusion_generation;
                 let _ = update.acknowledgement.send(CommandAcknowledgement {
                     generation: update.generation,
@@ -1233,9 +1306,32 @@ impl SubscriptionState {
     }
 
     fn is_excluded(&self, path: &Path) -> bool {
-        self.exclusions
+        self.exclusion_policy.topology_excludes(&self.root, path)
+    }
+
+    fn event_is_excluded(&self, path: &Path, target_is_directory: bool) -> bool {
+        self.exclusion_policy
+            .event_excludes(&self.root, path, target_is_directory)
+    }
+
+    fn observes_excluded_boundary(&self, path: &Path) -> bool {
+        self.exclusion_policy.observes_boundary(path)
+    }
+
+    fn reset_observed_boundary_identities(&mut self) {
+        self.observed_boundary_identities = self
+            .exclusion_policy
+            .observed_paths
             .iter()
-            .any(|prefix| path.starts_with(prefix))
+            .map(|path| {
+                (
+                    path.clone(),
+                    capture_observed_boundary_identity(path).ok().flatten(),
+                )
+            })
+            .collect();
+        self.observed_identity_cursor = None;
+        self.next_observed_identity_check = Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
     }
 }
 
@@ -1596,7 +1692,7 @@ impl Worker {
                 }
                 Command::ReplaceExclusions {
                     subscription_id,
-                    prefixes,
+                    policy,
                     acknowledgement,
                 } => {
                     let Some(mut state) = self.subscriptions.remove(&subscription_id) else {
@@ -1641,11 +1737,7 @@ impl Worker {
                             "a topology transaction is already in progress for this subscription",
                         ))
                     } else {
-                        validate_exclusion_prefixes(
-                            &state.root,
-                            prefixes,
-                            Operation::ReplaceExclusions,
-                        )
+                        validate_exclusion_policy(&state.root, policy, Operation::ReplaceExclusions)
                     };
                     match validation {
                         Err(error) => {
@@ -1654,26 +1746,25 @@ impl Worker {
                                 value: Err(error),
                             });
                         }
-                        Ok(exclusions) => {
-                            let newly_excluded = exclusions
-                                .iter()
-                                .filter(|new| {
-                                    !state.exclusions.iter().any(|old| new.starts_with(old))
-                                })
-                                .cloned()
-                                .collect();
-                            let newly_included = state
-                                .exclusions
-                                .iter()
-                                .filter(|old| !exclusions.iter().any(|new| old.starts_with(new)))
+                        Ok(policy) => {
+                            let newly_included = policy_reinclusion_roots(
+                                &state.root,
+                                &state.exclusion_policy,
+                                &policy,
+                            );
+                            let commit_invalidations = policy
+                                .observed_paths
+                                .difference(&state.exclusion_policy.observed_paths)
                                 .cloned()
                                 .collect();
                             state.exclusion_update = Some(PendingExclusionUpdate {
                                 generation,
-                                exclusions,
-                                previous_exclusions: state.exclusions.clone(),
-                                newly_excluded,
+                                policy,
+                                previous_policy: state.exclusion_policy.clone(),
                                 newly_included,
+                                commit_invalidations,
+                                removal_stage: ExclusionRemovalStage::Watched,
+                                removal_cursor: None,
                                 acknowledgement,
                                 phase: ExclusionUpdatePhase::WaitingForTopology,
                             });
@@ -2042,7 +2133,25 @@ impl Worker {
             return;
         }
         let event_path = name.map_or_else(|| directory.to_path_buf(), |name| directory.join(name));
-        if state.is_excluded(&event_path) {
+        let observed_boundary = state.observes_excluded_boundary(&event_path);
+        if state.event_is_excluded(&event_path, mask & libc::IN_ISDIR != 0) {
+            if observed_boundary {
+                if let Ok(identity) = capture_observed_boundary_identity(&event_path) {
+                    state
+                        .observed_boundary_identities
+                        .insert(event_path.clone(), identity);
+                }
+                if state.root_lost {
+                    state.queue_path(state.root.clone());
+                } else {
+                    state.queue_path(event_path);
+                }
+                if state.pending_paths.len() >= state.options.max_batch_paths
+                    && state.topology_barriers == 0
+                {
+                    state.flush();
+                }
+            }
             return;
         }
         if mask & libc::IN_UNMOUNT != 0 {
@@ -2781,15 +2890,16 @@ impl Worker {
                 state.pending_generation = None;
             }
 
-            let (generation, exclusions) = {
+            let (generation, policy) = {
                 let update = state
                     .exclusion_update
                     .as_mut()
                     .expect("ready exclusion update must exist");
                 update.phase = ExclusionUpdatePhase::RemovingExcluded;
-                (update.generation, update.exclusions.clone())
+                (update.generation, update.policy.clone())
             };
-            state.exclusions = exclusions;
+            state.exclusion_policy = policy;
+            state.reset_observed_boundary_identities();
             state.selection_generation = generation;
             state.topology_barriers = 1;
             if boundary_dropped {
@@ -2804,60 +2914,66 @@ impl Worker {
         if removing {
             let mut work = 0;
             while work < MAX_TOPOLOGY_DIRECTORIES_PER_TURN {
-                let Some(prefix) = state
-                    .exclusion_update
-                    .as_ref()
-                    .and_then(|update| update.newly_excluded.front())
-                    .cloned()
-                else {
-                    break;
+                let (stage, cursor) = {
+                    let update = state
+                        .exclusion_update
+                        .as_ref()
+                        .expect("removing exclusion update must exist");
+                    (update.removal_stage, update.removal_cursor.clone())
                 };
-                let watched = state
-                    .watched_paths
-                    .range(prefix.clone()..)
-                    .next()
-                    .filter(|(path, _)| path.starts_with(&prefix))
-                    .map(|(path, descriptor)| (path.clone(), *descriptor));
-                if let Some((path, descriptor)) = watched {
-                    state.watched_paths.remove(&path);
-                    self.remove_interest(state.id, &path, descriptor);
+                let next_path = match stage {
+                    ExclusionRemovalStage::Watched => {
+                        next_map_path(&state.watched_paths, cursor.as_ref())
+                    }
+                    ExclusionRemovalStage::Deferred => {
+                        next_map_path(&state.deferred_directories, cursor.as_ref())
+                    }
+                    ExclusionRemovalStage::Promotions => {
+                        next_set_path(&state.pending_promotions, cursor.as_ref())
+                    }
+                    ExclusionRemovalStage::Complete => None,
+                };
+                if let Some(path) = next_path {
+                    state
+                        .exclusion_update
+                        .as_mut()
+                        .expect("removing exclusion update must exist")
+                        .removal_cursor = Some(path.clone());
+                    if state.is_excluded(&path) {
+                        match stage {
+                            ExclusionRemovalStage::Watched => {
+                                if let Some(descriptor) = state.watched_paths.remove(&path) {
+                                    self.remove_interest(state.id, &path, descriptor);
+                                }
+                            }
+                            ExclusionRemovalStage::Deferred => {
+                                state.deferred_directories.remove(&path);
+                            }
+                            ExclusionRemovalStage::Promotions => {
+                                state.pending_promotions.remove(&path);
+                            }
+                            ExclusionRemovalStage::Complete => unreachable!(),
+                        }
+                    }
                     work += 1;
                     continue;
                 }
-                let deferred = state
-                    .deferred_directories
-                    .range(prefix.clone()..)
-                    .next()
-                    .filter(|(path, _)| path.starts_with(&prefix))
-                    .map(|(path, _)| path.clone());
-                if let Some(path) = deferred {
-                    state.deferred_directories.remove(&path);
-                    work += 1;
-                    continue;
-                }
-                let promotion = state
-                    .pending_promotions
-                    .range(prefix.clone()..)
-                    .next()
-                    .filter(|path| path.starts_with(&prefix))
-                    .cloned();
-                if let Some(path) = promotion {
-                    state.pending_promotions.remove(&path);
-                    work += 1;
-                    continue;
-                }
-                state
+                let update = state
                     .exclusion_update
                     .as_mut()
-                    .expect("removing exclusion update must exist")
-                    .newly_excluded
-                    .pop_front();
-                work += 1;
+                    .expect("removing exclusion update must exist");
+                update.removal_stage = match stage {
+                    ExclusionRemovalStage::Watched => ExclusionRemovalStage::Deferred,
+                    ExclusionRemovalStage::Deferred => ExclusionRemovalStage::Promotions,
+                    ExclusionRemovalStage::Promotions => ExclusionRemovalStage::Complete,
+                    ExclusionRemovalStage::Complete => break,
+                };
+                update.removal_cursor = None;
             }
             let removal_complete = state
                 .exclusion_update
                 .as_ref()
-                .is_some_and(|update| update.newly_excluded.is_empty());
+                .is_some_and(|update| update.removal_stage == ExclusionRemovalStage::Complete);
             if removal_complete {
                 let newly_included = {
                     let update = state
@@ -2893,7 +3009,11 @@ impl Worker {
                 .expect("committing exclusion update must exist");
             state.topology_barriers = state.topology_barriers.saturating_sub(1);
             state.exclusion_generation = update.generation;
-            for path in update.newly_included {
+            for path in update
+                .newly_included
+                .into_iter()
+                .chain(update.commit_invalidations)
+            {
                 state.queue_path(path);
             }
             state.publish_resource_counts();
@@ -3399,6 +3519,7 @@ impl Worker {
         state.root_lost = false;
         state.root_loss_evidence = None;
         state.next_root_identity_check = Some(Instant::now() + ROOT_IDENTITY_CHECK_INTERVAL);
+        state.reset_observed_boundary_identities();
         // The committed traversal discharges the root-loss reason that started
         // recovery, but it cannot discharge uncertainty observed after capture.
         if recovery.starting_uncertainty == Some(UncertainReason::RootReplaced) {
@@ -3973,6 +4094,7 @@ impl Worker {
         state.pending_started = None;
         state.pending_generation = None;
         state.next_root_identity_check = None;
+        state.next_observed_identity_check = None;
 
         let interrupted_establishment = if let Some(establishment) = state.establishment.take() {
             let terminal_error = if establishment.cancellation.try_commit_failure() {
@@ -4005,13 +4127,15 @@ impl Worker {
         let mut cleanup_path_sets = VecDeque::new();
         let mut cleanup_path_queues = VecDeque::new();
         let mut cleanup_path_vectors = VecDeque::new();
+        let mut cleanup_policies = VecDeque::new();
+        let mut cleanup_identity_maps = VecDeque::new();
         if let Some(update) = state.exclusion_update.take() {
             let PendingExclusionUpdate {
                 generation,
-                exclusions,
-                previous_exclusions,
-                newly_excluded,
+                policy,
+                previous_policy,
                 newly_included,
+                commit_invalidations,
                 acknowledgement,
                 ..
             } = update;
@@ -4023,10 +4147,10 @@ impl Worker {
                     "subscription disposed during exclusion update",
                 )),
             });
-            cleanup_path_sets.push_back(exclusions);
-            cleanup_path_sets.push_back(previous_exclusions);
-            cleanup_path_queues.push_back(newly_excluded);
+            cleanup_policies.push_back(policy);
+            cleanup_policies.push_back(previous_policy);
             cleanup_path_vectors.push_back(newly_included);
+            cleanup_path_vectors.push_back(commit_invalidations);
         }
         if let Some(reconciliation) = state.reconciliation.take() {
             let PendingReconciliation {
@@ -4064,6 +4188,12 @@ impl Worker {
             cleanup_path_sets,
             cleanup_path_queues,
             cleanup_path_vectors,
+            cleanup_policies,
+            cleanup_identity_maps: {
+                cleanup_identity_maps
+                    .push_back(std::mem::take(&mut state.observed_boundary_identities));
+                cleanup_identity_maps
+            },
             phase: DisposalPhase::PendingPaths,
         });
     }
@@ -4128,7 +4258,7 @@ impl Worker {
                 }
                 DisposalPhase::TopologyJobs => {
                     let Some(job) = state.topology_jobs.front_mut() else {
-                        state.disposal.as_mut().unwrap().phase = DisposalPhase::Exclusions;
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::ExclusionPolicy;
                         continue;
                     };
                     if job.active.take().is_some() || job.directories.pop_front().is_some() {
@@ -4138,8 +4268,15 @@ impl Worker {
                         removed += 1;
                     }
                 }
-                DisposalPhase::Exclusions => {
-                    if state.exclusions.pop_first().is_some() {
+                DisposalPhase::ExclusionPolicy => {
+                    if pop_policy_item(&mut state.exclusion_policy) {
+                        removed += 1;
+                    } else {
+                        state.disposal.as_mut().unwrap().phase = DisposalPhase::ObservedIdentities;
+                    }
+                }
+                DisposalPhase::ObservedIdentities => {
+                    if state.observed_boundary_identities.pop_first().is_some() {
                         removed += 1;
                     } else {
                         state.disposal.as_mut().unwrap().phase = DisposalPhase::CleanupPathSets;
@@ -4174,7 +4311,26 @@ impl Worker {
                 DisposalPhase::CleanupPathVectors => {
                     let disposal = state.disposal.as_mut().unwrap();
                     let Some(paths) = disposal.cleanup_path_vectors.front_mut() else {
-                        disposal.phase = DisposalPhase::Complete;
+                        let Some(policy) = disposal.cleanup_policies.front_mut() else {
+                            let Some(identities) = disposal.cleanup_identity_maps.front_mut()
+                            else {
+                                disposal.phase = DisposalPhase::Complete;
+                                continue;
+                            };
+                            if identities.pop_first().is_some() {
+                                removed += 1;
+                            } else {
+                                disposal.cleanup_identity_maps.pop_front();
+                                removed += 1;
+                            }
+                            continue;
+                        };
+                        if pop_policy_item(policy) {
+                            removed += 1;
+                        } else {
+                            disposal.cleanup_policies.pop_front();
+                            removed += 1;
+                        }
                         continue;
                     };
                     if paths.pop().is_some() {
@@ -4325,6 +4481,45 @@ impl Worker {
                     }
                 }
             }
+            if state
+                .next_observed_identity_check
+                .is_some_and(|due| now >= due)
+            {
+                let next = next_map_path(
+                    &state.observed_boundary_identities,
+                    state.observed_identity_cursor.as_ref(),
+                );
+                if let Some(path) = next {
+                    state.observed_identity_cursor = Some(path.clone());
+                    if let Ok(identity) = capture_observed_boundary_identity(&path) {
+                        let previous = state
+                            .observed_boundary_identities
+                            .insert(path.clone(), identity);
+                        if previous.is_some_and(|previous| previous != identity) {
+                            if state.root_lost {
+                                state.queue_path(state.root.clone());
+                            } else {
+                                state.queue_path(path);
+                            }
+                        }
+                    }
+                    let more = next_map_path(
+                        &state.observed_boundary_identities,
+                        state.observed_identity_cursor.as_ref(),
+                    )
+                    .is_some();
+                    if more {
+                        state.next_observed_identity_check = Some(now);
+                    } else {
+                        state.observed_identity_cursor = None;
+                        state.next_observed_identity_check =
+                            Some(now + ROOT_IDENTITY_CHECK_INTERVAL);
+                    }
+                } else {
+                    state.observed_identity_cursor = None;
+                    state.next_observed_identity_check = Some(now + ROOT_IDENTITY_CHECK_INTERVAL);
+                }
+            }
             state.flush_if_due();
             if state
                 .root_recovery
@@ -4350,7 +4545,10 @@ impl Worker {
                 let identity = state
                     .next_root_identity_check
                     .map_or(MAX_POLL_INTERVAL, |due| due.saturating_duration_since(now));
-                timeout.min(batch).min(identity)
+                let observed_identity = state
+                    .next_observed_identity_check
+                    .map_or(MAX_POLL_INTERVAL, |due| due.saturating_duration_since(now));
+                timeout.min(batch).min(identity).min(observed_identity)
             })
     }
 
@@ -4512,28 +4710,106 @@ fn recoverable_uncertainty(reason: UncertainReason) -> bool {
     )
 }
 
+pub(crate) fn validate_exclusion_policy(
+    root: &Path,
+    policy: ExclusionPolicy,
+    operation: Operation,
+) -> WatchboundResult<ValidatedExclusionPolicy> {
+    let prefixes = validate_exclusion_prefixes(root, policy.prefixes, operation)?;
+    let observed_paths = validate_relative_paths(
+        root,
+        policy.observed_excluded_paths,
+        operation,
+        false,
+        "observed excluded path",
+    )?;
+    let mut directory_names = BTreeSet::new();
+    for name in policy.excluded_directory_names {
+        let bytes = name.as_bytes();
+        let path = Path::new(&name);
+        let valid = !bytes.is_empty()
+            && !bytes.contains(&0)
+            && !bytes.contains(&b'/')
+            && path.components().count() == 1
+            && matches!(path.components().next(), Some(Component::Normal(component)) if component == name);
+        if !valid {
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                operation,
+                "excluded directory name must be one non-empty normal path component",
+            ));
+        }
+        directory_names.insert(name);
+    }
+    let validated = ValidatedExclusionPolicy {
+        prefixes,
+        directory_names,
+        observed_paths,
+    };
+    for observed in &validated.observed_paths {
+        let parent = observed.parent().expect("observed path is below the root");
+        if validated
+            .prefixes
+            .iter()
+            .any(|prefix| parent.starts_with(prefix))
+            || validated
+                .observed_paths
+                .iter()
+                .any(|other| other != observed && parent.starts_with(other))
+            || matches_directory_name(root, parent, true, &validated.directory_names)
+        {
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                operation,
+                format!(
+                    "observed excluded path has an excluded parent and cannot be observed: {}",
+                    observed.display()
+                ),
+            ));
+        }
+    }
+    Ok(validated)
+}
+
 pub(crate) fn validate_exclusion_prefixes(
     root: &Path,
     prefixes: Vec<PathBuf>,
     operation: Operation,
 ) -> WatchboundResult<BTreeSet<PathBuf>> {
+    let absolute = validate_relative_paths(root, prefixes, operation, true, "exclusion prefix")?;
+    let candidates: Vec<_> = absolute.into_iter().collect();
+    Ok(candidates
+        .iter()
+        .filter(|candidate| {
+            !candidates
+                .iter()
+                .any(|ancestor| *candidate != ancestor && candidate.starts_with(ancestor))
+        })
+        .cloned()
+        .collect())
+}
+
+fn validate_relative_paths(
+    root: &Path,
+    paths: Vec<PathBuf>,
+    operation: Operation,
+    allow_empty: bool,
+    label: &str,
+) -> WatchboundResult<BTreeSet<PathBuf>> {
     let mut absolute = BTreeSet::new();
-    for prefix in prefixes {
+    for prefix in paths {
         if prefix.is_absolute() {
             return Err(WatchboundError::new(
                 ErrorCode::InvalidArgument,
                 operation,
-                format!(
-                    "exclusion prefix must be root-relative: {}",
-                    prefix.display()
-                ),
+                format!("{label} must be root-relative: {}", prefix.display()),
             ));
         }
         if prefix.as_os_str().as_bytes().contains(&0) {
             return Err(WatchboundError::new(
                 ErrorCode::InvalidArgument,
                 operation,
-                "exclusion prefix contains NUL",
+                format!("{label} contains NUL"),
             ));
         }
         let mut normalized = PathBuf::new();
@@ -4548,7 +4824,7 @@ pub(crate) fn validate_exclusion_prefixes(
                         ErrorCode::InvalidArgument,
                         operation,
                         format!(
-                            "exclusion prefix is not a normalized root-relative path: {}",
+                            "{label} is not a normalized root-relative path: {}",
                             prefix.display()
                         ),
                     ));
@@ -4559,21 +4835,112 @@ pub(crate) fn validate_exclusion_prefixes(
             return Err(WatchboundError::new(
                 ErrorCode::InvalidArgument,
                 operation,
-                format!("exclusion prefix is not normalized: {}", prefix.display()),
+                format!("{label} is not normalized: {}", prefix.display()),
+            ));
+        }
+        if !allow_empty && normalized.as_os_str().is_empty() {
+            return Err(WatchboundError::new(
+                ErrorCode::InvalidArgument,
+                operation,
+                format!("{label} must not name the watched root"),
             ));
         }
         absolute.insert(root.join(normalized));
     }
-    let candidates: Vec<_> = absolute.into_iter().collect();
-    Ok(candidates
-        .iter()
+    Ok(absolute)
+}
+
+fn matches_directory_name(
+    root: &Path,
+    path: &Path,
+    target_is_directory: bool,
+    names: &BTreeSet<OsString>,
+) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    let components: Vec<_> = relative.components().collect();
+    let final_index = components.len().saturating_sub(1);
+    components.iter().enumerate().any(|(index, component)| {
+        matches!(component, Component::Normal(name) if names.contains(*name))
+            && (index < final_index || target_is_directory)
+    })
+}
+
+fn policy_reinclusion_roots(
+    root: &Path,
+    previous: &ValidatedExclusionPolicy,
+    replacement: &ValidatedExclusionPolicy,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if previous
+        .directory_names
+        .difference(&replacement.directory_names)
+        .next()
+        .is_some()
+    {
+        candidates.push(root.to_path_buf());
+    } else {
+        candidates.extend(previous.prefixes.difference(&replacement.prefixes).cloned());
+        candidates.extend(
+            previous
+                .observed_paths
+                .difference(&replacement.observed_paths)
+                .cloned(),
+        );
+    }
+    candidates.retain(|candidate| !replacement.topology_excludes(root, candidate));
+    candidates.sort();
+    candidates.dedup();
+    let all = candidates.clone();
+    candidates
+        .into_iter()
         .filter(|candidate| {
-            !candidates
-                .iter()
-                .any(|ancestor| *candidate != ancestor && candidate.starts_with(ancestor))
+            !all.iter()
+                .any(|ancestor| ancestor != candidate && candidate.starts_with(ancestor))
         })
-        .cloned()
-        .collect())
+        .collect()
+}
+
+fn next_map_path<V>(map: &BTreeMap<PathBuf, V>, after: Option<&PathBuf>) -> Option<PathBuf> {
+    match after {
+        Some(after) => map
+            .range((Excluded(after.clone()), Unbounded))
+            .next()
+            .map(|(path, _)| path.clone()),
+        None => map.keys().next().cloned(),
+    }
+}
+
+fn next_set_path(set: &BTreeSet<PathBuf>, after: Option<&PathBuf>) -> Option<PathBuf> {
+    match after {
+        Some(after) => set
+            .range((Excluded(after.clone()), Unbounded))
+            .next()
+            .cloned(),
+        None => set.first().cloned(),
+    }
+}
+
+fn pop_policy_item(policy: &mut ValidatedExclusionPolicy) -> bool {
+    policy.prefixes.pop_first().is_some()
+        || policy.directory_names.pop_first().is_some()
+        || policy.observed_paths.pop_first().is_some()
+}
+
+fn capture_observed_boundary_identity(path: &Path) -> io::Result<Option<ObservedBoundaryIdentity>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(ObservedBoundaryIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+        })),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn directory_identity(path: &Path) -> io::Result<RootIdentity> {
@@ -4798,14 +5165,19 @@ mod tests {
         let previous_exclusion = root.join("previously-hidden");
         let previous_exclusions = BTreeSet::from([previous_exclusion.clone()]);
         let (mut state, _batches) = state(&root, SubscriptionOptions::default());
-        state.exclusions = previous_exclusions.clone();
+        state.exclusion_policy.prefixes = previous_exclusions.clone();
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
         state.exclusion_update = Some(PendingExclusionUpdate {
             generation: 1,
-            exclusions: BTreeSet::new(),
-            previous_exclusions: previous_exclusions.clone(),
-            newly_excluded: VecDeque::new(),
+            policy: ValidatedExclusionPolicy::default(),
+            previous_policy: ValidatedExclusionPolicy {
+                prefixes: previous_exclusions.clone(),
+                ..ValidatedExclusionPolicy::default()
+            },
             newly_included: vec![previous_exclusion],
+            commit_invalidations: Vec::new(),
+            removal_stage: ExclusionRemovalStage::Watched,
+            removal_cursor: None,
             acknowledgement,
             phase: ExclusionUpdatePhase::WaitingForTopology,
         });
@@ -4823,7 +5195,7 @@ mod tests {
         assert!(state.root_lost);
         assert_eq!(state.exclusion_generation, 0);
         assert_eq!(state.selection_generation, 0);
-        assert_eq!(state.exclusions, previous_exclusions);
+        assert_eq!(state.exclusion_policy.prefixes, previous_exclusions);
         assert!(state.topology_jobs.is_empty());
     }
 
@@ -4836,16 +5208,24 @@ mod tests {
         let previous_exclusions = BTreeSet::from([root.join("previously-hidden")]);
         let replacement_exclusions = BTreeSet::from([root.join("newly-hidden")]);
         let (mut state, _batches) = state(&root, SubscriptionOptions::default());
-        state.exclusions = replacement_exclusions.clone();
+        state.exclusion_policy.prefixes = replacement_exclusions.clone();
         state.selection_generation = 1;
         state.topology_barriers = 1;
         let (acknowledgement, acknowledged) = mpsc::sync_channel(1);
         state.exclusion_update = Some(PendingExclusionUpdate {
             generation: 1,
-            exclusions: replacement_exclusions,
-            previous_exclusions: previous_exclusions.clone(),
-            newly_excluded: VecDeque::new(),
+            policy: ValidatedExclusionPolicy {
+                prefixes: replacement_exclusions,
+                ..ValidatedExclusionPolicy::default()
+            },
+            previous_policy: ValidatedExclusionPolicy {
+                prefixes: previous_exclusions.clone(),
+                ..ValidatedExclusionPolicy::default()
+            },
             newly_included: Vec::new(),
+            commit_invalidations: Vec::new(),
+            removal_stage: ExclusionRemovalStage::Complete,
+            removal_cursor: None,
             acknowledgement,
             phase: ExclusionUpdatePhase::ScanningIncluded,
         });
@@ -4863,7 +5243,7 @@ mod tests {
         assert!(state.root_lost);
         assert_eq!(state.exclusion_generation, 0);
         assert_eq!(state.selection_generation, 0);
-        assert_eq!(state.exclusions, previous_exclusions);
+        assert_eq!(state.exclusion_policy.prefixes, previous_exclusions);
     }
 
     fn prepare_reconciliation(
@@ -5912,10 +6292,18 @@ mod tests {
         let (transaction_acknowledgement, transaction_acknowledged) = mpsc::sync_channel(1);
         state.exclusion_update = Some(PendingExclusionUpdate {
             generation: 1,
-            exclusions: paths.iter().cloned().collect(),
-            previous_exclusions: paths.iter().map(|path| path.join("previous")).collect(),
-            newly_excluded: paths.iter().cloned().collect(),
+            policy: ValidatedExclusionPolicy {
+                prefixes: paths.iter().cloned().collect(),
+                ..ValidatedExclusionPolicy::default()
+            },
+            previous_policy: ValidatedExclusionPolicy {
+                prefixes: paths.iter().map(|path| path.join("previous")).collect(),
+                ..ValidatedExclusionPolicy::default()
+            },
             newly_included: paths.iter().map(|path| path.join("included")).collect(),
+            commit_invalidations: paths.iter().map(|path| path.join("observed")).collect(),
+            removal_stage: ExclusionRemovalStage::Watched,
+            removal_cursor: None,
             acknowledgement: transaction_acknowledgement,
             phase: ExclusionUpdatePhase::WaitingForTopology,
         });
@@ -5962,7 +6350,7 @@ mod tests {
             .as_ref()
             .expect("scratch cleanup must remain pending after one quantum");
         assert_eq!(
-            disposal.cleanup_path_sets.front().unwrap().len(),
+            disposal.cleanup_path_vectors.front().unwrap().len(),
             path_count - MAX_DISPOSAL_ITEMS_PER_TURN
         );
         assert!(matches!(acknowledged.try_recv(), Err(TryRecvError::Empty)));

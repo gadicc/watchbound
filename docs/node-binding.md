@@ -6,7 +6,8 @@ baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
 source qualified, and the corrected `1.0.1` package restored the JSR route.
 Release `1.1.0` retains generation-zero exclusions and adds exact x64/ARM64
 package selection; both targets completed native qualification and were
-published.
+published. The current `1.2.0` source candidate advances to binding API 4 for
+whole-policy exclusion replacement; it is not yet published.
 
 ## Choice
 
@@ -82,7 +83,7 @@ Promise-returning native methods still do synchronous work before napi-rs
 queues compute. The JavaScript thread resolves roots, validates and converts
 options, obtains the environment record, installs the cleanup hook, starts or
 joins an environment dispatcher when required, creates and attaches the
-thread-safe function, encodes wrapper exclusion prefixes, validates root
+thread-safe function, encodes wrapper exclusion policies, validates root
 recovery policy, and closes disposal admission. Module loading, metadata and
 capability calls, engine creation, statistics, subscription getters,
 cancellation-token methods, result conversion, batch normalization, and the
@@ -95,17 +96,18 @@ caller accessors, callback work, or contended locks can still pause it.
 ## Native identity, capabilities, and engine handles
 
 The one native binary loaded into the process exposes metadata schema version 1:
-native and engine versions, binding API version 3, Node-API 6, target triple,
-and build profile. Its raw capability schema is version 3 and also provides
+native and engine versions, binding API version 4, Node-API 6, target triple,
+and build profile. Its raw capability schema is version 4 and also provides
 establishment-cancellation, shared-delivery, and callback-completion facts
 alongside feature flags, including generation-zero initial exclusions,
-Rust subscription defaults, the shared positive-`u32` option bounds, process
+recursive directory-name exclusions, observed excluded boundaries, Rust
+subscription defaults, the shared positive-`u32` option bounds, process
 budgeting, and shared-native-watch support. The wrapper combines those values
 with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 4`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 5`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
@@ -144,7 +146,7 @@ The loader accepts exactly `watchbound.linux-x64-gnu.node` beside the package.
 It has no environment-variable override, optional-package lookup, WASI branch,
 download, or install-time build fallback. Before exporting the binding it
 requires Linux x64, detected glibc, Node-API 6 or newer, metadata schema 1,
-binding API 3, matching package/native/engine versions, Node-API build floor 6,
+binding API 4, matching package/native/engine versions, Node-API build floor 6,
 the `x86_64-unknown-linux-gnu` target, and a release build profile. The wrapper
 then asserts its own package version against the native package version.
 
@@ -170,6 +172,15 @@ prefixes and encodes them into raw Node `Buffer` values. Native validation
 occurs before runtime acquisition; the engine applies the complete set before
 opening topology directories, so excluded subtrees consume no establishment
 watches. The set is part of the sequence-zero baseline.
+
+The wrapper likewise encodes `excludedDirectoryNames` and
+`observedExcludedPaths` exactly. Names must be one nonempty normal component
+and prune matching directories at every depth. Observed paths must be nonempty
+normalized root-relative boundaries; their descendants remain excluded and
+unwatched, while exact boundary lifecycle changes remain deliverable. The raw
+`replaceExclusions` method accepts either the legacy `Buffer[]` or a
+`JsExclusionPolicy` object. Candidate objects are copied and validated before
+runtime mutation, and the binding delegates topology meaning to the engine.
 
 The wrapper accepts `signal?: AbortSignal` for establishment only. After pure
 argument validation it creates one native single-bind cancellation token,
@@ -224,7 +235,7 @@ exists. These delivery bounds do not impose a native-watch bound: the default
 subscription and default engine have `watchLimit: null` and
 `nativeWatchBudget: null` until a consumer configures them.
 
-Binding API 3 passes an opaque bigint delivery ID beside each raw batch. The
+Binding API 4 passes an opaque bigint delivery ID beside each raw batch. The
 public wrapper returns the private boolean ownership marker, assimilates the
 user's Promise-like, and calls `completeDelivery(id, callbackError, stop)`
 exactly once. Native code restores credit only for the current ticket in the

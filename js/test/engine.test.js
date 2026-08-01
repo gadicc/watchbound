@@ -13,6 +13,8 @@ import nativeMatrix from "../../config/native-matrix.json" with {
   type: "json",
 };
 import wrapperPackage from "../package.json" with { type: "json" };
+import nativeBinding from "../../node/index.js";
+import { buildCapabilities } from "../capabilities.js";
 
 const currentTarget = nativeMatrix.targets.find(
   (target) =>
@@ -31,7 +33,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v4 separates packaged, runtime, and qualification state", () => {
+test("capability schema v5 exposes exclusion isolation and target qualification", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -42,12 +44,12 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 4);
+  assert.equal(capabilities.schemaVersion, 5);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
     engine: wrapperPackage.version,
-    bindingApi: 3,
+    bindingApi: 4,
   });
   assert.deepEqual(capabilities.build, {
     delivery: "controlled-source-build",
@@ -148,6 +150,8 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
     overflowReporting: true,
     initialExclusions: true,
     dynamicExclusions: true,
+    directoryNameExclusions: true,
+    observedExcludedPaths: true,
     reconciliation: true,
     automaticReconciliation: true,
     rootReplacementRecovery: true,
@@ -176,6 +180,24 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
         scope: "subscription-establishment",
         matching: "exact-bytes",
         paths: "normalized-root-relative",
+        exclusionGeneration: 0,
+      },
+      excludedDirectoryNames: {
+        type: "directory-name-array",
+        default: [],
+        scope: "subscription-establishment",
+        matching: "exact-component-bytes",
+        depth: "every-directory-depth",
+        exclusionGeneration: 0,
+      },
+      observedExcludedPaths: {
+        type: "observed-excluded-path-array",
+        default: [],
+        scope: "subscription-establishment",
+        matching: "exact-bytes",
+        paths: "normalized-nonempty-root-relative",
+        descendants: "excluded-and-unwatched",
+        boundaryDelivery: "conservative-invalidation",
         exclusionGeneration: 0,
       },
       watchLimit: {
@@ -250,6 +272,27 @@ test("capability schema v4 separates packaged, runtime, and qualification state"
   });
   assertDeeplyFrozen(capabilities);
   assert.doesNotThrow(() => JSON.stringify(capabilities));
+});
+
+test("capability handshake fails closed without native exclusion isolation", () => {
+  const raw = nativeBinding.capabilities();
+  const metadata = nativeBinding.bindingMetadata();
+  const delivery = nativeBinding.nativeDeliveryMetadata();
+  const matrix = nativeBinding.nativeTargetMatrix();
+  for (const incompatible of [
+    { ...raw, schemaVersion: 3 },
+    { ...raw, directoryNameExclusions: false },
+    { ...raw, observedExcludedPaths: false },
+  ]) {
+    assert.throws(
+      () => buildCapabilities(incompatible, metadata, delivery, matrix),
+      /incompatible/u,
+    );
+  }
+  assert.throws(
+    () => buildCapabilities(raw, { ...metadata, bindingApiVersion: 3 }, delivery, matrix),
+    /incompatible/u,
+  );
 });
 
 test("createEngine validates and retains resource-free immutable configuration", () => {

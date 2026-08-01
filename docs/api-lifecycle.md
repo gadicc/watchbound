@@ -11,10 +11,10 @@ and Watchbound Rust threads.
 
 The JavaScript thread loads and verifies the addon; validates and copies
 arguments, options, and `AbortSignal` state; creates environment registrations
-and callback bridges; encodes exclusion prefixes; reads synchronous getters
+and callback bridges; encodes exclusion policies; reads synchronous getters
 and statistics; updates `observedState`; runs automatic policy; and invokes the
 consumer callback. These synchronous portions can block the event loop. In
-particular, large option or prefix collections, accessors supplied by the
+particular, large option or exclusion collections, accessors supplied by the
 caller, contended native locks, module loading, and callback work have no
 asynchronous isolation.
 
@@ -196,14 +196,14 @@ reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
 
-## Capability schema version 4
+## Capability schema version 5
 
 The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
 has these top-level sections:
 
 | Section | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `4`. |
+| `schemaVersion` | Exactly `5`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Manifest-derived delivery, build profile, triple, Node-API/Rust floors, and the exact packaged target/package/file/SHA when generated. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
@@ -217,7 +217,8 @@ The exact identity leaves are `versions.{wrapper,native,engine,bindingApi}`,
 `runtime.{platform,architecture,kernel,libc:{family,version},node:{version,api}}`.
 Feature booleans are `recursive`, `movedInTreeDiscovery`,
 `explicitWatchLimits`, `processNativeWatchBudget`, `sharedNativeWatches`,
-`overflowReporting`, `initialExclusions`, `dynamicExclusions`, `reconciliation`,
+`overflowReporting`, `initialExclusions`, `dynamicExclusions`,
+`directoryNameExclusions`, `observedExcludedPaths`, `reconciliation`,
 `automaticReconciliation`, `rootReplacementRecovery`, `exactPathBytes`,
 `orderedBatches`, `observedState`, `cancellableEstablishment`, and
 `sharedNodeDelivery`.
@@ -232,6 +233,10 @@ Positive JavaScript options crossing the native boundary share bounds 1 through
 `options.subscription.initialExclusions` defaults to `[]`, accepts exact-byte
 normalized root-relative directory prefixes, and is committed at exclusion
 generation zero during subscription establishment;
+`options.subscription.excludedDirectoryNames` defaults to `[]`, accepts exact
+single-component directory names, and shares that generation;
+`options.subscription.observedExcludedPaths` defaults to `[]`, accepts exact
+nonempty normalized root-relative boundaries, and shares that generation;
 `options.subscription.watchLimit` defaults to `null`, has scope `subscription`,
 and accounts `logical-directories`. Other subscription defaults are 10 ms
 `batchWindowMs`, 1,024 `maxBatchPaths`, and 64 queued batches.
@@ -262,7 +267,7 @@ invalidations, not promises of one precise low-level event per path.
 
 Sequences begin at one and increase only for successfully delivered batches.
 Every batch also has an `exclusion_generation`; all paths in that batch were
-selected under exactly that committed exclusion set. Generation zero is used
+selected under exactly that committed exclusion policy. Generation zero is used
 before the first successful replacement.
 Every batch also carries fixed-size `root_state`: the last explicitly accepted
 Linux `(device, inode)`, a root generation, `attached` or `lost`, and bounded
@@ -414,27 +419,47 @@ guarantee.
 
 ## Exclusion configuration and lifetime
 
-Rust exposes `replace_exclusions(generation, Vec<PathBuf>)` on `Subscription`
-and its cloneable `ExclusionHandle`; both return the coverage snapshot committed
-by the acknowledgement. `exclusion_generation()` reports the last acknowledged
-value. The Node proof exposes the same operation asynchronously with `Buffer`
-prefixes and bigint generations. The JavaScript wrapper accepts strings or
-`Uint8Array`s and exposes a live bigint `exclusionGeneration` getter. The
-wrapper reports initial establishment filtering as
-`capabilities.features.initialExclusions` and later replacement as
-`capabilities.features.dynamicExclusions`; the Rust and raw Node capability
-records expose the corresponding native features.
+Rust exposes the compatible `replace_exclusions(generation, Vec<PathBuf>)` and
+the whole-policy `replace_exclusion_policy(generation, ExclusionPolicy)` on
+`Subscription` and its cloneable `ExclusionHandle`; both return the coverage
+snapshot committed by the acknowledgement. `exclusion_generation()` reports
+the last acknowledged value. The raw Node operation accepts either a `Buffer`
+prefix array or a policy object, with bigint generations. The JavaScript
+wrapper accepts strings or `Uint8Array`s and exposes a live bigint
+`exclusionGeneration` getter. The wrapper reports initial filtering, dynamic
+replacement, recursive name exclusions, and observed boundaries through
+capability feature flags; the Rust and raw Node records expose the corresponding
+native features.
 
-`SubscriptionOptions.initialExclusions` supplies the complete generation-zero
-set before traversal. Each later call supplies the complete replacement set.
-Prefixes are normalized,
-root-relative directory namespaces and are compared using exact Linux bytes.
-The empty prefix denotes the root; `.` is non-normal and rejected. Absolute,
-parent-traversing, repeated-separator, trailing-separator, and NUL-containing
-inputs are rejected. A nonexistent prefix is valid and filters a directory
-created there later. Duplicate and descendant-redundant entries have the same
-meaning as their minimal prefix set. The engine does not interpret Git ignores,
-globs, workspace mapping, or application defaults.
+`SubscriptionOptions.initialExclusions`, `excludedDirectoryNames`, and
+`observedExcludedPaths` supply the complete generation-zero policy before
+traversal. A later policy-object call supplies all three complete replacement
+sets; an omitted field means an empty set. The legacy array form supplies only
+prefixes and clears both newer sets.
+
+Prefixes are normalized root-relative directory namespaces compared using
+exact Linux bytes. The empty prefix denotes the root; `.` is non-normal and
+rejected. A nonexistent prefix is valid and filters a directory created there
+later. Directory-name exclusions are nonempty single normal components. They
+match exact directory basenames at every depth, including future directories
+and rename destinations, but never match substrings, paths, globs, case-folded
+names, or a non-directory with the same name. A match is pruned before opening
+or assigning a logical/native watch and neither its boundary nor descendants
+are delivered by default.
+
+Observed excluded paths are nonempty normalized root-relative paths. Their
+descendants remain pruned and unwatched, while creation, deletion, rename,
+replacement, or a detected `(device, inode, mode)` identity change produces a
+conservative invalidation of the exact boundary. Existing regular files and
+symlinks are valid boundaries; symlinks are never followed. When a path also
+matches a name exclusion, observation overrides only boundary delivery. A path
+whose proper parent is excluded is rejected because its boundary could not be
+observed truthfully.
+
+Absolute, parent-traversing, repeated-separator, trailing-separator,
+NUL-containing, malformed, and ambiguous inputs are rejected before changing
+the committed policy. Duplicate entries have set semantics. The engine does
+not interpret Git ignores, globs, workspace mapping, or application defaults.
 
 Generations start at zero and successful requested values must be strictly
 greater than the committed value; they need not be consecutive. Duplicate,
@@ -444,16 +469,18 @@ rejected rather than queued or reordered. Other subscriptions retain their own
 generation and allocator state.
 
 The worker first completes that subscription's active topology work and closes
-the old-generation pending-batch boundary. It then removes newly excluded
-logical interests in bounded chunks, returns final native-watch tokens between
-allocator turns, and scans newly included regions using watch-before-read
-discovery in bounded scheduler turns. A scan
+the old-generation pending-batch boundary. It installs the whole candidate only
+inside the topology transaction, removes newly excluded logical interests in
+bounded chunks, returns final native-watch tokens between allocator turns, and
+scans newly included regions using watch-before-read discovery in bounded
+scheduler turns. Name-policy relaxation conservatively rescans from the root;
+new observed boundaries are invalidated at their committed generation. A scan
 that cannot obtain a subscription slot or runtime token records truthful partial
 coverage and enters ordinary fair deferred promotion. Re-included prefixes are
 conservatively invalidated only after their topology barrier completes because
 changes made while excluded cannot be reconstructed.
 
-Acknowledgement publishes the new generation only after the exclusion set,
+Acknowledgement publishes the new generation only after the exclusion policy,
 topology, allocator accounting, and coverage snapshot are committed. It does
 not wait for the JavaScript callback to consume the resulting invalidation.
 Disposal and updates serialize through the subscription lifecycle: an active
@@ -464,7 +491,7 @@ watches, descriptors, and final worker shutdown.
 
 Rejected exclusion operations carry the schema-version-2 structured metadata
 defined in [`error-contract.md`](error-contract.md). In particular, invalid
-prefixes and generations use `WATCHBOUND_INVALID_ARGUMENT`, a concurrent
+policy inputs and generations use `WATCHBOUND_INVALID_ARGUMENT`, a concurrent
 topology operation uses `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT`, and work
 admitted before disposal may use `WATCHBOUND_OPERATION_INTERRUPTED`. Human
 messages are diagnostic and are not a policy surface. Exclusions deliberately
@@ -485,12 +512,12 @@ The recoverable sticky reasons are `event-overflow`, `topology-race`, and
 `consumer-backpressure`. Reconciliation never synthesizes the detailed events
 that may have been lost. It closes the existing pending batch boundary, checks
 the original root identity, scans only the topology included by the current
-committed exclusions, installs or shares a watch before reading each directory,
+committed exclusion policy, installs or shares a watch before reading each directory,
 and performs bounded mark-and-sweep cleanup of stale watched, deferred, and
 promotion state. The operation can yield between scheduler turns, while its
 subscription continues to expose the previous committed resource gauges.
 
-The exclusion set and generation cannot change during this barrier. A
+The exclusion policy and generation cannot change during this barrier. A
 concurrent reconciliation or exclusion update fails with
 `WATCHBOUND_TOPOLOGY_TRANSACTION_CONFLICT` and
 `retryAfter: "topology-transaction-settles"`. Events observed while scanning

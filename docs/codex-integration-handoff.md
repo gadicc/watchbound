@@ -23,6 +23,32 @@ versions, Node-API, triple, and release profile. Capability schema 4 adds
 `build.packagedTarget`, per-target qualification, and current-runtime matching;
 the JavaScript subscription API is otherwise compatible.
 
+## Pending 1.2.0 exclusion-API manifest update
+
+The current source is the candidate for a later `1.2.0` publication. It adds
+capability schema 5, raw native capability schema 4, binding API 4,
+`excludedDirectoryNames`, and `observedExcludedPaths`. Codex must not adopt the
+source candidate or reuse the immutable `1.1.0` hashes under the new version.
+After the release and post-publication checks succeed, update the Codex manifest
+with these exact four lockstep coordinates:
+
+| Package | Expected version | Archive/binary identity |
+| --- | --- | --- |
+| `watchbound` | `1.2.0` | npm tarball for `watchbound-1.2.0.tgz` |
+| `@gadicc/watchbound-node` | `1.2.0` | npm tarball for `watchbound-node-1.2.0.tgz` |
+| `@gadicc/watchbound-node-linux-x64-gnu` | `1.2.0` | target tarball plus `watchbound.linux-x64-gnu.node` |
+| `@gadicc/watchbound-node-linux-arm64-gnu` | `1.2.0` | target tarball plus `watchbound.linux-arm64-gnu.node` |
+
+For every package record, copy the official registry tarball URL,
+`dist.integrity`, npm SHA-1 shasum, and downloaded tarball SHA-256. For each
+target record also copy the generated native-file path and declared/computed
+native SHA-256. Pin the release tag and exact source commit, require package
+version lockstep, capability schema 5, binding API 4, metadata schema 1,
+native-matrix schema 1, and Node-API floor 6. None of the new integrity,
+shasum, archive SHA-256, native SHA-256, tag, or final release-commit values
+exists before publication; record them from release evidence and the registry,
+never from a local development build.
+
 ## Published 1.1.0 registry coordinates
 
 Release tag `v1.1.0` points to

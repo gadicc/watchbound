@@ -230,7 +230,7 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 4 = capabilities.schemaVersion;
+  const schemaVersion: 5 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const callbackCompletion: "promise-aware-serialized" =
     capabilities.observability.callbackCompletion;
@@ -248,8 +248,15 @@ function inspectCapabilities(): void {
   const targetPackage: string = capabilities.support.targets[0]!.package;
   const nodeRange: ">=24.15.0 <25" = capabilities.support.nodeRange;
   const initialExclusions: boolean = capabilities.features.initialExclusions;
+  const directoryNameExclusions: boolean =
+    capabilities.features.directoryNameExclusions;
+  const observedExcludedPaths: boolean = capabilities.features.observedExcludedPaths;
   const initialExclusionGeneration: 0 =
     capabilities.options.subscription.initialExclusions.exclusionGeneration;
+  const directoryNameGeneration: 0 =
+    capabilities.options.subscription.excludedDirectoryNames.exclusionGeneration;
+  const observedPathGeneration: 0 =
+    capabilities.options.subscription.observedExcludedPaths.exclusionGeneration;
   const supportStatus: "pending" | "ready" = (() => {
     switch (capabilities.support.status) {
       case "target-pending-clean-ci":
@@ -289,7 +296,11 @@ function inspectCapabilities(): void {
   void callbackCompletion;
   void callbackMaxInFlight;
   void initialExclusions;
+  void directoryNameExclusions;
+  void observedExcludedPaths;
   void initialExclusionGeneration;
+  void directoryNameGeneration;
+  void observedPathGeneration;
   void targetTriple;
   void delivery;
   void prebuilt;
@@ -357,6 +368,11 @@ async function inspectSubscription(subscription: Subscription): Promise<void> {
     1n,
     ["ignored", exactBytes],
   );
+  const policyReplacement: Coverage = await subscription.replaceExclusions(2n, {
+    prefixes: ["generated"],
+    excludedDirectoryNames: [".git", new Uint8Array([0xff])],
+    observedExcludedPaths: [".git"],
+  });
   const reconciliation = await subscription.reconcile();
   const reconciledGeneration: bigint = reconciliation.exclusionGeneration;
   const recovered = await subscription.recoverRoot({
@@ -386,6 +402,7 @@ async function inspectSubscription(subscription: Subscription): Promise<void> {
   void nativeExclusionGeneration;
   void nativeRootGeneration;
   void automaticStatus;
+  void policyReplacement;
   void replacement;
   void reconciledGeneration;
   void recoveryDescription;
@@ -429,6 +446,8 @@ async function usePublicApi(): Promise<void> {
     callback,
     {
       initialExclusions: ["ignored", new Uint8Array([0x62, 0x75, 0x69, 0x6c, 0x64])],
+      excludedDirectoryNames: [".git"],
+      observedExcludedPaths: [".git"],
       watchLimit: 4_096,
       batchWindowMs: 10,
       maxBatchPaths: 1_024,

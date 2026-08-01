@@ -94,7 +94,9 @@ const subscription = await subscribe(
   },
   {
     signal: establishmentAbortController.signal,
-    initialExclusions: [".git", "node_modules"],
+    initialExclusions: ["generated"],
+    excludedDirectoryNames: [".git", "node_modules"],
+    observedExcludedPaths: [".git"],
     watchLimit: 50_000,
     maxBatchPaths: 2_048,
     outputQueueCapacity: 8,
@@ -116,6 +118,19 @@ subscription. Prefixes are exact normalized root-relative directory paths, not
 globs or basenames, and are applied before the generation-zero topology scan.
 An empty prefix excludes the root. Watchbound does not discover Git ignores or
 application policy; consumers must compute and update that complete prefix set.
+
+When capability schema 5 proves support, use `excludedDirectoryNames` for exact
+directory components that must be pruned at every depth, including future and
+renamed-in directories. Use `observedExcludedPaths` for nonempty exact
+root-relative excluded boundaries whose creation, deletion, rename,
+replacement, or identity change should trigger policy refresh. Observation
+overrides only boundary delivery: descendants remain unwatched and symlinks are
+not followed. Both options join `initialExclusions` at generation zero.
+
+`subscription.replaceExclusions(generation, policy)` atomically replaces all
+three sets. Omitted object fields are empty. The legacy array form remains a
+prefix-only replacement and clears the newer sets, so an integration using the
+new behavior should always send the complete policy object.
 
 Check `initialCoverage` immediately after establishment. Use ordered callback
 batches as the authoritative JavaScript observation boundary.
@@ -161,10 +176,11 @@ wait for the named condition to change.
 
 ## Translate exclusions at the consumer boundary
 
-Supply the complete replacement exclusion set with a strictly increasing
-`bigint` generation. Exclusions are normalized, root-relative directory
-prefixes compared with exact Linux bytes. They are not globs, Git-ignore rules,
-workspace mappings, or application defaults.
+Supply the complete replacement exclusion policy with a strictly increasing
+`bigint` generation. Prefixes and observed boundaries are normalized
+root-relative paths; directory names are exact single components at every
+depth. Every value is compared with exact Linux bytes. They are not globs,
+Git-ignore rules, workspace mappings, or application defaults.
 
 Keep ignore-policy translation in the consumer. Do not move it into the Rust
 engine or Node binding. Preserve caller-supplied root components until native

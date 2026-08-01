@@ -16,11 +16,11 @@ use napi::{Env, Error, Result, Status, Task, sys};
 use napi_derive::napi;
 use watchbound_engine::{
     ChangeBatch, Coverage, Engine, ErrorCode, EstablishmentCancellation, ExclusionHandle,
-    MAX_ERROR_MESSAGE_BYTES, Operation, PartialReason, ReconciliationHandle, ReconciliationResult,
-    RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence, RootRecoveryAttachment,
-    RootRecoveryFailureReason, RootRecoveryHandle, RootRecoveryResult, RootState, RootStateHandle,
-    RuntimeStats, Stats, StatsHandle, Subscription, SubscriptionOptions, SystemCause,
-    UncertainReason, VERSION, WatchboundError,
+    ExclusionPolicy, MAX_ERROR_MESSAGE_BYTES, Operation, PartialReason, ReconciliationHandle,
+    ReconciliationResult, RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence,
+    RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryHandle, RootRecoveryResult,
+    RootState, RootStateHandle, RuntimeStats, Stats, StatsHandle, Subscription,
+    SubscriptionOptions, SystemCause, UncertainReason, VERSION, WatchboundError,
 };
 
 mod delivery;
@@ -30,8 +30,8 @@ type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
 type TaskOutcome<T> = NodeResult<T>;
 
 const MAX_SYSTEM_DETAIL_BYTES: usize = 128;
-const BINDING_API_VERSION: u32 = 3;
-const CAPABILITY_SCHEMA_VERSION: u32 = 3;
+const BINDING_API_VERSION: u32 = 4;
+const CAPABILITY_SCHEMA_VERSION: u32 = 4;
 const NODE_API_VERSION: u32 = 6;
 
 #[derive(Clone, Debug)]
@@ -236,6 +236,8 @@ fn sync_error(env: &Env, error: NodeErrorDetails) -> Error {
 #[napi(object)]
 pub struct JsSubscriptionOptions {
     pub initial_exclusions: Option<Vec<Buffer>>,
+    pub excluded_directory_names: Option<Vec<Buffer>>,
+    pub observed_excluded_paths: Option<Vec<Buffer>>,
     pub watch_limit: Option<f64>,
     pub batch_window_ms: Option<f64>,
     pub max_batch_paths: Option<f64>,
@@ -267,6 +269,18 @@ impl JsSubscriptionOptions {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|prefix| PathBuf::from(std::ffi::OsString::from_vec(prefix.to_vec())))
+                .collect(),
+            excluded_directory_names: self
+                .excluded_directory_names
+                .unwrap_or_default()
+                .into_iter()
+                .map(|name| std::ffi::OsString::from_vec(name.to_vec()))
+                .collect(),
+            observed_excluded_paths: self
+                .observed_excluded_paths
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| PathBuf::from(std::ffi::OsString::from_vec(path.to_vec())))
                 .collect(),
             watch_limit: watch_limit.map(|value| value as usize),
             batch_window: batch_window_ms.map_or(defaults.batch_window, |value| {
@@ -541,6 +555,8 @@ pub struct JsCapabilities {
     pub overflow_reporting: bool,
     pub initial_exclusions: bool,
     pub dynamic_exclusions: bool,
+    pub directory_name_exclusions: bool,
+    pub observed_excluded_paths: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
     pub exact_path_bytes: bool,
@@ -574,6 +590,8 @@ pub fn capabilities() -> JsCapabilities {
         overflow_reporting: capabilities.overflow_reporting,
         initial_exclusions: capabilities.initial_exclusions,
         dynamic_exclusions: capabilities.dynamic_exclusions,
+        directory_name_exclusions: capabilities.directory_name_exclusions,
+        observed_excluded_paths: capabilities.observed_excluded_paths,
         reconciliation: capabilities.reconciliation,
         root_replacement_recovery: capabilities.root_replacement_recovery,
         exact_path_bytes: true,
@@ -1254,6 +1272,38 @@ pub struct NativeSubscription {
     dispose_promise: Mutex<Option<DisposePromiseReference>>,
 }
 
+#[napi(object)]
+pub struct JsExclusionPolicy {
+    pub prefixes: Option<Vec<Buffer>>,
+    pub excluded_directory_names: Option<Vec<Buffer>>,
+    pub observed_excluded_paths: Option<Vec<Buffer>>,
+}
+
+impl JsExclusionPolicy {
+    fn into_engine_policy(self) -> ExclusionPolicy {
+        ExclusionPolicy {
+            prefixes: self
+                .prefixes
+                .unwrap_or_default()
+                .into_iter()
+                .map(|prefix| PathBuf::from(std::ffi::OsString::from_vec(prefix.to_vec())))
+                .collect(),
+            excluded_directory_names: self
+                .excluded_directory_names
+                .unwrap_or_default()
+                .into_iter()
+                .map(|name| std::ffi::OsString::from_vec(name.to_vec()))
+                .collect(),
+            observed_excluded_paths: self
+                .observed_excluded_paths
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| PathBuf::from(std::ffi::OsString::from_vec(path.to_vec())))
+                .collect(),
+        }
+    }
+}
+
 #[napi]
 impl NativeSubscription {
     #[napi(getter)]
@@ -1291,7 +1341,7 @@ impl NativeSubscription {
         &self,
         env: Env,
         generation: BigInt,
-        prefixes: Vec<Buffer>,
+        policy: Either<Vec<Buffer>, JsExclusionPolicy>,
     ) -> Result<AsyncTask<ReplaceExclusionsTask>> {
         let (negative, generation, lossless) = generation.get_u64();
         if negative || !lossless {
@@ -1307,10 +1357,15 @@ impl NativeSubscription {
         Ok(AsyncTask::new(ReplaceExclusionsTask {
             exclusions: self.state.exclusions.clone(),
             generation,
-            prefixes: prefixes
-                .into_iter()
-                .map(|prefix| PathBuf::from(std::ffi::OsString::from_vec(prefix.to_vec())))
-                .collect(),
+            policy: match policy {
+                Either::A(prefixes) => JsExclusionPolicy {
+                    prefixes: Some(prefixes),
+                    excluded_directory_names: None,
+                    observed_excluded_paths: None,
+                }
+                .into_engine_policy(),
+                Either::B(policy) => policy.into_engine_policy(),
+            },
         }))
     }
 
@@ -1396,7 +1451,7 @@ impl Drop for NativeSubscription {
 pub struct ReplaceExclusionsTask {
     exclusions: ExclusionHandle,
     generation: u64,
-    prefixes: Vec<PathBuf>,
+    policy: ExclusionPolicy,
 }
 
 pub struct ReconcileTask {
@@ -1415,7 +1470,7 @@ impl Task for ReplaceExclusionsTask {
     fn compute(&mut self) -> Result<Self::Output> {
         Ok(self
             .exclusions
-            .replace_exclusions(self.generation, std::mem::take(&mut self.prefixes))
+            .replace_exclusion_policy(self.generation, std::mem::take(&mut self.policy))
             .map_err(NodeErrorDetails::from))
     }
 

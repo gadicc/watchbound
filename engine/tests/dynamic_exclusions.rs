@@ -703,7 +703,8 @@ fn observed_boundary_accepts_files_and_symlinks_without_following_them() {
     wait_for_path_at(&subscription, &boundary, "replacing the file identity");
     fs::remove_file(&boundary).unwrap();
     wait_for_path_at(&subscription, &boundary, "removing the regular file");
-    let replacement = root.path().join("replacement");
+    // Keep source-side discovery out of this observed-boundary assertion.
+    let replacement = outside.path().join("replacement");
     fs::create_dir_all(replacement.join("objects")).unwrap();
     fs::rename(&replacement, &boundary).unwrap();
     wait_for_path_at(&subscription, &boundary, "renaming in the directory");

@@ -315,7 +315,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /ref: \$\{\{ inputs\.candidate_sha \}\}/u);
   assert.match(release, /github\.run_attempt/u);
   assert.match(release, /^  plan:\n    name: Select exact candidate plan/mu);
-  assert.match(release, /watchbound-qualification-plan-/u);
+  assert.match(release, /watchbound-qualification-plan/u);
   assert.match(release, /actions\/download-artifact@/u);
   assert.match(release, /select-release-plan\.mjs/u);
   assert.match(release, /candidate_version: \$\{\{ needs\.plan\.outputs\.version \}\}/u);
@@ -567,6 +567,59 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(flake, /asar pack/u);
   assert.match(flake, /exclusion-smoke-helpers\.cjs/u);
   assert.doesNotMatch(flake, /npm (?:install|ci)/u);
+});
+
+test("workflow artifact handoffs survive partial reruns", () => {
+  const release = fs.readFileSync(
+    path.join(workspaceRoot, ".github/workflows/release.yml"),
+    "utf8",
+  );
+  const ci = fs.readFileSync(
+    path.join(workspaceRoot, ".github/workflows/ci.yml"),
+    "utf8",
+  );
+
+  assert.equal(
+    ci.match(
+      /^          name: watchbound-ci-native-\$\{\{ matrix\.target \}\}$/gmu,
+    )?.length,
+    4,
+  );
+  assert.equal(
+    ci.match(/^          overwrite: true$/gmu)?.length,
+    1,
+  );
+  assert.doesNotMatch(
+    ci,
+    /^          name: watchbound-ci-native-[^\n]*github\.run_attempt/mu,
+  );
+
+  assert.equal(
+    release.match(/^          overwrite: true$/gmu)?.length,
+    5,
+  );
+  assert.match(release, /^          name: watchbound-release-plan$/mu);
+  assert.match(release, /^          name: watchbound-qualification-plan$/mu);
+  assert.match(
+    release,
+    /^          name: watchbound-native-\$\{\{ matrix\.target \}\}-\$\{\{ matrix\.builder \}\}$/mu,
+  );
+  assert.match(
+    release,
+    /^          name: watchbound-approved-target-\$\{\{ matrix\.target \}\}$/mu,
+  );
+  assert.match(
+    release,
+    /^          pattern: watchbound-approved-target-\*$/mu,
+  );
+  assert.match(
+    release,
+    /^          name: watchbound-approved-native-matrix$/mu,
+  );
+  assert.doesNotMatch(
+    release,
+    /^          (?:name|pattern): (?:watchbound-release-plan|watchbound-qualification-plan|watchbound-native-|watchbound-approved-)[^\n]*github\.run_attempt/mu,
+  );
 });
 
 test("overflow dispatch validation rejects workflow reruns and ambiguous approval", () => {

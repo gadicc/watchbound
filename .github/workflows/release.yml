@@ -71,10 +71,11 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-release-plan-${{ github.run_attempt }}
+          name: watchbound-release-plan
           path: ${{ runner.temp }}/release-plan.json
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
 
   qualification-plan:
     name: Plan exact read-only qualification
@@ -127,12 +128,13 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-qualification-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: watchbound-qualification-plan
           path: |
             ${{ runner.temp }}/qualification-dispatch.json
             ${{ runner.temp }}/qualification-plan.json
           if-no-files-found: warn
           retention-days: 90
+          overwrite: true
 
   plan:
     name: Select exact candidate plan
@@ -167,7 +169,7 @@ jobs:
           package-manager-cache: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ${{ github.event_name == 'workflow_dispatch' && format('watchbound-qualification-plan-{0}-{1}', github.run_id, github.run_attempt) || format('watchbound-release-plan-{0}', github.run_attempt) }}
+          name: ${{ github.event_name == 'workflow_dispatch' && 'watchbound-qualification-plan' || 'watchbound-release-plan' }}
           path: ${{ runner.temp }}/selected-plan
       - id: matrix
         run: node scripts/ci-matrix.mjs --github-output "$GITHUB_OUTPUT"
@@ -277,10 +279,11 @@ jobs:
           cp "node/${{ matrix.binary }}" "$root/"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-native-${{ matrix.target }}-${{ matrix.builder }}-${{ github.run_attempt }}
+          name: watchbound-native-${{ matrix.target }}-${{ matrix.builder }}
           path: ${{ runner.temp }}/evidence
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
 
   repro-compare:
     name: Compare independent ${{ matrix.target }} outputs
@@ -308,11 +311,11 @@ jobs:
           version: ${{ needs.plan.outputs.version }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-native-${{ matrix.target }}-builder-a-${{ github.run_attempt }}
+          name: watchbound-native-${{ matrix.target }}-builder-a
           path: ${{ runner.temp }}/builder-a
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-native-${{ matrix.target }}-builder-b-${{ github.run_attempt }}
+          name: watchbound-native-${{ matrix.target }}-builder-b
           path: ${{ runner.temp }}/builder-b
       - name: Byte-compare exact target outputs
         shell: bash
@@ -326,10 +329,11 @@ jobs:
           touch "$RUNNER_TEMP/approved/${{ matrix.target }}.root"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-approved-${{ matrix.target }}-${{ github.run_attempt }}
+          name: watchbound-approved-target-${{ matrix.target }}
           path: ${{ runner.temp }}/approved
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
 
   aggregate:
     name: Aggregate reproducible target matrix
@@ -355,7 +359,7 @@ jobs:
           version: ${{ needs.plan.outputs.version }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: watchbound-approved-*-${{ github.run_attempt }}
+          pattern: watchbound-approved-target-*
           path: ${{ runner.temp }}/approved-input
           merge-multiple: true
       - id: aggregate
@@ -366,10 +370,11 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
 
   release-distro:
     name: Release artifact ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
@@ -406,7 +411,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
       - name: Package and exercise the canonical target
         shell: bash
@@ -460,7 +465,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
       - name: Exercise canonical package through app.asar.unpacked
         shell: bash
@@ -523,7 +528,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
       - name: Exercise the canonical package on a real pinned 5.15 kernel
         shell: bash
@@ -584,7 +589,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
       - name: Record preflight and run the approved overflow scenario
         shell: bash
@@ -688,7 +693,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -763,7 +768,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-approved-native-matrix-${{ github.run_attempt }}
+          name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

@@ -149,10 +149,11 @@ jobs:
       - name: Retain the target artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          name: watchbound-ci-native-${{ matrix.target }}
           path: node/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 30
+          overwrite: true
 
   moving-toolchain:
     name: Moving Node 24 and Rust stable
@@ -224,7 +225,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          name: watchbound-ci-native-${{ matrix.target }}
           path: node
       - name: Prepare exact local tarballs
         run: |
@@ -291,7 +292,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          name: watchbound-ci-native-${{ matrix.target }}
           path: node
       - name: Exercise the exact package on a real pinned 5.15 kernel
         shell: bash
@@ -349,7 +350,7 @@ jobs:
           pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: watchbound-ci-native-${{ matrix.target }}-${{ github.run_attempt }}
+          name: watchbound-ci-native-${{ matrix.target }}
           path: node
       - name: Prepare the target package and exact Electron archive
         shell: bash

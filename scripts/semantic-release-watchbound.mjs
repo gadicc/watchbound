@@ -287,10 +287,15 @@ function verifyExistingNpmPackage(state, descriptor, version) {
   }
 }
 
-async function waitForJsrPackage(specifier) {
-  for (let attempt = 1; attempt <= 10; attempt += 1) {
-    if (await jsrPackageExists(specifier)) return true;
-    await delay(3_000);
+export async function waitForJsrPackage(specifier, {
+  attempts = 60,
+  pollIntervalMs = 5_000,
+  packageExists = jsrPackageExists,
+  sleep = delay,
+} = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (await packageExists(specifier)) return true;
+    if (attempt < attempts) await sleep(pollIntervalMs);
   }
   return false;
 }
@@ -301,7 +306,7 @@ export async function jsrPackageExists(specifier, fetchImplementation = globalTh
       .exec(specifier);
   if (!match?.groups) throw new Error(`invalid exact JSR package specifier: ${specifier}`);
   const { scope, packageName, version } = match.groups;
-  const metadataUrl = `https://jsr.io/@${scope}/${packageName}/meta.json`;
+  const metadataUrl = `https://jsr.io/@${scope}/${packageName}/${version}_meta.json`;
   const response = await fetchImplementation(metadataUrl, {
     cache: "no-store",
     headers: { accept: "application/json" },
@@ -315,14 +320,16 @@ export async function jsrPackageExists(specifier, fetchImplementation = globalTh
   }
   const metadata = await response.json();
   if (
-    metadata?.scope !== scope ||
-    metadata?.name !== packageName ||
-    !metadata.versions ||
-    typeof metadata.versions !== "object"
+    !metadata ||
+    typeof metadata !== "object" ||
+    !metadata.manifest ||
+    typeof metadata.manifest !== "object" ||
+    !metadata.exports ||
+    typeof metadata.exports !== "object"
   ) {
-    throw new Error(`invalid JSR package metadata for ${specifier}`);
+    throw new Error(`invalid JSR version metadata for ${specifier}`);
   }
-  return Object.hasOwn(metadata.versions, version);
+  return true;
 }
 
 function isMissing(output) {

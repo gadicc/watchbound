@@ -9,7 +9,10 @@ import {
   INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
   readOptionalEvidence,
 } from "../../scripts/lib/native-build-evidence.mjs";
-import { jsrPackageExists } from "../../scripts/semantic-release-watchbound.mjs";
+import {
+  jsrPackageExists,
+  waitForJsrPackage,
+} from "../../scripts/semantic-release-watchbound.mjs";
 import { validateOverflowDispatch } from "../../scripts/validate-overflow-dispatch.mjs";
 
 const workspaceRoot = path.resolve(
@@ -679,7 +682,7 @@ test("overflow dispatch validation rejects workflow reruns and ambiguous approva
   );
 });
 
-test("JSR existence checks exact registry metadata without Deno policy", async () => {
+test("JSR existence checks immutable exact-version metadata without Deno policy", async () => {
   const requests = [];
   const fetchMetadata = async (...args) => {
     requests.push(args);
@@ -688,12 +691,8 @@ test("JSR existence checks exact registry metadata without Deno policy", async (
       status: 200,
       async json() {
         return {
-          scope: "gadicc",
-          name: "watchbound",
-          versions: {
-            "1.0.0": { yanked: true },
-            "1.0.1": {},
-          },
+          manifest: { "/index.js": { size: 1, checksum: "sha256-example" } },
+          exports: { ".": "./index.js" },
         };
       },
     };
@@ -709,7 +708,10 @@ test("JSR existence checks exact registry metadata without Deno policy", async (
   assert.equal(
     await jsrPackageExists(
       "jsr:@gadicc/watchbound@1.0.2",
-      fetchMetadata,
+      async (...args) => {
+        requests.push(args);
+        return { ok: false, status: 404 };
+      },
     ),
     false,
   );
@@ -721,12 +723,52 @@ test("JSR existence checks exact registry metadata without Deno policy", async (
     true,
   );
   assert.equal(requests.length, 3);
-  for (const [url, options] of requests) {
-    assert.equal(url, "https://jsr.io/@gadicc/watchbound/meta.json");
+  assert.deepEqual(
+    requests.map(([url]) => url),
+    [
+      "https://jsr.io/@gadicc/watchbound/1.0.1_meta.json",
+      "https://jsr.io/@gadicc/watchbound/1.0.2_meta.json",
+      "https://jsr.io/@gadicc/watchbound/1.0.0_meta.json",
+    ],
+  );
+  for (const [, options] of requests) {
     assert.equal(options.cache, "no-store");
     assert.equal(options.headers.accept, "application/json");
     assert.ok(options.signal instanceof AbortSignal);
   }
+});
+
+test("JSR visibility polling is bounded and stops as soon as the version appears", async () => {
+  const probes = [];
+  const sleeps = [];
+  const visible = await waitForJsrPackage("jsr:@gadicc/watchbound@1.0.1", {
+    attempts: 5,
+    pollIntervalMs: 7,
+    packageExists: async (specifier) => {
+      probes.push(specifier);
+      return probes.length === 3;
+    },
+    sleep: async (duration) => sleeps.push(duration),
+  });
+
+  assert.equal(visible, true);
+  assert.deepEqual(probes, Array(3).fill("jsr:@gadicc/watchbound@1.0.1"));
+  assert.deepEqual(sleeps, [7, 7]);
+
+  let missingProbes = 0;
+  const missingSleeps = [];
+  assert.equal(
+    await waitForJsrPackage("jsr:@gadicc/watchbound@1.0.2", {
+      packageExists: async () => {
+        missingProbes += 1;
+        return false;
+      },
+      sleep: async (duration) => missingSleeps.push(duration),
+    }),
+    false,
+  );
+  assert.equal(missingProbes, 60);
+  assert.deepEqual(missingSleeps, Array(59).fill(5_000));
 });
 
 test("JSR publication restores only the exact prepared native tarball", () => {

@@ -15,9 +15,9 @@ export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
 
 export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   if (
-    native?.schemaVersion !== 4 ||
+    native?.schemaVersion !== 5 ||
     metadata?.schemaVersion !== 1 ||
-    metadata?.bindingApiVersion !== 4 ||
+    metadata?.bindingApiVersion !== 5 ||
     deliveryMetadata?.schemaVersion !== 1 ||
     matrix?.schemaVersion !== 1
   ) {
@@ -31,6 +31,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
     native.initialExclusions !== true ||
     native.directoryNameExclusions !== true ||
     native.observedExcludedPaths !== true ||
+    native.physicalRootResolution !== true ||
     native.nativeCallbackQueueCapacity !== 1 ||
     native.deliveryDispatcherScope !== "node-environment" ||
     native.deliveryAdmission !== "single-credit" ||
@@ -80,7 +81,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   }
 
   return deepFreeze({
-    schemaVersion: 5,
+    schemaVersion: 6,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -154,6 +155,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
       reconciliation: native.reconciliation,
       automaticReconciliation: true,
       rootReplacementRecovery: native.rootReplacementRecovery,
+      physicalRootResolution: native.physicalRootResolution,
       exactPathBytes: native.exactPathBytes,
       orderedBatches: true,
       observedState: true,
@@ -171,6 +173,13 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
         ),
       },
       subscription: {
+        rootPathPolicy: {
+          type: "enum",
+          values: ["strict", "resolve-physical"],
+          default: "strict",
+          outputPaths: "physical",
+          aliasTracking: "establishment-snapshot",
+        },
         initialExclusions: {
           type: "directory-prefix-array",
           default: [],

@@ -9,7 +9,7 @@ const packageVersion = packageManifest.version;
 const packageDelivery = packageManifest.watchbound?.delivery;
 
 const REQUIRED_METADATA_SCHEMA_VERSION = 1;
-const REQUIRED_BINDING_API_VERSION = 4;
+const REQUIRED_BINDING_API_VERSION = 5;
 const MAX_NATIVE_BYTES = 8 * 1024 * 1024;
 const MAX_MESSAGE_BYTES = 1_024;
 const MAX_CAUSE_MESSAGE_BYTES = 512;

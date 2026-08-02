@@ -45,7 +45,7 @@ The public-package path verifies package name, version, delivery kind, target
 identifier, Rust triple, architecture, libc, filename, declared SHA-256, one
 regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,
 class, endianness, and machine before `require()`. After load it verifies
-metadata schema 1, binding API 4, wrapper/native/engine version lockstep,
+metadata schema 1, binding API 5, wrapper/native/engine version lockstep,
 Node-API floor 6, target triple, and release profile.
 
 Node is restricted to `>=24.15.0 <25`. The Codex boundary is Electron 42.3.0,

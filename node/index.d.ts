@@ -14,6 +14,7 @@ export declare class NativeEstablishmentCancellation {
 }
 
 export declare class NativeSubscription {
+  get resolvedRoot(): JsResolvedRoot
   get initialCoverage(): JsCoverage
   get initialRootState(): JsRootState
   stats(): JsStats
@@ -160,6 +161,7 @@ export interface JsCapabilities {
   observedExcludedPaths: boolean
   reconciliation: boolean
   rootReplacementRecovery: boolean
+  physicalRootResolution: boolean
   exactPathBytes: boolean
   processNativeWatchBudget: boolean
   sharedNativeWatches: boolean
@@ -273,6 +275,7 @@ export interface JsSubscriptionDefaults {
 }
 
 export interface JsSubscriptionOptions {
+  rootPathPolicy?: "strict" | "resolve-physical"
   initialExclusions?: Array<Buffer>
   excludedDirectoryNames?: Array<Buffer>
   observedExcludedPaths?: Array<Buffer>
@@ -280,6 +283,13 @@ export interface JsSubscriptionOptions {
   batchWindowMs?: number
   maxBatchPaths?: number
   outputQueueCapacity?: number
+}
+
+export interface JsResolvedRoot {
+  policy: "strict" | "resolve-physical"
+  lexicalPath: Buffer
+  physicalPath: Buffer
+  identity: JsRootIdentity
 }
 
 export interface JsExclusionPolicy {

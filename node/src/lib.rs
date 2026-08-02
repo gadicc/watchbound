@@ -18,8 +18,8 @@ use watchbound_engine::{
     ChangeBatch, Coverage, Engine, ErrorCode, EstablishmentCancellation, ExclusionHandle,
     ExclusionPolicy, MAX_ERROR_MESSAGE_BYTES, Operation, PartialReason, ReconciliationHandle,
     ReconciliationResult, RootAttachment, RootIdentity, RootIdentityPolicy, RootLossEvidence,
-    RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryHandle, RootRecoveryResult,
-    RootState, RootStateHandle, RuntimeStats, Stats, StatsHandle, Subscription,
+    RootPathPolicy, RootRecoveryAttachment, RootRecoveryFailureReason, RootRecoveryHandle,
+    RootRecoveryResult, RootState, RootStateHandle, RuntimeStats, Stats, StatsHandle, Subscription,
     SubscriptionOptions, SystemCause, UncertainReason, VERSION, WatchboundError,
 };
 
@@ -30,8 +30,8 @@ type NodeResult<T> = std::result::Result<T, NodeErrorDetails>;
 type TaskOutcome<T> = NodeResult<T>;
 
 const MAX_SYSTEM_DETAIL_BYTES: usize = 128;
-const BINDING_API_VERSION: u32 = 4;
-const CAPABILITY_SCHEMA_VERSION: u32 = 4;
+const BINDING_API_VERSION: u32 = 5;
+const CAPABILITY_SCHEMA_VERSION: u32 = 5;
 const NODE_API_VERSION: u32 = 6;
 
 #[derive(Clone, Debug)]
@@ -235,6 +235,7 @@ fn sync_error(env: &Env, error: NodeErrorDetails) -> Error {
 
 #[napi(object)]
 pub struct JsSubscriptionOptions {
+    pub root_path_policy: Option<String>,
     pub initial_exclusions: Option<Vec<Buffer>>,
     pub excluded_directory_names: Option<Vec<Buffer>>,
     pub observed_excluded_paths: Option<Vec<Buffer>>,
@@ -264,6 +265,17 @@ impl JsSubscriptionOptions {
             .map(|value| positive_u32_option(value, "outputQueueCapacity", Operation::Subscribe))
             .transpose()?;
         Ok(SubscriptionOptions {
+            root_path_policy: match self.root_path_policy.as_deref() {
+                None | Some("strict") => RootPathPolicy::Strict,
+                Some("resolve-physical") => RootPathPolicy::ResolvePhysical,
+                Some(_) => {
+                    return Err(NodeErrorDetails::new(
+                        ErrorCode::InvalidArgument,
+                        Operation::Subscribe,
+                        "rootPathPolicy must be \"strict\" or \"resolve-physical\"",
+                    ));
+                }
+            },
             initial_exclusions: self
                 .initial_exclusions
                 .unwrap_or_default()
@@ -384,6 +396,29 @@ pub struct JsReconciliationResult {
 pub struct JsRootIdentity {
     pub device: u64,
     pub inode: u64,
+}
+
+#[napi(object, object_from_js = false)]
+pub struct JsResolvedRoot {
+    pub policy: String,
+    pub lexical_path: Buffer,
+    pub physical_path: Buffer,
+    pub identity: JsRootIdentity,
+}
+
+impl From<&watchbound_engine::ResolvedRoot> for JsResolvedRoot {
+    fn from(root: &watchbound_engine::ResolvedRoot) -> Self {
+        Self {
+            policy: match root.policy {
+                RootPathPolicy::Strict => "strict",
+                RootPathPolicy::ResolvePhysical => "resolve-physical",
+            }
+            .to_owned(),
+            lexical_path: Buffer::from(root.lexical_path.as_os_str().as_bytes()),
+            physical_path: Buffer::from(root.physical_path.as_os_str().as_bytes()),
+            identity: root.identity.into(),
+        }
+    }
 }
 
 impl From<RootIdentity> for JsRootIdentity {
@@ -559,6 +594,7 @@ pub struct JsCapabilities {
     pub observed_excluded_paths: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
+    pub physical_root_resolution: bool,
     pub exact_path_bytes: bool,
     pub process_native_watch_budget: bool,
     pub shared_native_watches: bool,
@@ -594,6 +630,7 @@ pub fn capabilities() -> JsCapabilities {
         observed_excluded_paths: capabilities.observed_excluded_paths,
         reconciliation: capabilities.reconciliation,
         root_replacement_recovery: capabilities.root_replacement_recovery,
+        physical_root_resolution: capabilities.physical_root_resolution,
         exact_path_bytes: true,
         process_native_watch_budget: capabilities.process_native_watch_budget,
         shared_native_watches: capabilities.shared_native_watches,
@@ -1307,6 +1344,11 @@ impl JsExclusionPolicy {
 #[napi]
 impl NativeSubscription {
     #[napi(getter)]
+    pub fn resolved_root(&self) -> JsResolvedRoot {
+        JsResolvedRoot::from(&self.state.resolved_root)
+    }
+
+    #[napi(getter)]
     pub fn initial_coverage(&self) -> JsCoverage {
         JsCoverage::from(&self.state.initial_coverage)
     }
@@ -1513,6 +1555,7 @@ impl Task for RecoverRootTask {
 }
 
 pub struct SubscriptionState {
+    resolved_root: watchbound_engine::ResolvedRoot,
     initial_coverage: Coverage,
     initial_root_state: RootState,
     stats: StatsHandle,
@@ -1547,6 +1590,7 @@ impl SubscriptionState {
     ) -> Arc<Self> {
         let initial_coverage = subscription.initial_coverage().clone();
         let initial_root_state = *subscription.initial_root_state();
+        let resolved_root = subscription.resolved_root().clone();
         let stats = subscription.stats_handle();
         let exclusions = subscription.exclusion_handle();
         let reconciliation = subscription.reconciliation_handle();
@@ -1555,6 +1599,7 @@ impl SubscriptionState {
         let environment = cleanup_registration.environment();
         let subscription = Arc::new(subscription);
         let state = Arc::new(Self {
+            resolved_root,
             initial_coverage,
             initial_root_state,
             stats,

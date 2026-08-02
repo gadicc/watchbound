@@ -119,7 +119,7 @@ globs or basenames, and are applied before the generation-zero topology scan.
 An empty prefix excludes the root. Watchbound does not discover Git ignores or
 application policy; consumers must compute and update that complete prefix set.
 
-When capability schema 5 proves support, use `excludedDirectoryNames` for exact
+When capability schema 6 proves support, use `excludedDirectoryNames` for exact
 directory components that must be pruned at every depth, including future and
 renamed-in directories. Use `observedExcludedPaths` for nonempty exact
 root-relative excluded boundaries whose creation, deletion, rename,

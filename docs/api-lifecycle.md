@@ -196,14 +196,14 @@ reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
 
-## Capability schema version 5
+## Capability schema version 6
 
 The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
 has these top-level sections:
 
 | Section | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `5`. |
+| `schemaVersion` | Exactly `6`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Manifest-derived delivery, build profile, triple, Node-API/Rust floors, and the exact packaged target/package/file/SHA when generated. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
@@ -219,7 +219,7 @@ Feature booleans are `recursive`, `movedInTreeDiscovery`,
 `explicitWatchLimits`, `processNativeWatchBudget`, `sharedNativeWatches`,
 `overflowReporting`, `initialExclusions`, `dynamicExclusions`,
 `directoryNameExclusions`, `observedExcludedPaths`, `reconciliation`,
-`automaticReconciliation`, `rootReplacementRecovery`, `exactPathBytes`,
+`automaticReconciliation`, `rootReplacementRecovery`, `physicalRootResolution`, `exactPathBytes`,
 `orderedBatches`, `observedState`, `cancellableEstablishment`, and
 `sharedNodeDelivery`.
 

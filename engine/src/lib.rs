@@ -272,6 +272,31 @@ pub struct RootIdentity {
     pub inode: u64,
 }
 
+/// How a subscription root pathname is admitted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RootPathPolicy {
+    /// Reject every symbolic link in the root's ancestry.
+    #[default]
+    Strict,
+    /// Resolve the exact supplied pathname once and watch its canonical target.
+    ResolvePhysical,
+}
+
+/// Immutable pathname resolution committed with subscription establishment.
+///
+/// `lexical_path` preserves the caller's absolute spelling, including `.` and
+/// `..` components. `physical_path` is the canonical directory pathname used
+/// by the watcher and by all invalidation and exclusion semantics. Under
+/// [`RootPathPolicy::ResolvePhysical`], later changes to the lexical alias are
+/// deliberately not followed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedRoot {
+    pub policy: RootPathPolicy,
+    pub lexical_path: PathBuf,
+    pub physical_path: PathBuf,
+    pub identity: RootIdentity,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RootAttachment {
     Attached,
@@ -366,6 +391,8 @@ pub struct ExclusionPolicy {
 /// Per-subscription tuning. No application-specific watch limit is implied.
 #[derive(Clone, Debug)]
 pub struct SubscriptionOptions {
+    /// Root pathname admission policy. Strict rejection remains the default.
+    pub root_path_policy: RootPathPolicy,
     /// Exact normalized root-relative directory prefixes excluded during
     /// initial establishment at exclusion generation zero.
     pub initial_exclusions: Vec<PathBuf>,
@@ -384,6 +411,7 @@ pub struct SubscriptionOptions {
 impl Default for SubscriptionOptions {
     fn default() -> Self {
         Self {
+            root_path_policy: RootPathPolicy::Strict,
             initial_exclusions: Vec::new(),
             excluded_directory_names: Vec::new(),
             observed_excluded_paths: Vec::new(),
@@ -441,6 +469,7 @@ pub struct Capabilities {
     pub observed_excluded_paths: bool,
     pub reconciliation: bool,
     pub root_replacement_recovery: bool,
+    pub physical_root_resolution: bool,
     pub process_native_watch_budget: bool,
     pub shared_native_watches: bool,
 }
@@ -564,6 +593,7 @@ impl Engine {
             observed_excluded_paths: true,
             reconciliation: true,
             root_replacement_recovery: true,
+            physical_root_resolution: true,
             process_native_watch_budget: true,
             shared_native_watches: true,
         }
@@ -628,12 +658,30 @@ impl Engine {
         }
 
         let validated_root = (|| {
-            let root = reject_symlink_ancestry(&absolute_path(root)?)?;
-            let metadata = std::fs::symlink_metadata(&root).map_err(|error| {
+            let lexical_path = absolute_path(root)?;
+            let physical_path = match options.root_path_policy {
+                RootPathPolicy::Strict => reject_symlink_ancestry(&lexical_path)?,
+                RootPathPolicy::ResolvePhysical => {
+                    let canonical = std::fs::canonicalize(&lexical_path).map_err(|error| {
+                        WatchboundError::from_io(
+                            ErrorCode::RootUnavailable,
+                            Operation::Subscribe,
+                            format!("watch root cannot be resolved: {}", lexical_path.display()),
+                            &error,
+                        )
+                    })?;
+                    // The canonical result is revalidated as an ordinary
+                    // physical path so a concurrent component substitution
+                    // cannot turn opt-in root resolution into ongoing symlink
+                    // following.
+                    reject_symlink_ancestry(&canonical)?
+                }
+            };
+            let metadata = std::fs::symlink_metadata(&physical_path).map_err(|error| {
                 WatchboundError::from_io(
                     ErrorCode::RootUnavailable,
                     Operation::Subscribe,
-                    format!("watch root is unavailable: {}", root.display()),
+                    format!("watch root is unavailable: {}", physical_path.display()),
                     &error,
                 )
             })?;
@@ -641,12 +689,16 @@ impl Engine {
                 return Err(WatchboundError::new(
                     ErrorCode::InvalidArgument,
                     Operation::Subscribe,
-                    format!("watch root is not a directory: {}", root.display()),
+                    format!("watch root is not a directory: {}", physical_path.display()),
                 ));
             }
-            Ok(root)
+            Ok(PendingResolvedRoot {
+                policy: options.root_path_policy,
+                lexical_path,
+                physical_path,
+            })
         })();
-        let root = match validated_root {
+        let resolved_root = match validated_root {
             Ok(root) => root,
             Err(error) => return Err(commit_pre_runtime_failure(&cancellation.shared, error)),
         };
@@ -655,17 +707,19 @@ impl Engine {
             excluded_directory_names: options.excluded_directory_names.clone(),
             observed_excluded_paths: options.observed_excluded_paths.clone(),
         };
-        if let Err(error) =
-            backend::linux::validate_exclusion_policy(&root, initial_policy, Operation::Subscribe)
-        {
+        if let Err(error) = backend::linux::validate_exclusion_policy(
+            &resolved_root.physical_path,
+            initial_policy,
+            Operation::Subscribe,
+        ) {
             return Err(commit_pre_runtime_failure(&cancellation.shared, error));
         }
-        self.begin_subscribe_admitted_root(root, options, cancellation)
+        self.begin_subscribe_admitted_root(resolved_root, options, cancellation)
     }
 
     fn begin_subscribe_admitted_root(
         &self,
-        root: PathBuf,
+        resolved_root: PendingResolvedRoot,
         options: SubscriptionOptions,
         cancellation: EstablishmentCancellation,
     ) -> Result<PendingSubscription> {
@@ -689,24 +743,28 @@ impl Engine {
                 Err(error) => Err(error),
             };
         }
-        let pending =
-            match runtime.begin_subscribe(root, options, Arc::clone(&stats), cancellation.shared())
-            {
-                Ok(pending) => pending,
-                Err(error) => {
-                    cancellation.shared.detach_runtime();
-                    return match release_runtime(&runtime) {
-                        Ok(()) => Err(error),
-                        Err(release_error) => Err(release_error),
-                    };
-                }
-            };
+        let pending = match runtime.begin_subscribe(
+            resolved_root.physical_path.clone(),
+            options,
+            Arc::clone(&stats),
+            cancellation.shared(),
+        ) {
+            Ok(pending) => pending,
+            Err(error) => {
+                cancellation.shared.detach_runtime();
+                return match release_runtime(&runtime) {
+                    Ok(()) => Err(error),
+                    Err(release_error) => Err(release_error),
+                };
+            }
+        };
 
         Ok(PendingSubscription {
             pending: Some(pending),
             runtime: Some(runtime),
             stats,
             cancellation,
+            resolved_root: Some(resolved_root),
         })
     }
 
@@ -719,8 +777,16 @@ impl Engine {
         options.validate()?;
         let cancellation = EstablishmentCancellation::new()?;
         cancellation.shared.bind()?;
-        self.begin_subscribe_admitted_root(root, options, cancellation)?
-            .wait()
+        self.begin_subscribe_admitted_root(
+            PendingResolvedRoot {
+                policy: RootPathPolicy::Strict,
+                lexical_path: root.clone(),
+                physical_path: root,
+            },
+            options,
+            cancellation,
+        )?
+        .wait()
     }
 }
 
@@ -730,6 +796,7 @@ pub struct PendingSubscription {
     runtime: Option<Arc<backend::linux::Runtime>>,
     stats: Arc<SharedStats>,
     cancellation: EstablishmentCancellation,
+    resolved_root: Option<PendingResolvedRoot>,
 }
 
 impl PendingSubscription {
@@ -750,6 +817,10 @@ impl PendingSubscription {
             .runtime
             .take()
             .expect("pending subscription runtime may only be completed once");
+        let resolved_root = self
+            .resolved_root
+            .take()
+            .expect("pending subscription root may only be completed once");
         match pending.wait() {
             Ok(established) => {
                 self.cancellation.shared.detach_runtime();
@@ -757,6 +828,7 @@ impl PendingSubscription {
                     runtime,
                     Arc::clone(&self.stats),
                     established,
+                    resolved_root,
                 ))
             }
             Err(error) => {
@@ -799,8 +871,16 @@ fn subscription_from_established(
     runtime: Arc<backend::linux::Runtime>,
     stats: Arc<SharedStats>,
     established: backend::linux::EstablishedSubscription,
+    resolved_root: PendingResolvedRoot,
 ) -> Subscription {
+    let root = ResolvedRoot {
+        policy: resolved_root.policy,
+        lexical_path: resolved_root.lexical_path,
+        physical_path: resolved_root.physical_path,
+        identity: established.initial_root_state.identity,
+    };
     Subscription {
+        resolved_root: root,
         initial_coverage: established.initial_coverage,
         initial_root_state: established.initial_root_state,
         receiver: Mutex::new(established.receiver),
@@ -820,6 +900,7 @@ fn subscription_from_established(
 }
 
 pub struct Subscription {
+    resolved_root: ResolvedRoot,
     initial_coverage: Coverage,
     initial_root_state: RootState,
     receiver: Mutex<Receiver<ChangeBatch>>,
@@ -846,6 +927,13 @@ enum Lifecycle {
 }
 
 impl Subscription {
+    /// Returns the immutable lexical-to-physical root resolution committed by
+    /// establishment. Its identity equals the initial root state; recovery may
+    /// later change [`Self::root_state`] without changing this snapshot.
+    pub fn resolved_root(&self) -> &ResolvedRoot {
+        &self.resolved_root
+    }
+
     pub fn initial_coverage(&self) -> &Coverage {
         &self.initial_coverage
     }
@@ -1312,6 +1400,13 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
                 )
             })
     }
+}
+
+#[derive(Clone, Debug)]
+struct PendingResolvedRoot {
+    policy: RootPathPolicy,
+    lexical_path: PathBuf,
+    physical_path: PathBuf,
 }
 
 fn reject_symlink_ancestry(path: &Path) -> Result<PathBuf> {

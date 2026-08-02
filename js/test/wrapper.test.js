@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { capabilities, subscribe } from "../index.js";
+import { capabilities, createEngine, subscribe } from "../index.js";
 
 function observedProjection(batch, initialCoverage, initialRootState) {
   return batch === undefined
@@ -87,6 +87,130 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
   } finally {
     await subscription?.dispose();
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolve-physical roots stay anchored across alias mutation at the native boundary", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-symlink-root-"));
+  const physical = path.join(parent, "physical");
+  const alternate = path.join(parent, "alternate");
+  const aliases = path.join(parent, "aliases");
+  const alternateAliases = path.join(parent, "alternate-aliases");
+  const outer = path.join(parent, "outer");
+  const moved = path.join(parent, "moved");
+  fs.mkdirSync(path.join(physical, "nested"), { recursive: true });
+  fs.mkdirSync(path.join(physical, "repo", "visible"), { recursive: true });
+  fs.mkdirSync(path.join(physical, "repo", "hidden", "deep"), { recursive: true });
+  fs.mkdirSync(path.join(physical, "repo", ".git", "objects"), { recursive: true });
+  fs.mkdirSync(path.join(alternate, "nested"), { recursive: true });
+  fs.mkdirSync(path.join(alternate, "repo", "visible"), { recursive: true });
+  fs.mkdirSync(aliases);
+  fs.mkdirSync(alternateAliases);
+  fs.symlinkSync(path.join(physical, "nested"), path.join(aliases, "inner"));
+  fs.symlinkSync(path.join(alternate, "nested"), path.join(alternateAliases, "inner"));
+  fs.symlinkSync(aliases, outer);
+  const lexicalRoot = `${outer}${path.sep}inner${path.sep}..${path.sep}repo`;
+  const physicalRoot = path.join(physical, "repo");
+  const alternateRoot = path.join(alternate, "repo");
+  const batches = [];
+  const engine = createEngine({ nativeWatchBudget: 8 });
+  let subscription;
+  try {
+    await assert.rejects(
+      engine.subscribe(lexicalRoot, () => {}, { rootPathPolicy: "strict" }),
+      (error) => error.code === "WATCHBOUND_INVALID_ARGUMENT" && !error.retryable,
+    );
+    subscription = await engine.subscribe(lexicalRoot, (batch) => batches.push(batch), {
+      rootPathPolicy: "resolve-physical",
+      initialExclusions: ["hidden"],
+      observedExcludedPaths: [".git"],
+      batchWindowMs: 5,
+    });
+    assert.equal(subscription.resolvedRoot.policy, "resolve-physical");
+    assert.equal(subscription.resolvedRoot.lexicalPath, lexicalRoot);
+    assert.equal(subscription.resolvedRoot.physicalPath, physicalRoot);
+    assert.equal(subscription.resolvedRoot.pathForm, "physical");
+    assert.equal(subscription.resolvedRoot.aliasTracking, "establishment-snapshot");
+    assert.deepEqual(subscription.resolvedRoot.identity, subscription.initialRootState.identity);
+    assert.deepEqual(
+      Buffer.from(subscription.resolvedRoot.lexicalPathBytes),
+      Buffer.from(lexicalRoot),
+    );
+    assert.deepEqual(
+      Buffer.from(subscription.resolvedRoot.physicalPathBytes),
+      Buffer.from(physicalRoot),
+    );
+
+    const hidden = path.join(physicalRoot, "hidden", "deep", "ignored");
+    fs.writeFileSync(hidden, "ignored");
+    const visible = path.join(physicalRoot, "visible", "delivered");
+    fs.writeFileSync(visible, "delivered");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(visible)),
+      "the canonical physical path was not delivered",
+    );
+    assert.ok(batches.every((batch) => !batch.invalidatedPaths.includes(hidden)));
+    assert.ok(batches.every((batch) => batch.invalidatedPaths.every(
+      (invalidated) => invalidated === physicalRoot || invalidated.startsWith(`${physicalRoot}/`),
+    )));
+
+    fs.rmSync(path.join(physicalRoot, ".git"), { recursive: true });
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(path.join(physicalRoot, ".git"))),
+      "the observed boundary was not projected into the physical namespace",
+    );
+    await assert.rejects(
+      subscription.replaceExclusions(1n, ["../escape"]),
+      (error) => error.code === "WATCHBOUND_INVALID_ARGUMENT" && !error.retryable,
+    );
+    assert.equal(subscription.exclusionGeneration, 0n);
+
+    fs.unlinkSync(outer);
+    const whileMissing = path.join(physicalRoot, "visible", "alias-missing");
+    fs.writeFileSync(whileMissing, "change");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(whileMissing)),
+      "removing the lexical ancestor detached physical coverage",
+    );
+    fs.symlinkSync(alternateAliases, outer);
+    const ignoredRetarget = path.join(alternateRoot, "visible", "not-covered");
+    fs.writeFileSync(ignoredRetarget, "ignored");
+    const stillCovered = path.join(physicalRoot, "visible", "still-covered");
+    fs.writeFileSync(stillCovered, "change");
+    await waitFor(
+      () => batches.some((batch) => batch.invalidatedPaths.includes(stillCovered)),
+      "retargeting the lexical ancestor moved physical coverage",
+    );
+    assert.ok(batches.every((batch) => !batch.invalidatedPaths.includes(ignoredRetarget)));
+    assert.equal(subscription.rootState.attachment, "attached");
+    await assert.rejects(
+      subscription.recoverRoot({ identityPolicy: "accept-replacement" }),
+      (error) => error.code === "WATCHBOUND_ROOT_STATE_CONFLICT" && error.retryable,
+    );
+
+    fs.renameSync(physicalRoot, moved);
+    await waitFor(
+      () => subscription.rootState.attachment === "lost",
+      "the captured physical root loss was not observed",
+    );
+    const missing = await subscription.recoverRoot({
+      identityPolicy: "accept-replacement",
+    });
+    assert.equal(missing.attachment, "not-attached");
+    assert.equal(missing.reason, "candidate-missing");
+    assert.equal(missing.candidateIdentity, undefined);
+    fs.renameSync(moved, physicalRoot);
+    const restored = await subscription.recoverRoot({ identityPolicy: "original-only" });
+    assert.equal(restored.attachment, "original-restored");
+    assert.equal(restored.currentRootState.attachment, "attached");
+  } finally {
+    await subscription?.dispose();
+    if (subscription !== undefined) assert.equal(subscription.stats().disposed, true);
+    await waitFor(
+      () => engine.runtimeStats().nativeWatches === 0,
+      "resolved-root disposal leaked native watches",
+    );
+    fs.rmSync(parent, { recursive: true, force: true });
   }
 });
 

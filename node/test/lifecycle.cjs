@@ -720,16 +720,17 @@ test("native engine validation and capability metadata are machine-readable", ()
   assert.equal(binding.createEngine().nativeWatchBudget ?? null, null);
   const metadata = binding.bindingMetadata();
   assert.equal(metadata.schemaVersion, 1);
-  assert.equal(metadata.bindingApiVersion, 4);
+  assert.equal(metadata.bindingApiVersion, 5);
   assert.equal(metadata.nativeVersion, metadata.engineVersion);
   assert.equal(metadata.nodeApiVersion, 6);
   assert.match(metadata.targetTriple, /linux/);
   assert.equal(metadata.buildProfile, "release");
 
   const capabilities = binding.capabilities();
-  assert.equal(capabilities.schemaVersion, 4);
+  assert.equal(capabilities.schemaVersion, 5);
   assert.equal(capabilities.directoryNameExclusions, true);
   assert.equal(capabilities.observedExcludedPaths, true);
+  assert.equal(capabilities.physicalRootResolution, true);
   assert.equal(capabilities.cancellableEstablishment, true);
   assert.equal(capabilities.sharedNodeDelivery, true);
   assert.equal(capabilities.nativeCallbackQueueCapacity, 1);

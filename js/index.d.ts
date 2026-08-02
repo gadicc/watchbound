@@ -215,6 +215,29 @@ export interface RootIdentity {
   readonly inode: bigint;
 }
 
+/** Policy controlling admission of symbolic links in a subscription root. */
+export type RootPathPolicy = "strict" | "resolve-physical";
+
+/** Immutable lexical-to-physical root resolution committed at establishment. */
+export interface ResolvedRoot {
+  /** Path admission policy used for this subscription. */
+  readonly policy: RootPathPolicy;
+  /** Absolute caller spelling, preserving `.` and `..` components. */
+  readonly lexicalPath: string;
+  /** Exact Linux bytes of the absolute caller spelling. */
+  readonly lexicalPathBytes: Uint8Array;
+  /** Canonical physical root, or null when those bytes are not valid UTF-8. */
+  readonly physicalPath: string | null;
+  /** Exact Linux bytes of the canonical physical root. */
+  readonly physicalPathBytes: Uint8Array;
+  /** Path namespace used by callbacks, invalidations, and exclusions. */
+  readonly pathForm: "physical";
+  /** Later changes to a resolving lexical alias are not followed. */
+  readonly aliasTracking: "establishment-snapshot";
+  /** Physical directory identity committed by establishment. */
+  readonly identity: RootIdentity;
+}
+
 /** Whether the subscription is currently attached to its watched root. */
 export type RootAttachment = "attached" | "lost";
 
@@ -229,7 +252,7 @@ export type RootLossEvidence =
 export interface RootState {
   /** Monotonic generation incremented when the root identity changes. */
   readonly generation: bigint;
-  /** Identity Watchbound currently associates with the subscription root. */
+  /** Identity of the physical root described by `Subscription.resolvedRoot`. */
   readonly identity: RootIdentity;
   /** Whether the subscription remains attached to that root identity. */
   readonly attachment: RootAttachment;
@@ -302,6 +325,12 @@ export type RootRecoveryResult =
 
 /** Options for establishing a recursive subscription. */
 export interface SubscriptionOptions {
+  /**
+   * Controls root symlink handling. `strict` rejects symlinks in the entire
+   * ancestry. `resolve-physical` resolves the exact supplied path once and
+   * watches that canonical directory without following later alias changes.
+   */
+  rootPathPolicy?: RootPathPolicy;
   /**
    * Exact normalized root-relative directory prefixes excluded during initial
    * establishment at exclusion generation zero.
@@ -380,6 +409,8 @@ export interface Stats {
 
 /** An established recursive directory subscription and its lifecycle controls. */
 export interface Subscription {
+  /** Immutable mapping from the supplied lexical root to the watched root. */
+  readonly resolvedRoot: ResolvedRoot;
   /** Immutable coverage established before subscription resolution. */
   readonly initialCoverage: Coverage;
   /** Immutable root state established before subscription resolution. */
@@ -547,7 +578,7 @@ export interface IntentionallyUnsupportedTargetCapability {
  */
 export interface Capabilities {
   /** Version of this capabilities object’s schema. */
-  readonly schemaVersion: 5;
+  readonly schemaVersion: 6;
   /** Wrapper, native engine, and binding API versions. */
   readonly versions: {
     readonly wrapper: string;
@@ -647,6 +678,7 @@ export interface Capabilities {
     readonly reconciliation: boolean;
     readonly automaticReconciliation: boolean;
     readonly rootReplacementRecovery: boolean;
+    readonly physicalRootResolution: boolean;
     readonly exactPathBytes: boolean;
     readonly orderedBatches: boolean;
     readonly observedState: boolean;
@@ -662,6 +694,13 @@ export interface Capabilities {
       >;
     };
     readonly subscription: {
+      readonly rootPathPolicy: {
+        readonly type: "enum";
+        readonly values: readonly ["strict", "resolve-physical"];
+        readonly default: "strict";
+        readonly outputPaths: "physical";
+        readonly aliasTracking: "establishment-snapshot";
+      };
       readonly initialExclusions: InitialExclusionsOptionCapability;
       readonly excludedDirectoryNames: DirectoryNameExclusionsOptionCapability;
       readonly observedExcludedPaths: ObservedExcludedPathsOptionCapability;

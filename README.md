@@ -466,7 +466,7 @@ It never claims recovered lost detail. `root-replaced` blocks this automatic
 policy: it never chooses a
 replacement identity. A caller may instead invoke the distinct
 `recoverRoot({ identityPolicy })` operation, which revalidates and scans the
-same lexical root under an explicit `original-only` or `accept-replacement`
+captured physical root under an explicit `original-only` or `accept-replacement`
 decision and emits one conservative root boundary on success. Native packages
 outside the exact published x64/ARM64 GNU/Linux matrix and non-Linux backends
 remain unsupported and outside the approved stabilization scope.

@@ -65,9 +65,11 @@ access the path.
 
 ## Audit of the current design
 
-Root setup and recovery retain lexical components for symlink validation,
-canonicalize paths, compare metadata identities around watch installation, and
-reject directory symlinks. Traversal preserves raw child name bytes. Shared
+Strict root setup and recovery retain lexical components for symlink
+validation. Explicit `resolve-physical` setup canonicalizes the exact lexical
+path once, revalidates the physical ancestry, and thereafter ignores the alias.
+Both policies compare metadata identities around watch installation and reject
+descendant directory symlinks. Traversal preserves raw child name bytes. Shared
 watch descriptors are generation-tracked and peers retain their own coverage
 truth.
 

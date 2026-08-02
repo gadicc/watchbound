@@ -75,12 +75,13 @@ and never creates another binary. WSL, unusual containers, network filesystems,
 FUSE, overlay filesystems, and adversarially mutated roots remain outside the
 ordinary-host claim unless separately qualified.
 
-## Capability schema 5
+## Capability schema 6
 
 The additive schema keeps the schema-4 target and old single-target `support`
 fields with
 `scope: "legacy-primary-target"`; their Ubuntu 24.04/x64 meaning is not silently
-changed. Schema 5 adds only exclusion feature/option facts. New consumers use:
+changed. Schema 5 added exclusion feature/option facts; schema 6 adds explicit
+physical-root resolution without changing target qualification. New consumers use:
 
 - `build.packagedTarget` for the selected package, binary, triple, and SHA;
 - `support.targets[]` for target-specific qualification;

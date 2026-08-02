@@ -140,7 +140,9 @@ after disposal resolves.
 `reconcile()` remains identity-preserving, and automatic reconciliation never
 chooses an identity. Once fixed-size `RootState` evidence reports a lost root,
 only `recoverRoot({ identityPolicy: "original-only" | "accept-replacement" })`
-can attach the immutable lexical pathname again. The Rust engine owns candidate
+can attach the immutable physical pathname again. Under explicit
+`rootPathPolicy: "resolve-physical"`, the lexical alias is an establishment
+snapshot and never becomes an implicit recovery target. The Rust engine owns candidate
 capture, ancestry and identity validation, bounded watch-before-read traversal,
 coverage, the root-only commit boundary, peer accounting, and interruption.
 Node translates the result; JavaScript validates the required policy and
@@ -267,8 +269,11 @@ cancellation and Worker teardown at this boundary.
 
 ## Linux state machine in this milestone
 
-1. Reject a symlink in any root-path component and validate a real directory
-   root before sending an establishment command to the process runtime.
+1. By default reject a symlink in any root-path component. Under explicit
+   `resolve-physical`, canonicalize the exact lexical spelling once, revalidate
+   the resulting no-symlink physical ancestry, and expose both identities.
+   Validate the real physical directory before sending an establishment
+   command to the process runtime.
 2. Lazily create one nonblocking, close-on-exec inotify instance, one
    nonblocking eventfd command wakeup, and one joined worker for all live
    subscriptions in the process.
@@ -308,7 +313,8 @@ cancellation and Worker teardown at this boundary.
     final subscription, shut down and join the runtime, close both descriptors,
     and release every watch and deferred allocator record.
 
-The symlink validation is a filesystem contract, not an fd-anchored security
+Root resolution, output namespaces, alias mutation, and physical recovery are
+specified in `docs/symlink-root-contract.md`. The symlink validation is a filesystem contract, not an fd-anchored security
 boundary against an adversary replacing ancestors between path operations.
 Existing mount points are traversed and there is no one-filesystem option.
 Runtime mount insertion over a descendant is not observable through inotify;
@@ -416,14 +422,14 @@ engine's active configuration rather than its own request.
 
 ### Versioned public capabilities
 
-The wrapper combines native capability-schema-version-4 feature/default metadata, loaded
+The wrapper combines native capability-schema-version-5 feature/default metadata, loaded
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 5`. Features distinguish
+and `observability`, under `schemaVersion: 6`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
 watches, and expose recursive name exclusions, observed excluded boundaries,
-cancellable establishment, and shared Node delivery. Options
+cancellable establishment, shared Node delivery, and physical root resolution. Options
 publish exact defaults, `u32` hard bounds, scope, units, and accounting.
 Observability publishes ordered-batch authority, callback-entry state,
 result/getter lead, stats scope, counter encodings, the one-entry native
@@ -432,7 +438,7 @@ promise-aware serialized callback completion, error/disposal/teardown policy,
 and the fixed 64-registration/5 ms dispatcher scheduling bounds.
 
 The `runtime` section is observed information about the process that loaded a
-native binary, not evidence that the host is supported. Schema 5 separately
+native binary, not evidence that the host is supported. Schema 6 separately
 reports the packaged target, per-target qualification, and current-runtime
 match while retaining legacy single-target fields without reinterpreting them.
 Matching facts do not widen `support-matrix.md`.

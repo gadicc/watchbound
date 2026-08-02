@@ -121,7 +121,6 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
   const absoluteRoot = path.isAbsolute(root)
     ? root
     : `${process.cwd()}${path.sep}${root}`;
-  const resolvedRoot = path.resolve(absoluteRoot);
   const callbackHolder = {
     onBatch,
     observeCoverage: undefined,
@@ -131,6 +130,7 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
     stopRequested: false,
     startDisposal: null,
     context: null,
+    outputRoot: path.resolve(absoluteRoot),
   };
   const weakCallbackHolder = new WeakRef(callbackHolder);
   callbackHolder.context = Object.freeze({
@@ -141,7 +141,7 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
     nativeEngine,
     root: absoluteRoot,
     options: nativeOptions,
-    callback: createNativeCallback(weakCallbackHolder, resolvedRoot),
+    callback: createNativeCallback(weakCallbackHolder),
     prepareProvisionalDisposal() {
       callbackHolder.abortController.abort();
     },
@@ -162,6 +162,8 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
       callbackHolder.pendingCoverageObservation = null;
       const initialCoverage = normalizeCoverage(nativeSubscription.initialCoverage);
       const initialRootState = normalizeRootState(nativeSubscription.initialRootState);
+      const resolvedRoot = normalizeResolvedRoot(nativeSubscription.resolvedRoot);
+      callbackHolder.outputRoot = resolvedRoot.physicalPath ?? resolvedRoot.lexicalPath;
       initializeObservedState(callbackHolder, initialCoverage, initialRootState);
       let disposePromise;
       let subscription;
@@ -179,6 +181,7 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
         void beginDispose().catch(() => {});
       };
       subscription = Object.freeze({
+        resolvedRoot,
         initialCoverage,
         initialRootState,
         get observedState() {
@@ -366,7 +369,7 @@ function encodeExclusionPolicy(exclusions, operation) {
   };
 }
 
-function createNativeCallback(weakCallbackHolder, resolvedRoot) {
+function createNativeCallback(weakCallbackHolder) {
   return (nativeBatch, deliveryId) => {
     const holder = weakCallbackHolder.deref();
     if (!holder) {
@@ -377,7 +380,7 @@ function createNativeCallback(weakCallbackHolder, resolvedRoot) {
     try {
       const batch = invokeWatchbound(
         "deliver-batch",
-        () => normalizeBatch(resolvedRoot, nativeBatch),
+        () => normalizeBatch(holder.outputRoot, nativeBatch),
       );
       recordObservedBatch(holder, batch);
       if (holder.observeCoverage === undefined) {
@@ -532,6 +535,27 @@ function normalizeRootState(state) {
 
 function normalizeRootIdentity(identity) {
   return Object.freeze({ device: identity.device, inode: identity.inode });
+}
+
+function normalizeResolvedRoot(root) {
+  const lexicalPathBytes = Uint8Array.from(root.lexicalPath);
+  const physicalPathBytes = Uint8Array.from(root.physicalPath);
+  let physicalPath = null;
+  try {
+    physicalPath = fatalUtf8Decoder.decode(physicalPathBytes);
+  } catch {
+    // Exact bytes remain authoritative when the canonical path is not UTF-8.
+  }
+  return Object.freeze({
+    policy: root.policy,
+    lexicalPath: fatalUtf8Decoder.decode(lexicalPathBytes),
+    lexicalPathBytes,
+    physicalPath,
+    physicalPathBytes,
+    pathForm: "physical",
+    aliasTracking: "establishment-snapshot",
+    identity: normalizeRootIdentity(root.identity),
+  });
 }
 
 function normalizeCoverage(coverage) {

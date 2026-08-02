@@ -127,11 +127,11 @@ async function runSmoke() {
     wrapper: options.version,
     native: options.version,
     engine: options.version,
-    bindingApi: 4,
+    bindingApi: 5,
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
   assert.equal(capabilities.build.prebuilt, true);
-  assert.equal(capabilities.schemaVersion, 5);
+  assert.equal(capabilities.schemaVersion, 6);
   assert.equal(capabilities.features.directoryNameExclusions, true);
   assert.equal(capabilities.features.observedExcludedPaths, true);
   assert.equal(capabilities.build.packagedTarget.id, nativeTarget.id);

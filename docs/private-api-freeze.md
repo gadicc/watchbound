@@ -129,11 +129,14 @@ Environment teardown and GC do not depend on JavaScript callbacks or promises
 settling. Explicit disposal closes admission first, then waits for an
 already-admitted callback to quiesce before finalization.
 
-The native boundary preserves exact Linux path bytes. Roots are JavaScript
-strings whose lexical components are retained through native symlink
-validation. All exclusion inputs accept strings or `Uint8Array`; invalid UTF-8
-child paths remain available as bytes and collapse string invalidation to the
-representable root. Directory symlinks are never followed.
+The native boundary preserves exact Linux path bytes. Roots default to strict
+component-by-component symlink rejection. `rootPathPolicy: "resolve-physical"`
+instead commits an immutable lexical-to-canonical snapshot exposed as
+`resolvedRoot`; all watcher output and exclusion semantics then use the
+physical namespace, and later alias changes are not followed. All exclusion
+inputs accept strings or `Uint8Array`; invalid UTF-8 child paths remain
+available as bytes. Descendant directory symlinks are never followed. The full
+contract is in [`symlink-root-contract.md`](symlink-root-contract.md).
 
 `replaceExclusions` accepts either the compatible complete root-relative prefix
 array or the complete `ExclusionPolicy` object and atomically commits its shared
@@ -156,9 +159,10 @@ codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; both current target entries emit the
 supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
-Capability schema 5 and binding API 4 additionally expose
-`directoryNameExclusions` and `observedExcludedPaths`; loader metadata remains
-schema 1 and raw native capabilities advance to schema 4. Wrappers and loaders
+Capability schema 6 and binding API 5 additionally expose physical-root
+resolution alongside `directoryNameExclusions` and `observedExcludedPaths`;
+loader metadata remains schema 1 and raw native capabilities advance to schema
+5. Wrappers and loaders
 fail closed against older or newer unproved native contracts.
 
 Patch releases may make compatible fixes, documentation/test changes, and

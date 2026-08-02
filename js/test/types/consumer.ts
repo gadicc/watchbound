@@ -230,7 +230,7 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 5 = capabilities.schemaVersion;
+  const schemaVersion: 6 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const callbackCompletion: "promise-aware-serialized" =
     capabilities.observability.callbackCompletion;
@@ -251,6 +251,10 @@ function inspectCapabilities(): void {
   const directoryNameExclusions: boolean =
     capabilities.features.directoryNameExclusions;
   const observedExcludedPaths: boolean = capabilities.features.observedExcludedPaths;
+  const physicalRootResolution: boolean =
+    capabilities.features.physicalRootResolution;
+  const rootPathDefault: "strict" =
+    capabilities.options.subscription.rootPathPolicy.default;
   const initialExclusionGeneration: 0 =
     capabilities.options.subscription.initialExclusions.exclusionGeneration;
   const directoryNameGeneration: 0 =
@@ -298,6 +302,8 @@ function inspectCapabilities(): void {
   void initialExclusions;
   void directoryNameExclusions;
   void observedExcludedPaths;
+  void physicalRootResolution;
+  void rootPathDefault;
   void initialExclusionGeneration;
   void directoryNameGeneration;
   void observedPathGeneration;
@@ -506,6 +512,13 @@ createEngine({ nativeWatchBudget: 8_192n });
 // @ts-expect-error Subscription watch limits are numbers, not bigint values.
 subscribe("/tmp/watchbound-types", () => {}, { watchLimit: 8_192n });
 subscribe("/tmp/watchbound-types", () => {}, {
+  rootPathPolicy: "resolve-physical",
+});
+subscribe("/tmp/watchbound-types", () => {}, {
+  // @ts-expect-error Root path policies are a closed union.
+  rootPathPolicy: "follow-live-alias",
+});
+subscribe("/tmp/watchbound-types", () => {}, {
   // @ts-expect-error Automatic-reconciliation option values are numeric.
   automaticReconciliation: { maxAttempts: "3" },
 });
@@ -520,6 +533,10 @@ declare const negativeStats: ReturnType<Subscription["stats"]>;
 
 // @ts-expect-error Exclusion generations must be bigint values.
 negativeSubscription.replaceExclusions(1, []);
+const physicalPath: string | null = negativeSubscription.resolvedRoot.physicalPath;
+const physicalIdentityDevice: bigint = negativeSubscription.resolvedRoot.identity.device;
+void physicalPath;
+void physicalIdentityDevice;
 // @ts-expect-error Exclusions accept only strings or exact-byte Uint8Array values.
 negativeSubscription.replaceExclusions(1n, [42]);
 // @ts-expect-error Root identity policy is a closed union.

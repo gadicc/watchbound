@@ -97,7 +97,7 @@ caller accessors, callback work, or contended locks can still pause it.
 
 The one native binary loaded into the process exposes metadata schema version 1:
 native and engine versions, binding API version 4, Node-API 6, target triple,
-and build profile. Its raw capability schema is version 4 and also provides
+and build profile. Its raw capability schema is version 5 and also provides
 establishment-cancellation, shared-delivery, and callback-completion facts
 alongside feature flags, including generation-zero initial exclusions,
 recursive directory-name exclusions, observed excluded boundaries, Rust
@@ -107,7 +107,7 @@ with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 5`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 6`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
@@ -146,7 +146,7 @@ The loader accepts exactly `watchbound.linux-x64-gnu.node` beside the package.
 It has no environment-variable override, optional-package lookup, WASI branch,
 download, or install-time build fallback. Before exporting the binding it
 requires Linux x64, detected glibc, Node-API 6 or newer, metadata schema 1,
-binding API 4, matching package/native/engine versions, Node-API build floor 6,
+binding API 5, matching package/native/engine versions, Node-API build floor 6,
 the `x86_64-unknown-linux-gnu` target, and a release build profile. The wrapper
 then asserts its own package version against the native package version.
 
@@ -166,6 +166,13 @@ The engine captures `initial_coverage` and `initial_root_state` in one
 establishment acknowledgement. Node exposes them as `initialCoverage` and
 `initialRootState`, and the JavaScript wrapper normalizes them into its immutable
 sequence-zero, exclusion-generation-zero, root-generation-zero baseline.
+
+Node also exposes the establishment-time `resolvedRoot` as exact lexical and
+physical `Buffer` paths plus policy and initial physical identity. The wrapper
+adds UTF-8 string projections, declares physical output paths, and labels alias
+tracking as an establishment snapshot. `rootPathPolicy: "strict"` remains the
+default; `"resolve-physical"` is the explicit symlink-root contract documented
+in [`symlink-root-contract.md`](symlink-root-contract.md).
 
 The wrapper accepts `initialExclusions` as exact string or `Uint8Array`
 prefixes and encodes them into raw Node `Buffer` values. Native validation

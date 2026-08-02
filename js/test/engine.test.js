@@ -33,7 +33,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v5 exposes exclusion isolation and target qualification", () => {
+test("capability schema v6 exposes physical root resolution and target qualification", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -44,12 +44,12 @@ test("capability schema v5 exposes exclusion isolation and target qualification"
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 5);
+  assert.equal(capabilities.schemaVersion, 6);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
     engine: wrapperPackage.version,
-    bindingApi: 4,
+    bindingApi: 5,
   });
   assert.deepEqual(capabilities.build, {
     delivery: "controlled-source-build",
@@ -155,6 +155,7 @@ test("capability schema v5 exposes exclusion isolation and target qualification"
     reconciliation: true,
     automaticReconciliation: true,
     rootReplacementRecovery: true,
+    physicalRootResolution: true,
     exactPathBytes: true,
     orderedBatches: true,
     observedState: true,
@@ -174,6 +175,13 @@ test("capability schema v5 exposes exclusion isolation and target qualification"
       },
     },
     subscription: {
+      rootPathPolicy: {
+        type: "enum",
+        values: ["strict", "resolve-physical"],
+        default: "strict",
+        outputPaths: "physical",
+        aliasTracking: "establishment-snapshot",
+      },
       initialExclusions: {
         type: "directory-prefix-array",
         default: [],
@@ -280,9 +288,11 @@ test("capability handshake fails closed without native exclusion isolation", () 
   const delivery = nativeBinding.nativeDeliveryMetadata();
   const matrix = nativeBinding.nativeTargetMatrix();
   for (const incompatible of [
-    { ...raw, schemaVersion: 3 },
+    { ...raw, schemaVersion: 4 },
+    { ...raw, schemaVersion: 6 },
     { ...raw, directoryNameExclusions: false },
     { ...raw, observedExcludedPaths: false },
+    { ...raw, physicalRootResolution: false },
   ]) {
     assert.throws(
       () => buildCapabilities(incompatible, metadata, delivery, matrix),
@@ -290,7 +300,11 @@ test("capability handshake fails closed without native exclusion isolation", () 
     );
   }
   assert.throws(
-    () => buildCapabilities(raw, { ...metadata, bindingApiVersion: 3 }, delivery, matrix),
+    () => buildCapabilities(raw, { ...metadata, bindingApiVersion: 4 }, delivery, matrix),
+    /incompatible/u,
+  );
+  assert.throws(
+    () => buildCapabilities(raw, { ...metadata, bindingApiVersion: 6 }, delivery, matrix),
     /incompatible/u,
   );
 });

@@ -1,12 +1,14 @@
 # Watchbound
 
-[![npm](https://img.shields.io/npm/v/watchbound)](https://www.npmjs.com/package/watchbound)
-[![JSR](https://jsr.io/badges/@gadicc/watchbound)](https://jsr.io/@gadicc/watchbound)
 [![JSR score](https://jsr.io/badges/@gadicc/watchbound/score)](https://jsr.io/@gadicc/watchbound)
 [![CI](https://github.com/gadicc/watchbound/actions/workflows/ci.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/ci.yml)
-[![release](https://github.com/gadicc/watchbound/actions/workflows/release.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/release.yml)
-[![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
+
+Packages: [npm](https://www.npmjs.com/package/watchbound) and
+[JSR](https://jsr.io/@gadicc/watchbound). Version history and availability are
+recorded by package metadata, registry version pages,
+[Git tags](https://github.com/gadicc/watchbound/tags), and
+[GitHub Releases](https://github.com/gadicc/watchbound/releases).
 
 Watchbound is an experimental Linux recursive directory watcher. It treats
 filesystem coverage as an explicit
@@ -16,42 +18,17 @@ batches invalidations, and reports partial or uncertain coverage when it cannot
 safely claim completeness.
 
 The checked-in workspace packages remain private as an accidental-publish
-guard; registry packages are created only in controlled generated trees. The
-`0.0.1` npm and JSR bootstrap is published and contains the earlier cancellable-
-establishment and shared-delivery contract tracked as the private `0.2.0`
-revision. It reports `target-pending-clean-ci`; later exact-commit CI qualified
-that implementation baseline, but the immutable bootstrap metadata was not
-rewritten. The `1.0.0` source added promise-aware callbacks, callback
-cancellation context, binding API 3, and capability schema 3. Its source and
-npm packages qualified, but its JSR Node route exposed a normalized-manifest
-incompatibility. The corrected `1.0.1` package restored that route. Release
-`1.1.0` kept generation-zero
-`initialExclusions`, targets Node `>=24.15.0 <25` for Electron 42, and adds an
-architecture-neutral loader with exact x64 and ARM64 GNU/Linux target packages.
-Both new targets now report `supported` in the source matrix after complete
-native/distro/Electron/Nix, kernel-5.15, reproducibility, and separately
-supervised overflow qualification. Release `1.1.1` retained that public API and
-target matrix while carrying lifecycle, qualification, and release-pipeline
-fixes. Release `1.2.0` is now published on npm and JSR. It adds native recursive
-directory-name exclusions and explicitly observed excluded boundaries under
-binding API 4 and capability schema 5, while retaining the exact x64 and ARM64
-GNU/Linux target packages. Both supervised exact-source qualification scenarios
-and the post-publication registry smokes passed; immutable `1.2.0` coordinates
-must still be copied from the registry when a consumer deliberately adopts it.
+guard; registry packages are created only in controlled generated trees. CI
+validates those npm and JSR trees, and semantic-release uses Conventional
+Commits and tags as the version authority. Source manifests retain their
+development placeholder while the release workflow deterministically
+materializes its planned version across every builder, package, checksum, and
+software bill of materials without committing that transform.
 
-After the bootstrap, CI validates controlled public npm and JSR artifacts and
-semantic-release uses Conventional Commits and release tags as the sole
-published-version authority. Checked-in npm, Cargo, and lockfile versions stay
-at `0.0.0-development`; the Release workflow deterministically materializes
-semantic-release's planned version across every builder, package, checksum,
-and SBOM without committing it. The workflow runs only for pushes to `main`;
-pushes to `dev` and other branches run CI but cannot publish.
-The qualified `1.0.1` registry artifact retains its historical Ubuntu 24.04
-x64 contract. Release `1.1.0` generated artifacts identify their exact packaged
-target separately from observed runtime and per-target qualification; source
-workspaces continue to identify as controlled builds. Watchbound remains
-independent of Codex Desktop and does not contain Git-ignore or application
-policy.
+Generated artifacts identify their exact packaged target separately from
+observed runtime and per-target qualification; source workspaces identify as
+controlled builds. Watchbound remains independent of Codex Desktop and does not
+contain Git-ignore or application policy.
 
 JSR distributes the same Node-only package surface as npm. It does not imply
 Deno runtime support or widen the qualified Ubuntu/Node matrix.
@@ -71,7 +48,7 @@ stable `WATCHBOUND_*` codes under the versioned
 [structured error contract](docs/error-contract.md); human messages are
 diagnostic rather than a policy surface.
 
-The multi-target release is documented in the
+Multi-target packaging is documented in the
 [Codex platform audit](docs/platform-audit.md),
 [native-matrix migration](docs/native-matrix-migration.md),
 [adversarial design and implementation review](docs/native-matrix-design-review.md),
@@ -99,9 +76,9 @@ not a helper process. A process crash or native defect therefore affects the
 host process, and ordinary synchronous native exports run on its JavaScript
 thread.
 
-The current implementation divides work as follows:
+The implementation divides work as follows:
 
-| Execution context | Current work |
+| Execution context | Work |
 | --- | --- |
 | JavaScript thread in each Node environment | Module loading and identity checks; wrapper argument, option, and `AbortSignal` handling; exclusion-policy encoding; callback normalization; `observedState`; automatic-reconciliation policy; and the consumer callback |
 | Node's shared libuv worker pool | One napi-rs asynchronous task for each pending establishment, exclusion replacement, reconciliation, root recovery, or joined disposal |
@@ -205,11 +182,11 @@ its platform support are the required contract.
 Watchbound is a poor fit for exact filesystem journals, per-event audit logs,
 consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own native delivery and a
-joined-disposal lifecycle. Release `1.2.0` publishes x64 and ARM64 GNU/Linux
-packages against a qualified kernel 5.15/glibc 2.35 baseline and Node
+joined-disposal lifecycle. The supported native targets are GNU/Linux x64 and
+ARM64, with a qualified kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`; both targets are supported by the checked-in source matrix.
-WSL, network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
-unusual container mounts, musl, ARMv7, and all non-Linux platforms remain
+WSL, containers, network filesystems, Filesystem in Userspace (FUSE), overlay
+filesystems, musl, ARMv7, and all non-Linux platforms remain
 unqualified or unsupported. Target compatibility is not a full host/root
 decision: call `qualifyRoot(root)` and require its machine-readable state to be
 `qualified` before enabling the watcher. See
@@ -231,10 +208,10 @@ performance, artifact, or release evidence for that integration.
 
 Read claims in this repository according to their stated evidence:
 
-- **Public API guarantee**: behavior exposed by the current Watchbound
+- **Public API guarantee**: behavior exposed by the Watchbound
   JavaScript declarations and lifecycle contract, or by Parcel 2.5.6's
   published declarations and README.
-- **Current implementation fact**: a property traced to the current checked-in
+- **Implementation fact**: a property traced to the checked-in
   Watchbound source and tests.
 - **Tagged-source fact**: a property traced to the source shipped with exactly
   `@parcel/watcher` 2.5.6 or its `v2.5.6` tag; it is not a Parcel API promise.
@@ -242,7 +219,7 @@ Read claims in this repository according to their stated evidence:
   harness with Parcel's inotify backend forced.
 - **Historical benchmark measurement**: a first-milestone result tied to its
   recorded source, binaries, adapters, host, tmpfs tree, and seven-trial
-  series; it does not describe current Watchbound performance.
+  series; it does not describe later Watchbound performance.
 - **Proposed work**: an item in a deliberate-gap or future-gate section. It is
   not implemented and grants no authority to publish, generate prebuilds, or
   integrate a consumer.
@@ -255,10 +232,10 @@ typed file events plus historical snapshot queries. This repository compares
 Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
 inotify backend.
 
-| Capability | Current Watchbound source | `@parcel/watcher` 2.5.6 |
+| Capability | Watchbound source | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout or published `1.2.0` neutral loader with exact qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout or registry package with a neutral loader and exact qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -277,9 +254,9 @@ inotify backend.
 | Node callback admission | Per-subscription one-entry queue, one admission credit, and bounded engine output | One thread-safe-function per callback with an explicitly unlimited queue |
 | Disposal contract | Idempotent, joined, and no callback may start after resolution | Async `unsubscribe()`; no equivalent public joined/no-later-callback guarantee |
 
-The Watchbound semantic and lifecycle rows are current private API guarantees.
-Its named threads, scheduling rounds, and queue construction are current
-implementation facts also exposed where applicable through capability schema 5;
+The Watchbound semantic and lifecycle rows are private API guarantees.
+Its named threads, scheduling rounds, and queue construction are
+implementation facts also exposed where applicable through `capabilities`;
 their internal shape is not a public major-version stability promise.
 
 The Parcel API claims in the table come from its published
@@ -313,7 +290,7 @@ not a claim that every Parcel backend or workload is incorrect or slower.
 The first final startup series is historical. Each cell below is median
 milliseconds with `[min–max]` across seven passing trials on tmpfs:
 
-| Tree / phase | Historical Watchbound release build | Exact Codex Linux JavaScript helper | `@parcel/watcher` 2.5.6, `backend: "inotify"` |
+| Tree / phase | Historical Watchbound build | Exact Codex Linux JavaScript helper | `@parcel/watcher` 2.5.6, `backend: "inotify"` |
 | --- | ---: | ---: | ---: |
 | 1,001 directories, cold | 7.20 `[3.47–8.20]` | 38.44 `[28.77–47.00]` | 5.58 `[4.21–9.01]` |
 | 1,001 directories, warm | 7.54 `[3.25–8.30]` | 37.25 `[31.37–42.07]` | 8.58 `[5.88–9.68]` |
@@ -332,11 +309,11 @@ The host's `/tmp` reported filesystem magic `0x01021994`, so the series
 characterizes tmpfs rather than persistent-storage latency.
 
 These readings show feasibility on that host and tree shape. They do not show a
-universal speedup, persistent-filesystem behavior, current Watchbound
+universal speedup, persistent-filesystem behavior, later Watchbound
 performance, production readiness, Electron responsiveness, or behavior on the
 251,811-call repository preview. The adapters had different batching and
 callback policies, and the first-milestone Watchbound source predates the
-current shared runtime, delivery, cancellation, exclusions, and recovery work.
+shared runtime, delivery, cancellation, exclusions, and recovery work.
 See
 [`docs/benchmark-results.md`](docs/benchmark-results.md) for adapter and
 artifact identities, incremental resident set size (RSS), raw-artifact hashes,
@@ -345,8 +322,8 @@ and the complete caveats.
 ## Build and test
 
 The manifests intentionally admit only Node `>=24.15.0 <25` and Linux glibc.
-Release `1.2.0` defines supported native x64 and ARM64 targets with
-a kernel 5.15/glibc 2.35 baseline, Rust 1.88+, pnpm 10.33.2, and a working C
+Supported native x64 and ARM64 targets require a kernel 5.15/glibc 2.35
+baseline, Rust 1.88+, pnpm 10.33.2, and a working C
 toolchain. See
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
 floor, not a broader support claim. See the
@@ -434,7 +411,7 @@ deterministic native-to-JavaScript consumer backpressure; the third uses
 ordinary temporary-directory replacement. None induces a real inotify queue
 overflow. The I/O-heavy forced-overflow scenarios are removed by `--quick` and
 require the `--allow-forced-overflow` acknowledgement. Local runs additionally
-require explicit host preparation. Exact-candidate release qualification uses
+require explicit host preparation. Exact-source qualification uses
 the guarded GitHub-hosted x64/ARM64 workflow, records host context, and treats
 timings as non-authoritative. The flag is a safety interlock, not permission
 for another attempt.
@@ -453,7 +430,7 @@ the next-milestone decision.
 
 ## Prototype gaps
 
-The current Linux engine shares one process-wide worker and inotify instance,
+The Linux engine shares one process-wide worker and inotify instance,
 allocates unique native watches fairly across subscriptions, and implements
 generation-based atomic dynamic exclusion policies. Its public conformance
 scenario
@@ -467,14 +444,14 @@ correctness evidence, not new performance readings.
 
 The JavaScript wrapper also offers opt-in `automaticReconciliation`. It is
 disabled by default, coalesces the three recoverable uncertainty reasons, uses
-finite capped exponential backoff, and exposes only its current bounded status.
+finite capped exponential backoff, and exposes only its bounded status.
 It never claims recovered lost detail. `root-replaced` blocks this automatic
 policy: it never chooses a
 replacement identity. A caller may instead invoke the distinct
 `recoverRoot({ identityPolicy })` operation, which revalidates and scans the
 captured physical root under an explicit `original-only` or `accept-replacement`
 decision and emits one conservative root boundary on success. Native packages
-outside the exact published x64/ARM64 GNU/Linux matrix and non-Linux backends
+outside the supported x64/ARM64 GNU/Linux matrix and non-Linux backends
 remain unsupported and outside the approved stabilization scope.
 
 ## Maintainer and license

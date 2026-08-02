@@ -1,10 +1,10 @@
 # Watchbound baseline harness
 
-This directory contains a standalone Linux benchmark and conformance harness for the current
-controlled source-build candidate and two exact baselines:
+This directory contains a standalone Linux benchmark and conformance harness
+for the controlled source tree and two exact baselines:
 
 - the Watchbound Rust engine through its maintained local Node-API binding;
-- the current Codex JavaScript directory watcher exported by `patch.js`;
+- the configured Codex JavaScript directory watcher exported by `patch.js`;
 - `@parcel/watcher` 2.5.6 with its `inotify` backend selected explicitly.
 
 Every capability probe and every measured trial runs in a fresh Node child process. Trials run
@@ -44,8 +44,9 @@ report includes raw trials and median/min/max/mean aggregates.
 The adapter records the loaded file's SHA-256 digest, size, and modification time. Parcel must
 resolve to exactly version 2.5.6. `WATCHBOUND_PARCEL_WATCHER_PATH` can point at that package when it
 is not resolvable from this workspace. The Watchbound adapter records the resolved native binary's
-path, SHA-256, size, modification time, controlled root release build command, and batching/queue options;
-the report records a deterministic source-input digest and Git state as well.
+path, SHA-256, size, modification time, controlled native build command, and
+batching/queue options; the report records a deterministic source-input digest
+and Git state as well.
 
 ## Scenarios and accounting
 
@@ -106,7 +107,8 @@ The reconciliation case uses the same deterministic callback-blocking mechanism 
 unsubscribes and resubscribes. The scenario records the committed result, unchanged exclusion
 generation, ordered batches and coverage transitions, the single conservative root boundary,
 post-reconciliation sentinel delivery, peer-subscription progress, timings, errors, and final
-resource state. Current and future excluded prefixes must remain excluded, and mutations made while
+resource state. Already configured and subsequently added excluded prefixes
+must remain excluded, and mutations made while
 coverage is uncertain or reconciliation is scanning are represented by the root boundary rather
 than reconstructed as guaranteed detail.
 

@@ -109,6 +109,34 @@ test("private manifests retain source-build development and architecture-neutral
   }
 });
 
+test("README files defer Watchbound release versioning to package and release records", () => {
+  const allowedTechnicalVersions = new Set(["2.5.6", "10.33.2", "24.15.0"]);
+  for (const relativePath of ["README.md", "benches/README.md"]) {
+    const source = fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8");
+    assert.doesNotMatch(
+      source,
+      /\b(?:release|published|unpublished)\s+`?v?\d+\.\d+\.\d+/iu,
+      `${relativePath} must not identify a Watchbound release version`,
+    );
+    assert.doesNotMatch(
+      source,
+      /\b(?:current|unpublished)\s+(?:(?:Watchbound|package)\s+)?(?:release|package|source-build candidate)\b/iu,
+      `${relativePath} must not describe Watchbound release status`,
+    );
+    assert.doesNotMatch(source, /shields\.io\/npm\/v\/watchbound/iu);
+    assert.doesNotMatch(
+      source,
+      /jsr\.io\/badges\/@gadicc\/watchbound(?=[)\]])/iu,
+    );
+    for (const match of source.matchAll(/\b\d+\.\d+\.\d+\b/gu)) {
+      assert.ok(
+        allowedTechnicalVersions.has(match[0]),
+        `${relativePath} has nontechnical package/release version ${match[0]}`,
+      );
+    }
+  }
+});
+
 test("release evidence accepts only the canonical independent matrix schema", () => {
   const fixtureRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "watchbound-native-evidence-"),

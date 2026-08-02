@@ -18,7 +18,9 @@ Before changing an integration:
 2. Check `capabilities.support.currentRuntime.targetCompatible`, the matching
    entry in `capabilities.support.targets`, and `qualifyRoot(root).state`.
    Matching diagnostic runtime facts alone do not widen the declared support
-   target. Older packages may expose only the legacy single-target fields.
+   target. Treat `container-unknown` as unknown evidence, never as a negative
+   container result. Older packages may expose only the legacy single-target
+   fields.
 3. Confirm that the consumer can rescan after a conservative root invalidation
    and can operate honestly with partial or uncertain coverage.
 4. Prefer another watcher when the consumer needs a cross-platform package,

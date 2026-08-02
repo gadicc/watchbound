@@ -526,15 +526,86 @@ function detectWsl() {
 }
 
 function detectContainer() {
+  return classifyContainerEvidence({
+    markerFiles: [
+      probeMarkerFile("/.dockerenv"),
+      probeMarkerFile("/run/.containerenv"),
+    ],
+    systemdContainer: probeOptionalTextFile("/run/systemd/container"),
+    cgroup: probeRequiredTextFile("/proc/1/cgroup"),
+    mountinfo: probeRequiredTextFile("/proc/self/mountinfo"),
+    environmentContainer:
+      typeof process.env.container === "string" ? process.env.container : null,
+  });
+}
+
+export function classifyContainerEvidence(evidence) {
+  if (evidence.markerFiles.some((probe) => probe.availability === "present")) {
+    return true;
+  }
+  if (evidence.systemdContainer.availability === "present") return true;
+  if (
+    typeof evidence.environmentContainer === "string" &&
+    evidence.environmentContainer.length > 0
+  ) {
+    return true;
+  }
+
+  const requiredText = [evidence.cgroup, evidence.mountinfo];
+  const indicators = requiredText
+    .filter((probe) => probe.availability === "present")
+    .map((probe) => probe.content)
+    .join("\n");
+  if (
+    /(?:docker|podman|kubepods|containerd|systemd-nspawn|machine\.slice|(?:^|[/:.-])lxc(?:[/:.-]|$))/imu
+      .test(indicators)
+  ) {
+    return true;
+  }
+
+  const optionalProbesComplete = evidence.markerFiles.every((probe) =>
+    probe.availability === "present" || probe.availability === "missing"
+  ) && (
+    evidence.systemdContainer.availability === "present" ||
+    evidence.systemdContainer.availability === "missing"
+  );
+  const requiredProbesComplete = requiredText.every(
+    (probe) => probe.availability === "present",
+  );
+  return optionalProbesComplete && requiredProbesComplete ? false : null;
+}
+
+function probeMarkerFile(file) {
   try {
-    if (fs.existsSync("/.dockerenv") || fs.existsSync("/run/.containerenv")) return true;
-    const indicators = [readText("/proc/1/cgroup"), readText("/proc/self/mountinfo")]
-      .filter((value) => value !== null)
-      .join("\n");
-    if (/(?:docker|kubepods|containerd|podman|lxc)/iu.test(indicators)) return true;
-    return indicators.length === 0 ? null : false;
-  } catch {
-    return null;
+    fs.lstatSync(file);
+    return { availability: "present", content: null };
+  } catch (error) {
+    return {
+      availability: error?.code === "ENOENT" ? "missing" : "unavailable",
+      content: null,
+    };
+  }
+}
+
+function probeOptionalTextFile(file) {
+  try {
+    return { availability: "present", content: fs.readFileSync(file, "utf8") };
+  } catch (error) {
+    return {
+      availability: error?.code === "ENOENT" ? "missing" : "unavailable",
+      content: null,
+    };
+  }
+}
+
+function probeRequiredTextFile(file) {
+  try {
+    return { availability: "present", content: fs.readFileSync(file, "utf8") };
+  } catch (error) {
+    return {
+      availability: error?.code === "ENOENT" ? "missing" : "unavailable",
+      content: null,
+    };
   }
 }
 

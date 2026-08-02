@@ -375,7 +375,8 @@ callback queue, single-credit admission, and promise-aware serialized callback
 completion explicitly. `support.currentRuntime.targetCompatible` is explicitly
 limited to packaged-target selection. `qualifyRoot(root)` separately enforces
 kernel/glibc floors, WSL/container evidence, and root filesystem classification;
-below-floor, unknown, network, FUSE, and overlay states never qualify. Target
+below-floor, unknown, network, FUSE, and overlay states never qualify. A
+negative container result requires all designated probes to complete. Target
 entries become `supported` only after exact-commit native and kernel-floor
 evidence plus both supervised overflow scenarios. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md),

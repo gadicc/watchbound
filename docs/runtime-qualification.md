@@ -31,7 +31,8 @@ The aggregate can be `qualified` only when all of these are true:
    `supported`;
 2. the parsed host kernel is at least the target's `kernelMinimum`;
 3. the observed glibc runtime is at least the target's published glibc floor;
-4. WSL and container markers are not detected and the checks were available;
+4. WSL is not detected, and every designated container probe completed without
+   recognized container evidence;
 5. the exact supplied root resolves to a directory; and
 6. Linux `statfs` classifies that physical root as an ordinary local ext,
    XFS, or Btrfs filesystem.
@@ -40,8 +41,10 @@ Known failures are `unqualified`. Missing or unparsable version data,
 unavailable environment evidence, an unavailable root, and an unrecognized
 filesystem are `unknown`; they can never become qualified by omission.
 Network, FUSE, and overlay filesystem magic values are explicit unqualified
-reasons. WSL and container execution are likewise explicit unqualified reasons
-even if the kernel, glibc, and filesystem checks would otherwise pass.
+reasons. WSL and detected container execution are likewise explicit
+unqualified reasons even if the kernel, glibc, and filesystem checks would
+otherwise pass. Incomplete container evidence is `container-unknown`, not a
+negative conclusion.
 
 The version comparison is numeric by dotted component, so `5.15` accepts
 `5.15.0` and later but rejects `5.14.99`; malformed release strings are
@@ -52,9 +55,23 @@ evidence.
 
 ## Evidence boundary
 
-Environment detection uses the Linux release/version strings, conventional
-container marker files, and cgroup/mount information. Absence is meaningful
-only when those sources were readable; unavailable sources report unknown.
+Environment detection uses the Linux release/version strings and a deliberately
+closed set of conventional container evidence. A `not-detected` container state
+requires both `/.dockerenv` and `/run/.containerenv` to be confirmed absent,
+`/run/systemd/container` to be confirmed absent, and both `/proc/1/cgroup` and
+`/proc/self/mountinfo` to be readable and free of Docker, Podman, Kubernetes,
+containerd, LXC, systemd-nspawn, or systemd machine-slice evidence. A present
+systemd container marker or nonempty `container` environment hint is positive
+evidence. Positive evidence wins even if another probe failed; otherwise any
+permission error, probe failure, or missing required proc source reports
+unknown.
+
+This negative state means only that all designated probes completed without
+recognized evidence. It is not a general proof that every possible container
+runtime is absent. Expanding the qualified environment claim requires adding
+the relevant evidence source and deterministic tests; an unreadable source is
+never filtered out to manufacture a negative conclusion.
+
 Filesystem classification is deliberately allowlisted. A new local filesystem
 does not inherit qualification because it is neither network nor FUSE; it
 remains unknown until its Watchbound behavior is reviewed and the allowlist is

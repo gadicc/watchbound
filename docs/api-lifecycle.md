@@ -235,7 +235,9 @@ support claim and do not widen the fixed `support` target.
 target selection and exact-commit target status. Full qualification requires
 `qualifyRoot(root)`, which enforces kernel/glibc floors, WSL/container evidence,
 and physical filesystem classification without starting the watcher. Unknown
-evidence never qualifies. See
+evidence never qualifies. Container `not-detected` requires every designated
+marker, cgroup, and mountinfo probe to complete; incomplete probes return
+`container-unknown`. See
 [`runtime-qualification.md`](runtime-qualification.md).
 
 Positive JavaScript options crossing the native boundary share bounds 1 through

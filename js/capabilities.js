@@ -445,8 +445,8 @@ function floorEvidence(observed, minimum) {
 
 function versionParts(value) {
   if (typeof value !== "string") return null;
-  const match = /^(\d+)\.(\d+)(?:\.(\d+))?/u.exec(value);
-  return match === null ? null : match.slice(1).map((part) => Number(part ?? 0));
+  const match = /^(\d+(?:\.\d+)+)(?:[-+][0-9A-Za-z._+-]+)?$/u.exec(value);
+  return match === null ? null : match[1].split(".").map(Number);
 }
 
 function compareVersions(left, right) {

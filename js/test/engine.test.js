@@ -345,6 +345,18 @@ test("root qualification never outruns floor, environment, or filesystem evidenc
       "kernel-unknown",
     ],
     [
+      "malformed kernel evidence",
+      { runtime: { ...capabilities.runtime, kernel: "999.999garbage", libc: { family: "glibc", version: "2.35" } } },
+      "unknown",
+      "kernel-unknown",
+    ],
+    [
+      "malformed glibc evidence",
+      { runtime: { ...capabilities.runtime, kernel: "5.15.0", libc: { family: "glibc", version: "999.999garbage" } } },
+      "unknown",
+      "glibc-unknown",
+    ],
+    [
       "WSL",
       { evidence: { ...baseEvidence, wsl: true } },
       "unqualified",

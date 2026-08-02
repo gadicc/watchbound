@@ -14,11 +14,13 @@ import {
 
 const { hasInvalidatedPathAtOrBelow } = exclusionSmokeHelpers;
 
+const smokeStartedAt = Date.now();
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+logPhase("startup");
 const waitTimeoutMs = parseInstalledSmokeWaitTimeoutMs(
   options["wait-timeout-ms"],
 );
@@ -63,6 +65,7 @@ const evidence = {
 try {
   Object.assign(evidence, await runSmoke());
   evidence.status = "passed";
+  logPhase("checks-complete");
 } catch (error) {
   evidence.status = "failed";
   evidence.error = {
@@ -70,16 +73,19 @@ try {
     message: error?.message ?? String(error),
     stack: error?.stack ?? null,
   };
+  logPhase("checks-failed", { errorName: error?.name ?? null });
   throw error;
 } finally {
   evidence.finishedAt = new Date().toISOString();
   if (options.evidence) {
+    logPhase("evidence-write-start");
     const evidencePath = path.resolve(options.evidence);
     fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
     fs.writeFileSync(
       evidencePath,
       `${JSON.stringify(evidence, bigintReplacer, 2)}\n`,
     );
+    logPhase("evidence-write-complete");
   }
 }
 
@@ -88,6 +94,7 @@ process.stdout.write(
 );
 
 async function runSmoke() {
+  logPhase("package-contracts-start");
   const wrapperPackage = readJson(path.join(wrapperRoot, "package.json"));
   const loaderPackage = readJson(path.join(loaderRoot, "package.json"));
   const nativePackage = readJson(path.join(nativeRoot, "package.json"));
@@ -111,7 +118,9 @@ async function runSmoke() {
     options["native-sha256"],
     "installed native addon differs from the independently approved artifact",
   );
+  logPhase("package-contracts-complete");
 
+  logPhase("native-module-start");
   const module = await import(pathToFileURL(wrapperEntry));
   const { capabilities, createEngine } = module;
   assert.deepEqual(capabilities.versions, {
@@ -174,12 +183,22 @@ async function runSmoke() {
   };
   assert.deepEqual(engine.runtimeStats(), inactiveRuntime);
   const processBaseline = processResources();
+  logPhase("native-module-complete");
 
+  logPhase("real-delivery-start");
   await checkRealDeliveryAndSerialization(engine);
+  logPhase("real-delivery-complete");
+  logPhase("exclusions-recovery-start");
   await checkExclusionsRecoveryAndReconciliation(engine);
+  logPhase("exclusions-recovery-complete");
+  logPhase("joined-disposal-start");
   await checkContextAbortAndJoinedDisposal(engine);
+  logPhase("joined-disposal-complete");
+  logPhase("context-stop-start");
   await checkContextStop(engine);
+  logPhase("context-stop-complete");
 
+  logPhase("resource-return-start");
   await waitFor(
     () => deepEqual(engine.runtimeStats(), inactiveRuntime),
     "runtime resources did not return to the inactive baseline",
@@ -203,6 +222,7 @@ async function runSmoke() {
     processFinal.tasks <= processBaseline.tasks + 4,
     "process tasks did not return near the cold baseline",
   );
+  logPhase("resource-return-complete");
 
   return {
     wrapper: {
@@ -232,6 +252,17 @@ async function runSmoke() {
       },
     },
   };
+}
+
+function logPhase(phase, details = {}) {
+  process.stdout.write(
+    `WATCHBOUND_INSTALLED_SMOKE_PHASE=${JSON.stringify({
+      phase,
+      elapsedMs: Date.now() - smokeStartedAt,
+      route: options.route,
+      ...details,
+    })}\n`,
+  );
 }
 
 async function checkExclusionsRecoveryAndReconciliation(engine) {

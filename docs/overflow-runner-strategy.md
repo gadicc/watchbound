@@ -35,6 +35,106 @@ repository-read permission only. It cannot receive the publication job's
 write or OIDC permissions, and the publication job separately requires a
 `push` event on `main` plus a positive semantic-release plan.
 
+### Recoverable qualification guide
+
+Use the repository guide instead of manually reconstructing inputs and prior
+steps:
+
+```sh
+pnpm release:qualify
+```
+
+When the guide discovers an active exact-candidate run, its suggested watch
+command polls GitHub until that run completes and then reconstructs the full
+qualification state automatically:
+
+```sh
+pnpm release:qualify -- watch
+```
+
+The watch pins the candidate SHA before polling, so a concurrent `dev` update
+cannot redirect the completion check to different source. Interrupting it is
+safe: rerunning either the status or watch command recovers from GitHub state.
+It never accepts a conditional rerun or dispatches another gate automatically;
+those maintainer decisions remain explicit.
+
+The guide resolves the current remote `dev` SHA, lists only Release workflow
+dispatches for that exact commit, downloads their retained
+`watchbound-qualification-plan` approval records, cross-checks any native
+overflow artifact names, and reports the next safe action. It does not keep a
+local step counter, so reopening it after a shell restart or midway through a
+run reconstructs the same state from GitHub. `--json` emits the complete state
+for another read-only tool.
+
+Dispatch remains an explicit command. For example, the first gate is:
+
+```sh
+pnpm release:qualify -- dispatch \
+  --scenario overflow-reconciliation \
+  --attempt 1
+```
+
+After that run completes, rerun the status command and review the complete run
+and both native artifacts. The suggested automatic-scenario command includes
+`--reviewed-run <id>`; the guide refuses to dispatch without that explicit
+review record. A failed attempt likewise requires review of the prior run and
+an incremented scenario attempt unless one diagnostic rerun meets the
+conditional-acceptance policy below. It refuses duplicate scenario attempts,
+overlapping dispatches, skipped attempt numbers, stale candidate refs, and
+runs whose approval identity is not yet available.
+
+GitHub's **Re-run failed jobs** action keeps the same workflow run ID and
+scenario-attempt input while incrementing `github.run_attempt`. The latest run
+summary can therefore become green even though it combines jobs from multiple
+workflow attempts. The guide reports a successful second workflow attempt
+with complete x64 and ARM64 artifacts as a conditional pass. It offers two
+explicit paths after review:
+
+- classify every first-attempt failure as infrastructure or environmental,
+  then continue with both `--reviewed-run <run-id>` and
+  `--accept-rerun <run-id>`; or
+- require a clean new scenario attempt using the next scenario-attempt number.
+
+Conditional acceptance is limited to workflow attempt 2. A further rerun,
+missing native evidence, conflicting identity, semantic or conformance
+failure, or unexplained failure requires a clean scenario attempt instead.
+For a conditional candidate, the guide automatically downloads the two
+workflow-attempt job records, the original failed-step logs, and both native
+overflow artifacts into temporary directories. It accepts the automated review
+only when all of these checks pass:
+
+- every original failed job is an allowlisted kernel-5.15 QEMU component and
+  its only failed step is the kernel exercise;
+- each failed target has a target-specific QEMU `ETIMEDOUT` signature and the
+  failed logs contain no known assertion, semantic, or conformance signature;
+- workflow attempt 2 completed successfully, contains no failed or cancelled
+  job, and every originally failed job passed there;
+- both native preflights approve the exact candidate, scenario, scenario
+  attempt, target, GitHub run, and original workflow attempt (the overflow
+  gates passed before the unrelated kernel jobs were retried);
+- both strict conformance reports contain exactly one passing trial, no
+  exclusions/errors/skips, all recorded semantic checks passing, and the same
+  canonical artifact hash as their preflight.
+
+Temporary evidence is removed after inspection. A failed or unavailable check
+is reported by name and disables `--accept-rerun`; `--json` includes every
+check and detail. When all checks pass, the guide presents exactly two lettered
+dispatch paths. Choose one; they are alternatives, not a command sequence.
+
+For a first-attempt failure, the guide also offers
+`gh run rerun <run-id> --failed` as an optional diagnostic. GitHub reruns
+failed jobs and their dependents, rather than individual test cases. Use this
+to distinguish a repeatable defect from environmental or emulation variance;
+it does not erase the original result or automatically qualify the run. Once
+requested, let the diagnostic rerun finish and reload the guide so the
+automated review can inspect both attempts. Skip the diagnostic command when
+the failure is already sufficiently classified.
+
+The guide deliberately qualifies the remote ref, not uncommitted local files.
+A dirty local worktree is reported but does not alter GitHub's exact source.
+Conversely, committing or pushing the guide itself creates a new candidate SHA;
+manual evidence for an earlier SHA does not transfer.
+
 For each dispatch:
 
 1. In GitHub Actions, open **Release** and select the exact candidate ref in
@@ -63,10 +163,13 @@ gh workflow run release.yml \
   -f 'acknowledgement=I ACKNOWLEDGE FORCED OVERFLOW overflow-reconciliation ATTEMPT 1'
 ```
 
-The workflow refuses GitHub's **Re-run jobs** path because it changes
-`github.run_attempt`. If review authorizes a retry, create a new dispatch with
-the incremented scenario attempt and matching acknowledgement. Failure or
-completion never authorizes a retry or the other scenario by itself.
+The workflow validator rejects a rerun of the qualification-plan job. When
+only failed downstream jobs and their dependents are rerun, the guide detects
+the increased API attempt and applies the conditional-acceptance policy above.
+If review does not classify every original failure as infrastructure or
+environmental, create a new dispatch with the incremented scenario attempt and
+matching acknowledgement. Failure or completion never authorizes a retry or
+the other scenario by itself.
 
 Run the scenarios in two dispatches:
 

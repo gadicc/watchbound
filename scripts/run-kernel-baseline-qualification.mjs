@@ -15,6 +15,8 @@ import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS = 30_000;
+const QEMU_TIMEOUT_MS = 20 * 60 * 1000;
+const qualificationStartedAt = Date.now();
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseOptions(process.argv.slice(2));
 const matrix = loadNativeMatrix(workspaceRoot);
@@ -58,12 +60,18 @@ try {
   const initrd = path.join(temporaryRoot, "initrd");
   fs.mkdirSync(rootfs);
 
+  logPhase("container-image-pull-start", { image: baseline.image });
   run("docker", ["pull", baseline.image]);
+  logPhase("container-image-pull-complete");
+
+  logPhase("rootfs-export-start");
   containerId = capture("docker", ["create", baseline.image]).trim();
   assert.match(containerId, /^[0-9a-f]{64}$/u, "docker create did not return a container id");
   run("docker", ["export", "--output", exportTar, containerId]);
   run("tar", ["--extract", "--file", exportTar, "--directory", rootfs, "--no-same-owner"]);
+  logPhase("rootfs-export-complete");
 
+  logPhase("guest-files-assemble-start");
   copyTree(path.resolve(options["node-root"]), path.join(rootfs, "watchbound-node"));
   copyFiles(
     Object.values(tarballs).map((filename) => path.join(tarballRoot, filename)),
@@ -97,12 +105,18 @@ try {
       waitTimeoutMs: guestWaitTimeoutOverrideMs,
     }),
   );
+  logPhase("guest-files-assemble-complete");
 
+  logPhase("disk-image-build-start");
   fs.closeSync(fs.openSync(disk, "w"));
   fs.truncateSync(disk, 1536 * 1024 * 1024);
   run("mkfs.ext4", ["-q", "-F", "-d", rootfs, disk]);
+  logPhase("disk-image-build-complete");
+
+  logPhase("boot-artifacts-download-start");
   downloadChecked(artifactSet.kernel, kernel);
   downloadChecked(artifactSet.initrd, initrd);
+  logPhase("boot-artifacts-download-complete");
 
   // This lane is correctness-only. Deliberately avoid KVM/nested-virtualization
   // variance and keep resource use bounded on shared hosted runners.
@@ -124,14 +138,24 @@ try {
     "-drive", `if=none,id=rootdisk,format=raw,aio=threads,file=${disk}`,
     "-device", "virtio-blk-pci,drive=rootdisk",
   ];
+  logPhase("qemu-start", {
+    system: artifactSet.qemuSystem,
+    timeoutMs: QEMU_TIMEOUT_MS,
+    serialDelivery: "buffered-until-exit",
+  });
   const qemu = spawnSync(artifactSet.qemuSystem, qemuArgs, {
     cwd: workspaceRoot,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
-    timeout: 20 * 60 * 1000,
+    timeout: QEMU_TIMEOUT_MS,
   });
   const serial = `${qemu.stdout ?? ""}${qemu.stderr ?? ""}`;
   process.stdout.write(serial);
+  logPhase("qemu-complete", {
+    status: qemu.status,
+    signal: qemu.signal,
+    errorCode: qemu.error?.code ?? null,
+  });
   assertCleanQemuCompletion(qemu);
   assert.match(serial, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed\r?$/mu);
   const encoded = serial.match(/^WATCHBOUND_KERNEL_BASELINE_EVIDENCE=([A-Za-z0-9+/=]+)\r?$/mu)?.[1];
@@ -187,12 +211,26 @@ try {
   const evidencePath = path.resolve(options.evidence);
   fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+  logPhase("qualification-complete");
   process.stdout.write(`Kernel ${baseline.kernelSeries} baseline passed for ${target.id}\n`);
 } finally {
+  logPhase("cleanup-start");
   if (containerId) {
     spawnSync("docker", ["rm", "--force", containerId], { stdio: "ignore" });
   }
   fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  logPhase("cleanup-complete");
+}
+
+function logPhase(phase, details = {}) {
+  process.stdout.write(
+    `WATCHBOUND_KERNEL_BASELINE_HOST_PHASE=${JSON.stringify({
+      phase,
+      elapsedMs: Date.now() - qualificationStartedAt,
+      target: target.id,
+      ...details,
+    })}\n`,
+  );
 }
 
 function guestEnvironment({

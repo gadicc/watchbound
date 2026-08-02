@@ -31,6 +31,7 @@
     "check:registry-packages": "node scripts/check-registry-packages.mjs",
     "package:prepare": "node scripts/prepare-packages.mjs",
     "package:check": "node scripts/check-packages.mjs",
+    "release:qualify": "node scripts/release-qualification.mjs",
     "release": "semantic-release",
     "test:packages": "pnpm package:prepare && pnpm package:check",
     "typecheck": "tsc -p js/test/types/tsconfig.json",

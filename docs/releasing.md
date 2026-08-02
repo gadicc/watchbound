@@ -75,7 +75,10 @@ The Release workflow's `workflow_dispatch` mode reuses the complete canonical
 artifact pipeline without enabling publication. It accepts an exact candidate
 SHA, one scenario, a positive scenario-attempt number, and a typed
 acknowledgement. The SHA must equal both the workflow ref selected in GitHub
-and the checked-out commit. GitHub workflow reruns are rejected; an explicitly
+and the checked-out commit. One green failed-job rerun with complete native
+evidence may be conditionally accepted only after the guide's fail-closed
+automated review classifies every original failure as an allowlisted QEMU
+timeout and the maintainer explicitly confirms it. Otherwise an explicitly
 reviewed retry is a new dispatch with an incremented scenario attempt.
 
 Dispatch `overflow-reconciliation` first. Review the full run and both native
@@ -83,7 +86,8 @@ overflow artifacts before separately dispatching
 `automatic-overflow-reconciliation`. Each scenario runs once per native
 architecture. Preflight and conformance evidence is uploaded even when the
 gate fails. See [`overflow-runner-strategy.md`](overflow-runner-strategy.md)
-for the exact inputs, acknowledgement, interpretation, and retention policy.
+for the recoverable `pnpm release:qualify` guide, exact inputs,
+acknowledgement, interpretation, and retention policy.
 
 ## Publication ordering and partial failure
 

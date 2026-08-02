@@ -81,6 +81,7 @@ test("wrapper delivers string paths and idempotent disposal", async () => {
     assert.equal(batches[0].rootState.attachment, "attached");
     assert.equal(typeof batches[0].rootState.identity.device, "bigint");
     assert.deepEqual(subscription.rootState, batches[0].rootState);
+    assert.equal(batches[0].pathEncoding, "complete");
     assert.equal(batches[0].pathEncodingCollapsed, false);
     await Promise.all([subscription.dispose(), subscription.dispose()]);
     assert.equal(subscription.stats().disposed, true);
@@ -209,6 +210,69 @@ test("resolve-physical roots stay anchored across alias mutation at the native b
     await waitFor(
       () => engine.runtimeStats().nativeWatches === 0,
       "resolved-root disposal leaked native watches",
+    );
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("non-UTF-8 physical roots expose bytes-only invalidations across alias retargeting", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-js-byte-root-"));
+  const physicalRoot = Buffer.concat([
+    Buffer.from(`${parent}${path.sep}physical-`),
+    Buffer.from([0xff]),
+  ]);
+  const alias = path.join(parent, "alias");
+  const alternate = path.join(parent, "alternate");
+  fs.mkdirSync(physicalRoot);
+  fs.mkdirSync(alternate);
+  fs.symlinkSync(physicalRoot, alias);
+  const engine = createEngine({ nativeWatchBudget: 4 });
+  const batches = [];
+  let subscription;
+  try {
+    subscription = await engine.subscribe(alias, (batch) => batches.push(batch), {
+      rootPathPolicy: "resolve-physical",
+      batchWindowMs: 5,
+    });
+    assert.equal(subscription.resolvedRoot.physicalPath, null);
+    assert.ok(
+      Buffer.from(subscription.resolvedRoot.physicalPathBytes).equals(physicalRoot),
+    );
+
+    fs.unlinkSync(alias);
+    fs.symlinkSync(alternate, alias);
+    const exactChild = Buffer.concat([
+      physicalRoot,
+      Buffer.from(`${path.sep}child-`),
+      Buffer.from([0xfe]),
+    ]);
+    fs.writeFileSync(exactChild, "physical");
+    await waitFor(
+      () => batches.some((batch) =>
+        batch.invalidatedPathBytes.some((bytes) =>
+          Buffer.from(bytes).equals(exactChild))),
+      "the exact physical child bytes were not delivered",
+    );
+
+    const matching = batches.find((batch) =>
+      batch.invalidatedPathBytes.some((bytes) => Buffer.from(bytes).equals(exactChild)));
+    assert.equal(matching.pathEncoding, "bytes-only");
+    assert.equal(matching.pathEncodingCollapsed, true);
+    assert.deepEqual(matching.invalidatedPaths, []);
+    assert.ok(!matching.invalidatedPaths.includes(alias));
+    assert.equal(subscription.rootState.attachment, "attached");
+
+    const alternateChild = path.join(alternate, "not-covered");
+    fs.writeFileSync(alternateChild, "alternate");
+    await waitForQuiet(() => batches.length);
+    assert.ok(batches.every((batch) =>
+      !batch.invalidatedPaths.includes(alias) &&
+      !batch.invalidatedPaths.includes(alternateChild)));
+  } finally {
+    await subscription?.dispose();
+    await waitFor(
+      () => engine.runtimeStats().nativeWatches === 0,
+      "bytes-only root disposal leaked native watches",
     );
     fs.rmSync(parent, { recursive: true, force: true });
   }
@@ -1134,6 +1198,7 @@ test("non-UTF-8 child paths preserve bytes and collapse the string invalidation 
     while (batches.length === 0 && Date.now() < deadline) await delay(10);
 
     assert.ok(batches.some((batch) => batch.pathEncodingCollapsed));
+    assert.ok(batches.some((batch) => batch.pathEncoding === "root-collapsed"));
     assert.ok(batches.some((batch) => batch.invalidatedPaths.includes(root)));
     assert.ok(
       batches.some((batch) =>

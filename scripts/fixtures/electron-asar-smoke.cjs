@@ -19,7 +19,7 @@ async function main() {
   assert.equal(process.versions.node, "24.15.0");
   assert.ok(Number(process.versions.napi) >= 10);
   const watchbound = await import("watchbound");
-  assert.equal(watchbound.capabilities.schemaVersion, 7);
+  assert.equal(watchbound.capabilities.schemaVersion, 8);
   assert.equal(
     watchbound.capabilities.support.currentRuntime.packagedTargetId,
     process.env.WATCHBOUND_EXPECTED_TARGET,

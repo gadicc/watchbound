@@ -14,6 +14,7 @@ import {
   type ChangeBatch,
   type Coverage,
   type Engine,
+  type PathEncoding,
   type PartialReason,
   type RootRecoveryFailureReason,
   type RootRecoveryResult,
@@ -233,7 +234,7 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 7 = capabilities.schemaVersion;
+  const schemaVersion: 8 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const callbackCompletion: "promise-aware-serialized" =
     capabilities.observability.callbackCompletion;
@@ -259,6 +260,8 @@ function inspectCapabilities(): void {
   const physicalRootResolution: boolean =
     capabilities.features.physicalRootResolution;
   const rootQualification: boolean = capabilities.features.rootQualification;
+  const bytesOnlyInvalidations: boolean =
+    capabilities.features.bytesOnlyInvalidations;
   const rootPathDefault: "strict" =
     capabilities.options.subscription.rootPathPolicy.default;
   const initialExclusionGeneration: 0 =
@@ -310,6 +313,7 @@ function inspectCapabilities(): void {
   void observedExcludedPaths;
   void physicalRootResolution;
   void rootQualification;
+  void bytesOnlyInvalidations;
   void rootPathDefault;
   void initialExclusionGeneration;
   void directoryNameGeneration;
@@ -367,8 +371,9 @@ function inspectBatch(batch: ChangeBatch): string {
   const inode: bigint = batch.rootState.identity.inode;
   const firstBytes: Uint8Array | undefined = batch.invalidatedPathBytes[0];
   const firstPath: string | undefined = batch.invalidatedPaths[0];
+  const pathEncoding: PathEncoding = batch.pathEncoding;
   const collapsed: boolean = batch.pathEncodingCollapsed;
-  return `${sequence}:${exclusionGeneration}:${rootGeneration}:${device}:${inode}:${firstBytes?.byteLength}:${firstPath}:${collapsed}:${describeCoverage(batch.coverage)}`;
+  return `${sequence}:${exclusionGeneration}:${rootGeneration}:${device}:${inode}:${firstBytes?.byteLength}:${firstPath}:${pathEncoding}:${collapsed}:${describeCoverage(batch.coverage)}`;
 }
 
 async function inspectSubscription(subscription: Subscription): Promise<void> {

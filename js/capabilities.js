@@ -101,7 +101,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   }
 
   return deepFreeze({
-    schemaVersion: 7,
+    schemaVersion: 8,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -179,6 +179,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
       rootReplacementRecovery: native.rootReplacementRecovery,
       physicalRootResolution: native.physicalRootResolution,
       rootQualification: true,
+      bytesOnlyInvalidations: true,
       exactPathBytes: native.exactPathBytes,
       orderedBatches: true,
       observedState: true,
@@ -202,6 +203,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
           default: "strict",
           outputPaths: "physical",
           aliasTracking: "establishment-snapshot",
+          nonUtf8PhysicalRoot: "bytes-only-invalidations",
         },
         initialExclusions: {
           type: "directory-prefix-array",
@@ -292,6 +294,8 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
         cumulativeCounters: "bigint",
         gauges: "number",
       },
+      pathEncodingStates: ["complete", "root-collapsed", "bytes-only"],
+      earlyDelivery: "buffered-until-resolved-root",
       nativeCallbackQueueCapacity: native.nativeCallbackQueueCapacity,
       deliveryDispatcherScope: native.deliveryDispatcherScope,
       deliveryAdmission: native.deliveryAdmission,

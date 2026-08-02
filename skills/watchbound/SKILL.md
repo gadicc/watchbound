@@ -57,8 +57,11 @@ Handle every coverage variant:
   applicable.
 
 Use `invalidatedPathBytes` when exact Linux path bytes matter. If
-`pathEncodingCollapsed` is true, treat the string root invalidation as the
-safe boundary rather than trying to reconstruct an unrepresentable child path.
+`pathEncoding` is `root-collapsed`, treat the physical string root invalidation
+as the safe boundary rather than reconstructing an unrepresentable child. If it
+is `bytes-only`, `invalidatedPaths` is intentionally empty and the exact byte
+paths are the only authoritative invalidations; never substitute a lexical
+alias.
 
 Keep cardinality bounded throughout the consumer. Bound pending work, coalesce
 duplicate invalidations, and prefer one root rebuild over an unbounded queue of
@@ -119,7 +122,7 @@ globs or basenames, and are applied before the generation-zero topology scan.
 An empty prefix excludes the root. Watchbound does not discover Git ignores or
 application policy; consumers must compute and update that complete prefix set.
 
-When capability schema 7 is present and `qualifyRoot()` reports a qualified root,
+When capability schema 8 is present and `qualifyRoot()` reports a qualified root,
 use `excludedDirectoryNames` for exact
 directory components that must be pruned at every depth, including future and
 renamed-in directories. Use `observedExcludedPaths` for nonempty exact

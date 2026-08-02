@@ -346,8 +346,9 @@ runtime compiler fallback, and verifies native/package/API/build identity
 before exporting the binding. Generated `.node` binaries and napi-rs's private
 declaration output are ignored by Git. See
 [`docs/native-delivery.md`](docs/native-delivery.md). The JavaScript wrapper
-preserves exact Linux path bytes and conservatively collapses a non-UTF-8 string
-invalidation to its root.
+preserves exact Linux path bytes and conservatively collapses a non-UTF-8 child
+to a representable physical root. If the physical root itself is not UTF-8,
+the batch is explicitly bytes-only and never substitutes a lexical alias.
 
 `initialCoverage` and `initialRootState` expose the immutable establishment
 baseline. `subscription.observedState` is the frozen projection of that baseline
@@ -365,7 +366,7 @@ and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
 default engine. `engine.nativeWatchBudget` is its request, while
 `engine.runtimeStats()` describes actual process-global resources.
 
-The deeply frozen, JSON-serializable `capabilities` export has schema version 7
+The deeply frozen, JSON-serializable `capabilities` export has schema version 8
 and separates versions/build facts, observed runtime facts, packaged target,
 per-target qualification, the legacy single-target support fields,
 features, option defaults and bounds, and observability. It reports

@@ -34,7 +34,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v7 separates target compatibility from root qualification", () => {
+test("capability schema v8 exposes physical bytes-only delivery", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -45,7 +45,7 @@ test("capability schema v7 separates target compatibility from root qualificatio
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 7);
+  assert.equal(capabilities.schemaVersion, 8);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
@@ -160,6 +160,7 @@ test("capability schema v7 separates target compatibility from root qualificatio
     rootReplacementRecovery: true,
     physicalRootResolution: true,
     rootQualification: true,
+    bytesOnlyInvalidations: true,
     exactPathBytes: true,
     orderedBatches: true,
     observedState: true,
@@ -185,6 +186,7 @@ test("capability schema v7 separates target compatibility from root qualificatio
         default: "strict",
         outputPaths: "physical",
         aliasTracking: "establishment-snapshot",
+        nonUtf8PhysicalRoot: "bytes-only-invalidations",
       },
       initialExclusions: {
         type: "directory-prefix-array",
@@ -271,6 +273,8 @@ test("capability schema v7 separates target compatibility from root qualificatio
       cumulativeCounters: "bigint",
       gauges: "number",
     },
+    pathEncodingStates: ["complete", "root-collapsed", "bytes-only"],
+    earlyDelivery: "buffered-until-resolved-root",
     nativeCallbackQueueCapacity: 1,
     deliveryDispatcherScope: "node-environment",
     deliveryAdmission: "single-credit",

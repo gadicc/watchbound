@@ -236,6 +236,9 @@ export type UncertainReason =
   | "topology-race"
   | "consumer-backpressure";
 
+/** Relationship between exact byte invalidations and their string projection. */
+export type PathEncoding = "complete" | "root-collapsed" | "bytes-only";
+
 /**
  * The watcher’s conservative claim about filesystem coverage.
  *
@@ -262,7 +265,9 @@ export interface ChangeBatch {
   readonly invalidatedPaths: readonly string[];
   /** Exact Linux path bytes for each native invalidation. */
   readonly invalidatedPathBytes: readonly Uint8Array[];
-  /** Whether an unrepresentable child path forced string output to the root. */
+  /** How exact byte invalidations were projected into string paths. */
+  readonly pathEncoding: PathEncoding;
+  /** Whether at least one exact byte invalidation was not representable as UTF-8. */
   readonly pathEncodingCollapsed: boolean;
   /** Root identity and attachment state at this batch boundary. */
   readonly rootState: RootState;
@@ -683,7 +688,7 @@ export interface IntentionallyUnsupportedTargetCapability {
  */
 export interface Capabilities {
   /** Version of this capabilities object’s schema. */
-  readonly schemaVersion: 7;
+  readonly schemaVersion: 8;
   /** Wrapper, native engine, and binding API versions. */
   readonly versions: {
     readonly wrapper: string;
@@ -785,6 +790,7 @@ export interface Capabilities {
     readonly rootReplacementRecovery: boolean;
     readonly physicalRootResolution: boolean;
     readonly rootQualification: boolean;
+    readonly bytesOnlyInvalidations: boolean;
     readonly exactPathBytes: boolean;
     readonly orderedBatches: boolean;
     readonly observedState: boolean;
@@ -806,6 +812,7 @@ export interface Capabilities {
         readonly default: "strict";
         readonly outputPaths: "physical";
         readonly aliasTracking: "establishment-snapshot";
+        readonly nonUtf8PhysicalRoot: "bytes-only-invalidations";
       };
       readonly initialExclusions: InitialExclusionsOptionCapability;
       readonly excludedDirectoryNames: DirectoryNameExclusionsOptionCapability;
@@ -847,6 +854,14 @@ export interface Capabilities {
       readonly cumulativeCounters: "bigint";
       readonly gauges: "number";
     };
+    /** Complete set of string-projection states emitted on change batches. */
+    readonly pathEncodingStates: readonly [
+      "complete",
+      "root-collapsed",
+      "bytes-only",
+    ];
+    /** Establishment delivery waits for the physical output namespace. */
+    readonly earlyDelivery: "buffered-until-resolved-root";
     readonly nativeCallbackQueueCapacity: 1;
     readonly deliveryDispatcherScope: "node-environment";
     readonly deliveryAdmission: "single-credit";

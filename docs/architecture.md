@@ -426,11 +426,11 @@ The wrapper combines native capability-schema-version-5 feature/default metadata
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 7`. Features distinguish
+and `observability`, under `schemaVersion: 8`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
 watches, and expose recursive name exclusions, observed excluded boundaries,
 cancellable establishment, shared Node delivery, physical root resolution, and
-full host/root qualification. Options
+full host/root qualification and bytes-only physical invalidations. Options
 publish exact defaults, `u32` hard bounds, scope, units, and accounting.
 Observability publishes ordered-batch authority, callback-entry state,
 result/getter lead, stats scope, counter encodings, the one-entry native

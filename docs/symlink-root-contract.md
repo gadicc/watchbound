@@ -30,11 +30,20 @@ not a JavaScript-normalized cancellation of `link`.
 ## One physical namespace
 
 All callback `invalidatedPaths` and exact `invalidatedPathBytes` use the
-canonical physical namespace. `RootState.identity` identifies that physical
-root. `initialExclusions`, `excludedDirectoryNames`, `observedExcludedPaths`,
-and later `replaceExclusions` policies are root-relative to the same physical
-root. Observed excluded boundaries are consequently delivered as physical
-absolute paths.
+canonical physical namespace. When an exact child path is not UTF-8 and the
+physical root string is representable, `pathEncoding: "root-collapsed"` adds
+that physical root as the conservative string boundary. When the physical root
+itself is not UTF-8, `pathEncoding: "bytes-only"` leaves `invalidatedPaths`
+empty and keeps the exact physical invalidations in `invalidatedPathBytes`; the
+lexical alias is never substituted. The single admitted native delivery is
+held until `resolvedRoot` fixes this choice, so an early callback cannot use a
+lexical fallback.
+
+`RootState.identity` identifies that physical root. `initialExclusions`,
+`excludedDirectoryNames`, `observedExcludedPaths`, and later
+`replaceExclusions` policies are root-relative to the same physical root.
+Observed excluded boundaries are consequently delivered as physical absolute
+paths when representable, or exact physical bytes otherwise.
 
 Relative exclusion values must contain only normalized child components.
 Absolute paths, `.` and `..` are rejected before topology mutation, so an
@@ -46,7 +55,8 @@ Consumers that retain logical workspace names can map the physical prefix to
 the lexical prefix using `resolvedRoot`. They must treat that as their own
 logical projection: Watchbound intentionally does not claim the lexical alias
 still resolves to the physical directory after establishment. Exact physical
-bytes remain authoritative when either side is not representable as UTF-8.
+bytes remain authoritative when either side is not representable as UTF-8. A
+bytes-only batch cannot be projected through the lexical alias.
 
 ## Alias mutation and recovery
 

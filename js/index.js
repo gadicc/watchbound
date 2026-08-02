@@ -27,6 +27,10 @@ import {
   qualifyRootCapabilities,
 } from "./capabilities.js";
 import { establishNativeSubscription } from "./native-establishment.js";
+import {
+  createSingleCreditDeliveryBuffer,
+  normalizePathInvalidations,
+} from "./path-delivery.js";
 
 export {
   WatchboundError,
@@ -107,7 +111,8 @@ export function subscribe(root, onBatch, options = {}) {
  *
  * The native boundary preserves exact Linux path bytes. This wrapper also
  * provides string invalidations: if a child path is not valid UTF-8, it
- * conservatively collapses that invalidation to the representable root.
+ * conservatively collapses that invalidation to a representable physical root
+ * or exposes a bytes-only batch when the physical root itself is not UTF-8.
  */
 async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
   if (typeof root !== "string" || root.length === 0) {
@@ -135,15 +140,32 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
   const callbackHolder = {
     onBatch,
     observeCoverage: undefined,
-    pendingCoverageObservation: null,
     observedState: null,
     abortController: new AbortController(),
     stopRequested: false,
     startDisposal: null,
     context: null,
-    outputRoot: path.resolve(absoluteRoot),
+    outputRoot: undefined,
+    deliveryBuffer: null,
   };
   const weakCallbackHolder = new WeakRef(callbackHolder);
+  callbackHolder.deliveryBuffer = createSingleCreditDeliveryBuffer({
+    deliver(nativeBatch, deliveryId) {
+      const holder = weakCallbackHolder.deref();
+      if (holder === undefined) {
+        nativeBinding.completeDelivery(deliveryId, false, true);
+      } else {
+        deliverNativeBatch(holder, nativeBatch, deliveryId);
+      }
+    },
+    abandon(_nativeBatch, deliveryId) {
+      try {
+        nativeBinding.completeDelivery(deliveryId, false, true);
+      } catch {
+        // Provisional disposal remains responsible for joined native cleanup.
+      }
+    },
+  });
   callbackHolder.context = Object.freeze({
     signal: callbackHolder.abortController.signal,
     stop: createCallbackStop(weakCallbackHolder),
@@ -155,6 +177,7 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
     callback: createNativeCallback(weakCallbackHolder),
     prepareProvisionalDisposal() {
       callbackHolder.abortController.abort();
+      callbackHolder.deliveryBuffer.close();
     },
     buildSubscription(nativeSubscription) {
       const automaticPolicy = automaticConfig === null
@@ -164,18 +187,12 @@ async function subscribeWithEngine(nativeEngine, root, onBatch, options = {}) {
             () => invokeWatchbound("reconcile", () => nativeSubscription.reconcile()),
           );
       callbackHolder.observeCoverage = automaticPolicy?.observe ?? null;
-      if (
-        callbackHolder.observeCoverage !== null &&
-        callbackHolder.pendingCoverageObservation !== null
-      ) {
-        callbackHolder.observeCoverage(callbackHolder.pendingCoverageObservation);
-      }
-      callbackHolder.pendingCoverageObservation = null;
       const initialCoverage = normalizeCoverage(nativeSubscription.initialCoverage);
       const initialRootState = normalizeRootState(nativeSubscription.initialRootState);
       const resolvedRoot = normalizeResolvedRoot(nativeSubscription.resolvedRoot);
-      callbackHolder.outputRoot = resolvedRoot.physicalPath ?? resolvedRoot.lexicalPath;
+      callbackHolder.outputRoot = resolvedRoot.physicalPath;
       initializeObservedState(callbackHolder, initialCoverage, initialRootState);
+      callbackHolder.deliveryBuffer.ready();
       let disposePromise;
       let subscription;
       const beginDispose = () => {
@@ -387,32 +404,28 @@ function createNativeCallback(weakCallbackHolder) {
       nativeBinding.completeDelivery(deliveryId, false, true);
       return true;
     }
-    let result;
-    try {
-      const batch = invokeWatchbound(
-        "deliver-batch",
-        () => normalizeBatch(holder.outputRoot, nativeBatch),
-      );
-      recordObservedBatch(holder, batch);
-      if (holder.observeCoverage === undefined) {
-        // Native delivery may enter JavaScript before the subscribe promise's
-        // continuation constructs the public subscription. One latest batch is
-        // enough because engine uncertainty and root loss are sticky until an
-        // explicit recovery boundary.
-        holder.pendingCoverageObservation = batch;
-      } else {
-        holder.observeCoverage?.(batch);
-      }
-      result = holder.onBatch(batch, holder.context);
-    } catch {
-      nativeBinding.completeDelivery(deliveryId, true, holder.stopRequested);
-      return true;
-    }
-    settleCallbackResult(holder, deliveryId, result);
+    holder.deliveryBuffer.accept(nativeBatch, deliveryId);
     // `true` is the private binding protocol marker that transfers exactly-once
     // completion ownership from the raw callback bridge to this wrapper.
     return true;
   };
+}
+
+function deliverNativeBatch(holder, nativeBatch, deliveryId) {
+  let result;
+  try {
+    const batch = invokeWatchbound(
+      "deliver-batch",
+      () => normalizeBatch(holder.outputRoot, nativeBatch),
+    );
+    recordObservedBatch(holder, batch);
+    holder.observeCoverage?.(batch);
+    result = holder.onBatch(batch, holder.context);
+  } catch {
+    nativeBinding.completeDelivery(deliveryId, true, holder.stopRequested);
+    return;
+  }
+  settleCallbackResult(holder, deliveryId, result);
 }
 
 function requestCallbackStop(holder) {
@@ -474,28 +487,15 @@ function settleCallbackResult(holder, deliveryId, result) {
 }
 
 function normalizeBatch(root, batch) {
-  const invalidatedPathBytes = batch.invalidatedPaths.map((value) =>
-    Uint8Array.from(value),
-  );
-  const invalidatedPaths = [];
-  let pathEncodingCollapsed = false;
-  for (const bytes of invalidatedPathBytes) {
-    try {
-      invalidatedPaths.push(fatalUtf8Decoder.decode(bytes));
-    } catch {
-      pathEncodingCollapsed = true;
-    }
-  }
-  if (pathEncodingCollapsed && !invalidatedPaths.includes(root)) {
-    invalidatedPaths.push(root);
-  }
+  const paths = normalizePathInvalidations(root, batch.invalidatedPaths);
 
   return Object.freeze({
     sequence: batch.sequence,
     exclusionGeneration: batch.exclusionGeneration,
-    invalidatedPaths: Object.freeze([...new Set(invalidatedPaths)]),
-    invalidatedPathBytes: Object.freeze(invalidatedPathBytes),
-    pathEncodingCollapsed,
+    invalidatedPaths: paths.invalidatedPaths,
+    invalidatedPathBytes: paths.invalidatedPathBytes,
+    pathEncoding: paths.pathEncoding,
+    pathEncodingCollapsed: paths.pathEncodingCollapsed,
     rootState: normalizeRootState(batch.rootState),
     coverage: normalizeCoverage(batch.coverage),
   });

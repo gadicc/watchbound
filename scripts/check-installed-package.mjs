@@ -131,9 +131,15 @@ async function runSmoke() {
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
   assert.equal(capabilities.build.prebuilt, true);
-  assert.equal(capabilities.schemaVersion, 7);
+  assert.equal(capabilities.schemaVersion, 8);
   assert.equal(capabilities.features.directoryNameExclusions, true);
   assert.equal(capabilities.features.observedExcludedPaths, true);
+  assert.equal(capabilities.features.bytesOnlyInvalidations, true);
+  assert.deepEqual(capabilities.observability.pathEncodingStates, [
+    "complete",
+    "root-collapsed",
+    "bytes-only",
+  ]);
   assert.equal(capabilities.build.packagedTarget.id, nativeTarget.id);
   assert.equal(capabilities.build.packagedTarget.package, nativeTarget.package);
   assert.equal(capabilities.build.packagedTarget.sha256, nativeSha256);

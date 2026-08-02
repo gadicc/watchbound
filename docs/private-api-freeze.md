@@ -159,9 +159,9 @@ codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; both current target entries emit the
 supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
-Capability schema 7 and binding API 5 additionally expose full root
-qualification and physical-root resolution alongside `directoryNameExclusions`
-and `observedExcludedPaths`;
+Capability schema 8 and binding API 5 additionally expose full root
+qualification, physical-root resolution, and bytes-only physical invalidations
+alongside `directoryNameExclusions` and `observedExcludedPaths`;
 loader metadata remains schema 1 and raw native capabilities advance to schema
 5. Wrappers and loaders
 fail closed against older or newer unproved native contracts.

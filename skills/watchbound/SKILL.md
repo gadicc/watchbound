@@ -21,6 +21,11 @@ Before changing an integration:
    target. Treat `container-unknown` as unknown evidence, never as a negative
    container result. Older packages may expose only the legacy single-target
    fields.
+
+The older `capabilities.support.currentRuntime.supported` field is removed.
+`targetCompatible` is not a compatibility alias for full support: it covers
+only the selected packaged target, while `qualifyRoot(root)` supplies the
+required host and root decision.
 3. Confirm that the consumer can rescan after a conservative root invalidation
    and can operate honestly with partial or uncertain coverage.
 4. Prefer another watcher when the consumer needs a cross-platform package,

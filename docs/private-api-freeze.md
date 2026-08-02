@@ -159,6 +159,10 @@ codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; both current target entries emit the
 supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
+The formerly published `support.currentRuntime.supported` boolean is removed as
+an intentional breaking change: `targetCompatible` is target-only, and full
+host/root qualification requires `qualifyRoot(root)`. Migration guidance is in
+[`migrate-root-qualification.md`](migrate-root-qualification.md).
 Capability schema 8 and binding API 5 additionally expose full root
 qualification, physical-root resolution, and bytes-only physical invalidations
 alongside `directoryNameExclusions` and `observedExcludedPaths`;

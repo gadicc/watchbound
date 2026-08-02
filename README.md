@@ -384,6 +384,8 @@ evidence plus both supervised overflow scenarios. See
 [`docs/runtime-qualification.md`](docs/runtime-qualification.md). The private API revision
 and compatibility policy are recorded in
 [`docs/private-api-freeze.md`](docs/private-api-freeze.md).
+Consumers of the removed `currentRuntime.supported` field should follow
+[`docs/migrate-root-qualification.md`](docs/migrate-root-qualification.md).
 
 ## Evaluate
 

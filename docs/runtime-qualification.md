@@ -17,6 +17,9 @@ This object has no `supported` boolean. It declares
 `targetCompatible` as a host or root decision. The `runtime` section remains
 observed process data rather than a qualification result.
 
+Consumers of the removed boolean should follow
+[`migrate-root-qualification.md`](migrate-root-qualification.md).
+
 ## Full qualification
 
 `qualifyRoot(root)` is synchronous, read-only, and acquires no Watchbound

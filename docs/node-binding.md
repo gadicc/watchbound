@@ -4,10 +4,10 @@ Status: selected for controlled source builds and the one-target public
 bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
 baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
 source qualified, and the corrected `1.0.1` package restored the JSR route.
-Release `1.1.0` retains generation-zero exclusions and adds exact x64/ARM64
-package selection; both targets completed native qualification and were
-published. The current `1.2.0` source candidate advances to binding API 4 for
-whole-policy exclusion replacement; it is not yet published.
+Release `1.1.0` retained generation-zero exclusions and added exact x64/ARM64
+package selection. Release `1.2.0` advances to binding API 4 for whole-policy
+exclusion replacement; both targets completed exact qualification and the
+release is published.
 
 ## Choice
 
@@ -111,7 +111,7 @@ JSON-serializable. Under `schemaVersion: 5`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
-The candidate metadata marks both exact GNU/Linux target entries `supported`
+The release metadata marks both exact GNU/Linux target entries `supported`
 after the complete status-bearing matrix. The release workflow still requires
 all exact artifacts and independent publication guards. Current process facts
 never broaden the target matrix.

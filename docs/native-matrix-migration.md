@@ -13,9 +13,9 @@ Capability schema 4 is additive. Existing single-target fields remain under
 `build.packagedTarget`, `support.targets`, and `support.currentRuntime` rather
 than reinterpreting the legacy fields.
 
-The pending `1.2.0` source candidate advances to schema 5 only to add exclusion
-feature and option facts; it retains the schema-4 delivery and target fields
-without changing their meaning.
+Release `1.2.0` advances to schema 5 only to add exclusion feature and option
+facts; it retains the schema-4 delivery and target fields without changing
+their meaning.
 
 Loader failures now distinguish a missing exact optional target package from a
 source artifact that has not been built. There is no legacy x64 fallback. An

@@ -1,11 +1,10 @@
 # Native delivery contract
 
-Status: release `1.1.0` publishes the architecture-neutral loader and exact x64
+Status: release `1.2.0` publishes the architecture-neutral loader and exact x64
 and ARM64 GNU/Linux target packages supported by the checked-in source matrix.
-The historical `1.0.1` release retains its one-target contract. The current
-`1.2.0` source candidate keeps these package roles and binary filenames while
-advancing the native contract; it has not been published or qualified as an
-exact release artifact.
+It keeps the package roles and binary filenames introduced in `1.1.0` while
+advancing the native contract to binding API 4 and capability schema 5. The
+historical `1.0.1` release retains its one-target contract.
 
 ## One matrix, three package roles
 

@@ -1,15 +1,16 @@
 # Release and registry runbook
 
-Status: `1.1.0` is the completed first multi-target release. Semantic-release
-selected and materialized its version while the checked-in source remained at
+Status: `1.2.0` is the completed exclusion-policy release; `1.1.0` remains the
+historical first multi-target release. Semantic-release selected and
+materialized each version while the checked-in source remained at
 `0.0.0-development`. This runbook continues to govern future releases; the
 repository configuration is not blanket permission to publish.
 
-The current feature commit is expected to make semantic-release plan `1.2.0`.
-Do not edit checked-in package, Cargo, or lockfile placeholders to that value.
-The candidate advances public capability schema 5, raw native capability
-schema 4, and binding API 4; generated wrapper, loader, target packages,
-checksums, SBOM, and provenance must all carry the one planned version.
+Release `1.2.0` advanced public capability schema 5, raw native capability
+schema 4, and binding API 4. Its generated wrapper, loader, target packages,
+checksums, SBOM, and provenance carried the one semantic-release-planned
+version. Future checked-in package, Cargo, and lockfile placeholders must still
+remain at `0.0.0-development`.
 
 ## Fail-closed release boundary
 
@@ -29,7 +30,7 @@ plugin requires semantic-release's version to equal the retained release-plan
 version and verifies the exact generated candidate before every mutation.
 
 The plugin refuses preparation unless every matrix target is checked in as
-`supported`. Both candidate targets now satisfy that support-state guard, but
+`supported`. Both configured targets satisfy that support-state guard, but
 publication remains independently restricted to an approved semantic-release
 push on `main`; qualification or credentials alone never authorize it.
 

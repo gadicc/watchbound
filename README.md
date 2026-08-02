@@ -25,23 +25,19 @@ rewritten. The `1.0.0` source added promise-aware callbacks, callback
 cancellation context, binding API 3, and capability schema 3. Its source and
 npm packages qualified, but its JSR Node route exposed a normalized-manifest
 incompatibility. The corrected `1.0.1` package restored that route. Release
-`1.1.0` keeps generation-zero
+`1.1.0` kept generation-zero
 `initialExclusions`, targets Node `>=24.15.0 <25` for Electron 42, and adds an
 architecture-neutral loader with exact x64 and ARM64 GNU/Linux target packages.
 Both new targets now report `supported` in the source matrix after complete
 native/distro/Electron/Nix, kernel-5.15, reproducibility, and separately
-supervised overflow qualification. The wrapper, neutral loader, and both target
-packages are published on npm; the wrapper is also published on JSR. Native x64
-and ARM64 post-publication registry smokes passed for both npm and the JSR Node
-route. Release `1.1.1` is the current published patch line; it retains that
-public API and target matrix while carrying lifecycle, qualification, and
-release-pipeline fixes.
-
-The checked-in source is now the release candidate for `1.2.0`. It adds native
-recursive directory-name exclusions and explicitly observed excluded
-boundaries under binding API 4 and capability schema 5. This candidate has not
-been published or given immutable registry integrity metadata; the `1.1.0` and
-`1.1.1` statements above remain historical publication evidence.
+supervised overflow qualification. Release `1.1.1` retained that public API and
+target matrix while carrying lifecycle, qualification, and release-pipeline
+fixes. Release `1.2.0` is now published on npm and JSR. It adds native recursive
+directory-name exclusions and explicitly observed excluded boundaries under
+binding API 4 and capability schema 5, while retaining the exact x64 and ARM64
+GNU/Linux target packages. Both supervised exact-source qualification scenarios
+and the post-publication registry smokes passed; immutable `1.2.0` coordinates
+must still be copied from the registry when a consumer deliberately adopts it.
 
 After the bootstrap, CI validates controlled public npm and JSR artifacts and
 semantic-release uses Conventional Commits and release tags as the sole
@@ -209,7 +205,7 @@ its platform support are the required contract.
 Watchbound is a poor fit for exact filesystem journals, per-event audit logs,
 consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own native delivery and a
-joined-disposal lifecycle. Release `1.1.0` publishes x64 and ARM64 GNU/Linux
+joined-disposal lifecycle. Release `1.2.0` publishes x64 and ARM64 GNU/Linux
 packages against a qualified kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`; both targets are supported by the checked-in source matrix.
 WSL, network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
@@ -260,7 +256,7 @@ inotify backend.
 | Capability | Current Watchbound source | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout or published `1.1.0` neutral loader with exact qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Delivery and targets | Controlled source checkout or published `1.2.0` neutral loader with exact qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
 | Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
 | Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
 | Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
@@ -347,7 +343,7 @@ and the complete caveats.
 ## Build and test
 
 The manifests intentionally admit only Node `>=24.15.0 <25` and Linux glibc.
-Release `1.1.0` defines supported native x64 and ARM64 targets with
+Release `1.2.0` defines supported native x64 and ARM64 targets with
 a kernel 5.15/glibc 2.35 baseline, Rust 1.88+, pnpm 10.33.2, and a working C
 toolchain. See
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
@@ -396,7 +392,7 @@ per-target qualification, the legacy single-target support fields,
 features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
 callback queue, single-credit admission, and promise-aware serialized callback
-completion explicitly. Runtime facts do not widen support. The candidate target
+completion explicitly. Runtime facts do not widen support. The published target
 entries are deliberately `supported` after exact-commit native and kernel-floor
 evidence plus both supervised overflow scenarios. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md)

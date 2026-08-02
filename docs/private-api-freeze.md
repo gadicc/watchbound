@@ -12,14 +12,13 @@ extension: the schema-3 single-target fields retain their historical meaning
 under `support.scope = "legacy-primary-target"`, while packaged-target,
 per-target qualification, lane, and current-runtime-match fields are new.
 
-The current checked-in change is the additive `1.2.0` release candidate. It
-extends the exclusion policy with recursive exact directory-name pruning and
-explicitly observed excluded boundaries, retains the legacy prefix-array form,
-and advances the public capability schema to 5 and native binding API to 4.
-The source manifests intentionally remain `0.0.0-development`; the `feat`
-release commit makes semantic-release the authority that will plan `1.2.0`.
-This paragraph is API revision history, not evidence of publication or target
-qualification for the candidate.
+Release `1.2.0` is an additive API revision. It extends the exclusion policy
+with recursive exact directory-name pruning and explicitly observed excluded
+boundaries, retains the legacy prefix-array form, and advances the public
+capability schema to 5 and native binding API to 4. The source manifests
+intentionally remain `0.0.0-development`; semantic-release materialized the
+published version from the exact qualified source. Publication and target
+evidence are recorded in `support-matrix.md`.
 
 The exact private `0.1.0` freeze and its support declaration remain the
 historical first qualified baseline.
@@ -155,7 +154,7 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; both candidate target entries emit the
+`target-pending-clean-ci` and `supported`; both current target entries emit the
 supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
 Capability schema 5 and binding API 4 additionally expose
 `directoryNameExclusions` and `observedExcludedPaths`; loader metadata remains

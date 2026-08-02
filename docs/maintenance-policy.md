@@ -1,10 +1,10 @@
 # Maintenance and release policy
 
-Status: the first multi-target release, `1.1.0`, is published and passed native
-x64/ARM64 npm and JSR Node-route registry smokes. Future releases and consumer
-production readiness remain separately gated. The checked-in `1.2.0` candidate
-adds the exclusion-policy feature under capability schema 5 and binding API 4;
-it is not published or exact-target qualified yet.
+Status: release `1.2.0` is published and passed exact x64/ARM64 qualification
+plus npm and JSR Node-route registry smokes. It adds the exclusion-policy
+feature under capability schema 5 and binding API 4 while retaining the
+multi-target delivery introduced in `1.1.0`. Future releases and consumer
+production readiness remain separately gated.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved
@@ -14,7 +14,7 @@ release-worthy Conventional Commit, and completion of the distribution gates
 below. Bootstrap publication does not itself authorize consumer integration.
 The maintainer has since separately authorized the opt-in Codex Desktop Linux
 integration recorded in `docs/architecture.md`. Exact multi-target
-qualification and official immutable artifacts are complete for `1.1.0`;
+qualification and official immutable artifacts are complete through `1.2.0`;
 consumer-side artifact pinning and acceptance remain Codex-owned.
 
 ## Ownership
@@ -36,11 +36,12 @@ corrected `1.0.1` package restored the JSR route. Release `1.1.0` adds the
 x64/ARM64 target-package matrix while retaining generation-zero exclusions,
 promise-aware callbacks, and binding API 3; its capability schema 4 target
 entries are `supported` after complete exact-commit qualification.
-The next additive public minor keeps those target declarations and package
-roles while adding whole-policy replacement, recursive exact directory-name
-pruning, and observed excluded boundaries. Its source packages remain
-`0.0.0-development`; semantic-release will materialize `1.2.0` only after an
-authorized release-worthy push to `main` passes every distribution gate.
+Release `1.2.0` keeps those target declarations and package roles while adding
+whole-policy replacement, recursive exact directory-name pruning, and observed
+excluded boundaries. Its checked-in source packages remain
+`0.0.0-development`; semantic-release materialized the published version only
+after the authorized release-worthy push to `main` passed every distribution
+gate.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
 
@@ -111,14 +112,14 @@ one scenario per guarded dispatch, with non-authoritative timings.
 ## Release and distribution gates
 
 The historical maintained-unpublished status did not authorize a release. The
-separately approved bootstrap and `1.1.0` multi-target release are now
-published. The multi-target bundled-native design includes target-specific naming,
-checksums, provenance, CycloneDX SBOM, binary inspection, version/delivery
-lockstep, independent-builder byte comparison, same-runner defense in depth,
-fail-closed loading, and an incident runbook. Before each future publication,
-separately review package visibility and versioning, the exact release commit,
-remaining production blockers, the narrow support statement, and the generated
-evidence.
+separately approved bootstrap, `1.1.0` multi-target release, and `1.2.0`
+exclusion-policy release are now published. The multi-target bundled-native
+design includes target-specific naming, checksums, provenance, CycloneDX SBOM,
+binary inspection, version/delivery lockstep, independent-builder byte
+comparison, same-runner defense in depth, fail-closed loading, and an incident
+runbook. Before each future publication, separately review package visibility
+and versioning, the exact release commit, remaining production blockers, the
+narrow support statement, and the generated evidence.
 
 An intentional maintainer merge or push of the exact qualified commit to
 `main` is the fresh publication approval. No branch-protection rule, protected

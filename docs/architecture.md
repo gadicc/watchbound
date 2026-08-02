@@ -16,9 +16,9 @@ passed post-publication registry smokes. An opt-in Codex Desktop Linux
 integration must pin those official immutable artifacts and retain its own
 consumer-side acceptance gates.
 
-The current `1.2.0` source candidate adds exact recursive directory-name
-pruning and observed excluded boundaries. It advances binding API 4 and public
-capability schema 5 but has no publication or new immutable target evidence.
+Release `1.2.0` adds exact recursive directory-name pruning and observed
+excluded boundaries. It advances binding API 4 and public capability schema 5,
+passed exact x64/ARM64 qualification, and is published on npm and JSR.
 
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support
@@ -847,7 +847,7 @@ platform range, and packaging are sufficient. Parcel's Linux inotify
 conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
-The published `1.1.0` matrix in `docs/support-matrix.md` covers supported
+The published `1.2.0` matrix in `docs/support-matrix.md` covers supported
 x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`. WSL, network
 filesystems, Filesystem in Userspace (FUSE), overlay filesystems, unusual

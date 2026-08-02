@@ -1,11 +1,20 @@
 # Support and qualification matrix
 
-Status: release `1.1.0` publishes the exact x64 and ARM64 GNU/Linux targets
+Status: release `1.2.0` publishes the exact x64 and ARM64 GNU/Linux targets
 whose statuses are `supported` in the checked-in source matrix. The historical
-`1.0.1` release remains limited to its Ubuntu 24.04 x64 contract. The current
-`1.2.0` exclusion-API source candidate inherits the same intended target matrix
-but is not an exact qualified or published artifact; all passing evidence below
-continues to identify the immutable `1.1.0` delivery.
+`1.0.1` release remains limited to its Ubuntu 24.04 x64 contract, and `1.1.0`
+was the first published multi-target release.
+
+Source commit `4dbb0dc1c445de1d00e09d66f252d3d51f713cf2` completed both guarded
+release-qualification scenarios. The
+[manual overflow run](https://github.com/gadicc/watchbound/actions/runs/30739684199)
+and [automatic overflow run](https://github.com/gadicc/watchbound/actions/runs/30743730772)
+each passed after a GitHub failed-job rerun. The supervisor's fail-closed review
+passed all 25 checks for each run: original failures were limited to
+target-specific pinned-kernel QEMU timeouts, rerun jobs passed, and the retained
+x64 and ARM64 canonical-artifact evidence was internally consistent. The
+maintainer explicitly accepted those infrastructure/environmental conditional
+passes, and the subsequent release and post-publication registry smokes passed.
 
 Qualification commit `361562d60e79a6337b0b19cbd3c163ea999ac6b3` completed the native
 x64/ARM64 source, reproducibility, distro, Electron, Nix, pinned-kernel 5.15,
@@ -19,32 +28,32 @@ post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 
 | Target | Package | Buildable | Release baseline | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.1.0` |
-| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.1.0` |
+| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.2.0` |
+| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.2.0` |
 
 “Buildable” describes implemented build and packaging paths. It is not a
 support claim. `supported` becomes true only when the exact runtime matches a
 target whose checked-in status is `supported` and the corresponding
 exact-commit evidence is complete.
 
-The oldest candidate distro baseline is Ubuntu 22.04: kernel 5.15 and glibc
+The oldest supported distro baseline is Ubuntu 22.04: kernel 5.15 and glibc
 2.35. ELF symbol inspection is authoritative for the artifact ABI. Both
-independently reproduced candidate artifacts require no symbol newer than
+independently reproduced release artifacts require no symbol newer than
 `GLIBC_2.34`.
 
 ## Runtime lanes
 
 | Lane | x64 | ARM64 | Evidence meaning |
 | --- | --- | --- | --- |
-| Ubuntu 22.04 pinned / baseline builder | Passed at `361562d` | Passed at `361562d` | Candidate ABI and oldest distro userspace lane |
-| Ubuntu 24.04 pinned | Passed at `361562d` | Passed at `361562d` | Codex advertised Debian-family lane |
-| Debian 12 pinned | Passed at `361562d` | Passed at `361562d` | Codex advertised Debian-family lane |
-| Fedora 42 pinned | Passed at `361562d` | Passed at `361562d` | Codex advertised RPM lane |
-| Arch `base-devel` pinned | Passed at `361562d` | Not in Codex lane | Codex advertised pacman lane |
-| openSUSE Tumbleweed pinned | Passed at `361562d` | Passed at `361562d` | Representative current advertised openSUSE RPM lane |
-| locked Nix closure | Passed at `361562d` | Passed at `361562d` | Source-built Nix package and exact Electron closure |
-| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `361562d` | Passed at `361562d` | Exact Codex host-runtime boundary |
-| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `361562d` | Passed at `361562d` | Kernel floor only; native runners separately prove architecture |
+| Ubuntu 22.04 pinned / baseline builder | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Release ABI and oldest distro userspace lane |
+| Ubuntu 24.04 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Codex advertised Debian-family lane |
+| Debian 12 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Codex advertised Debian-family lane |
+| Fedora 42 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Codex advertised RPM lane |
+| Arch `base-devel` pinned | Passed at `4dbb0dc` | Not in Codex lane | Codex advertised pacman lane |
+| openSUSE Tumbleweed pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Representative current advertised openSUSE RPM lane |
+| locked Nix closure | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Source-built Nix package and exact Electron closure |
+| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Exact Codex host-runtime boundary |
+| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Kernel floor only; native runners separately prove architecture |
 
 The images, official kernel/initrd hashes, and Nix inputs are pinned in
 `config/native-matrix.json` and `flake.lock`. A container changes userspace,
@@ -83,8 +92,8 @@ changed. Schema 5 adds only exclusion feature/option facts. New consumers use:
 
 ## Promotion rule
 
-To change either candidate target to `supported`, the exact status-bearing
-commit must complete:
+Promotion of either target to `supported` requires the exact status-bearing
+commit to complete:
 
 1. clean source and semantic suites on x64 and native ARM64;
 2. two-builder byte reproduction per registry artifact;

@@ -1,6 +1,6 @@
 # Codex Desktop Linux handoff
 
-Status: release `1.1.0` is published. The native, distro, Electron, Nix,
+Status: release `1.2.0` is published. The native, distro, Electron, Nix,
 reproducibility, pinned-kernel, and both supervised-overflow scenarios are green
 for x64 and ARM64, and post-publication npm and JSR Node-route smokes passed on
 both architectures. A maintainer-reported, locally unpublished Codex Desktop
@@ -19,18 +19,17 @@ consumer-owned.
 Both routes also install `watchbound@<version>` and
 `@gadicc/watchbound-node@<same-version>`. The loader selects exactly one local
 target and verifies package metadata, SHA-256, ELF identity, binding metadata,
-versions, Node-API, triple, and release profile. Capability schema 4 adds
+versions, Node-API, triple, and release profile. Capability schema 5 retains
 `build.packagedTarget`, per-target qualification, and current-runtime matching;
-the JavaScript subscription API is otherwise compatible.
+it also declares exclusion feature and option facts.
 
-## Pending 1.2.0 exclusion-API manifest update
+## Published 1.2.0 exclusion-API manifest update
 
-The current source is the candidate for a later `1.2.0` publication. It adds
-capability schema 5, raw native capability schema 4, binding API 4,
-`excludedDirectoryNames`, and `observedExcludedPaths`. Codex must not adopt the
-source candidate or reuse the immutable `1.1.0` hashes under the new version.
-After the release and post-publication checks succeed, update the Codex manifest
-with these exact four lockstep coordinates:
+Release `1.2.0` adds capability schema 5, raw native capability schema 4,
+binding API 4, `excludedDirectoryNames`, and `observedExcludedPaths`. Codex must
+adopt only the official immutable release artifacts and must not reuse the
+`1.1.0` hashes under the new version. Update the Codex manifest with these exact
+four lockstep coordinates:
 
 | Package | Expected version | Archive/binary identity |
 | --- | --- | --- |
@@ -44,10 +43,10 @@ For every package record, copy the official registry tarball URL,
 target record also copy the generated native-file path and declared/computed
 native SHA-256. Pin the release tag and exact source commit, require package
 version lockstep, capability schema 5, binding API 4, metadata schema 1,
-native-matrix schema 1, and Node-API floor 6. None of the new integrity,
-shasum, archive SHA-256, native SHA-256, tag, or final release-commit values
-exists before publication; record them from release evidence and the registry,
-never from a local development build.
+native-matrix schema 1, and Node-API floor 6. The new integrity, shasum, archive
+SHA-256, native SHA-256, tag, and final release-commit values now exist; record
+them from release evidence and the registry, never from a local development
+build.
 
 ## Published 1.1.0 registry coordinates
 
@@ -93,7 +92,7 @@ not substitute `latest` or synthesize integrity from a local build.
    loader, x64 target, and ARM64 target records in lockstep.
 2. Select the target record from Codex's normalized `x64`/`arm64` Linux target;
    reject ARMv7 and musl. Do not add a fallback.
-3. Keep all four packages at exact version `1.1.0` and pin the official URL,
+3. Keep all four packages at exact version `1.2.0` and pin the official URL,
    npm integrity/shasum, tarball SHA-256, native path, and native SHA-256.
 4. Stage the JS packages in `app.asar`, allow the `.node` file to be unpacked
    by the existing `{*.node,*.so,*.dylib}` ASAR rule, and retain the package

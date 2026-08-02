@@ -147,7 +147,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - name: Retain the target artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node/${{ matrix.binary }}
@@ -223,7 +223,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -249,7 +249,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: watchbound-distro-${{ matrix.lane }}-${{ matrix.architecture }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-${{ matrix.lane }}-${{ matrix.architecture }}.json
@@ -290,7 +290,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -312,7 +312,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: watchbound-kernel-${{ matrix.target }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-kernel-${{ matrix.target }}.json
@@ -348,7 +348,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -375,7 +375,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: watchbound-electron-${{ matrix.target }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-electron-${{ matrix.target }}.json

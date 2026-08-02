@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 import {
   AUTOMATIC_RECONCILIATION_DEFAULTS,
@@ -12,6 +13,25 @@ const wrapperPackage = JSON.parse(
 
 export const WRAPPER_VERSION = wrapperPackage.version;
 export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
+
+const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+
+const FILESYSTEM_MAGIC = Object.freeze({
+  ordinaryLocal: new Set([
+    0xef53n, // ext2/ext3/ext4
+    0x58465342n, // XFS
+    0x9123683en, // Btrfs
+  ]),
+  network: new Set([
+    0x6969n, // NFS
+    0xff534d42n, // CIFS
+    0xfe534d42n, // SMB2
+    0x5346414fn, // AFS
+    0xf15fn, // Ceph
+  ]),
+  fuse: new Set([0x65735546n]),
+  overlay: new Set([0x794c7630n]),
+});
 
 export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   if (
@@ -81,7 +101,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   }
 
   return deepFreeze({
-    schemaVersion: 6,
+    schemaVersion: 7,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -133,11 +153,13 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
       })),
       recognizedCompatibilityFamilies: matrix.recognizedCompatibilityFamilies,
       currentRuntime: {
+        scope: "packaged-target-compatibility",
         packagedTargetId: currentTarget.id,
         runtimeMatchesPackagedTarget,
         qualification: currentTarget.status,
-        supported:
+        targetCompatible:
           runtimeMatchesPackagedTarget && currentTarget.status === "supported",
+        fullQualification: "qualify-root-required",
       },
       intentionallyUnsupported: matrix.intentionallyUnsupported,
     },
@@ -156,6 +178,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
       automaticReconciliation: true,
       rootReplacementRecovery: native.rootReplacementRecovery,
       physicalRootResolution: native.physicalRootResolution,
+      rootQualification: true,
       exactPathBytes: native.exactPathBytes,
       orderedBatches: true,
       observedState: true,
@@ -284,6 +307,241 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   });
 }
 
+export function qualifyRootCapabilities(capabilities, root, injectedEvidence) {
+  const currentTarget = capabilities.support.targets.find(
+    (target) => target.id === capabilities.support.currentRuntime.packagedTargetId,
+  );
+  if (currentTarget === undefined) {
+    throw new Error("current packaged target is absent from capabilities");
+  }
+  const evidence = injectedEvidence ?? collectQualificationEvidence(root);
+  return deepFreeze(evaluateQualification({
+    runtime: capabilities.runtime,
+    currentRuntime: capabilities.support.currentRuntime,
+    target: currentTarget,
+    evidence,
+  }));
+}
+
+export function evaluateQualification({ runtime, currentRuntime, target, evidence }) {
+  const reasons = [];
+  const targetReasons = [];
+  if (!currentRuntime.runtimeMatchesPackagedTarget) {
+    targetReasons.push("packaged-target-mismatch");
+  }
+  if (currentRuntime.qualification !== "supported") {
+    targetReasons.push("packaged-target-unqualified");
+  }
+  const targetState = targetReasons.length === 0 ? "qualified" : "unqualified";
+  reasons.push(...targetReasons);
+
+  const kernelFloor = floorEvidence(runtime.kernel, target.kernelMinimum);
+  if (kernelFloor.state === "below-floor") reasons.push("kernel-below-floor");
+  if (kernelFloor.state === "unknown") reasons.push("kernel-unknown");
+
+  const glibcFloor = runtime.libc.family === "glibc"
+    ? floorEvidence(
+        runtime.libc.version,
+        target.libc.maximumRequiredSymbolVersion,
+      )
+    : {
+        state: "unknown",
+        observed: runtime.libc.version,
+        minimum: target.libc.maximumRequiredSymbolVersion,
+      };
+  if (glibcFloor.state === "below-floor") reasons.push("glibc-below-floor");
+  if (glibcFloor.state === "unknown") reasons.push("glibc-unknown");
+
+  const wsl = environmentEvidence(evidence.wsl);
+  if (wsl.state === "detected") reasons.push("wsl-detected");
+  if (wsl.state === "unknown") reasons.push("wsl-unknown");
+  const container = environmentEvidence(evidence.container);
+  if (container.state === "detected") reasons.push("container-detected");
+  if (container.state === "unknown") reasons.push("container-unknown");
+
+  const hostReasons = reasons.filter((reason) =>
+    reason.startsWith("kernel-") ||
+    reason.startsWith("glibc-") ||
+    reason.startsWith("wsl-") ||
+    reason.startsWith("container-")
+  );
+  const hostState = qualificationState(hostReasons);
+
+  const rootReasons = [];
+  if (evidence.root.availability === "unavailable") {
+    rootReasons.push("root-unavailable");
+  } else if (evidence.root.directory === false) {
+    rootReasons.push("root-not-directory");
+  } else if (evidence.root.filesystem.kind === "network") {
+    rootReasons.push("filesystem-network");
+  } else if (evidence.root.filesystem.kind === "fuse") {
+    rootReasons.push("filesystem-fuse");
+  } else if (evidence.root.filesystem.kind === "overlay") {
+    rootReasons.push("filesystem-overlay");
+  } else if (evidence.root.filesystem.kind !== "ordinary-local") {
+    rootReasons.push("filesystem-unknown");
+  }
+  reasons.push(...rootReasons);
+  const rootState = qualificationState(rootReasons);
+
+  return {
+    schemaVersion: 1,
+    state: qualificationState(reasons),
+    reasons: [...new Set(reasons)],
+    target: {
+      state: targetState,
+      packagedTargetId: currentRuntime.packagedTargetId,
+      runtimeMatchesPackagedTarget: currentRuntime.runtimeMatchesPackagedTarget,
+      qualification: currentRuntime.qualification,
+    },
+    host: {
+      state: hostState,
+      kernelFloor,
+      glibcFloor,
+      wsl,
+      container,
+    },
+    root: {
+      state: rootState,
+      lexicalPath: evidence.root.lexicalPath,
+      lexicalPathBytes: evidence.root.lexicalPathBytes,
+      physicalPath: evidence.root.physicalPath,
+      physicalPathBytes: evidence.root.physicalPathBytes,
+      filesystem: evidence.root.filesystem,
+    },
+  };
+}
+
+function qualificationState(reasons) {
+  if (reasons.some((reason) => reason.endsWith("-unknown") || reason === "root-unavailable")) {
+    return reasons.some((reason) =>
+      reason === "packaged-target-mismatch" ||
+      reason === "packaged-target-unqualified" ||
+      reason.endsWith("-below-floor") ||
+      reason.endsWith("-detected") ||
+      reason === "root-not-directory" ||
+      reason === "filesystem-network" ||
+      reason === "filesystem-fuse" ||
+      reason === "filesystem-overlay"
+    ) ? "unqualified" : "unknown";
+  }
+  return reasons.length === 0 ? "qualified" : "unqualified";
+}
+
+function floorEvidence(observed, minimum) {
+  const observedParts = versionParts(observed);
+  const minimumParts = versionParts(minimum);
+  if (observedParts === null || minimumParts === null) {
+    return { state: "unknown", observed: observed ?? null, minimum };
+  }
+  return {
+    state: compareVersions(observedParts, minimumParts) >= 0
+      ? "satisfied"
+      : "below-floor",
+    observed,
+    minimum,
+  };
+}
+
+function versionParts(value) {
+  if (typeof value !== "string") return null;
+  const match = /^(\d+)\.(\d+)(?:\.(\d+))?/u.exec(value);
+  return match === null ? null : match.slice(1).map((part) => Number(part ?? 0));
+}
+
+function compareVersions(left, right) {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function environmentEvidence(value) {
+  return {
+    state: value === true ? "detected" : value === false ? "not-detected" : "unknown",
+  };
+}
+
+function collectQualificationEvidence(root) {
+  const lexicalPath = path.isAbsolute(root)
+    ? root
+    : `${process.cwd()}${path.sep}${root}`;
+  const lexicalPathBytes = Uint8Array.from(Buffer.from(lexicalPath));
+  const rootEvidence = {
+    availability: "unavailable",
+    directory: null,
+    lexicalPath,
+    lexicalPathBytes,
+    physicalPath: null,
+    physicalPathBytes: null,
+    filesystem: { kind: "unknown", magic: null },
+  };
+  try {
+    const resolved = fs.realpathSync.native(Buffer.from(lexicalPath), {
+      encoding: "buffer",
+    });
+    const physicalBuffer = Buffer.isBuffer(resolved) ? resolved : Buffer.from(resolved);
+    const physicalPathBytes = Uint8Array.from(physicalBuffer);
+    let physicalPath = null;
+    try {
+      physicalPath = fatalUtf8Decoder.decode(physicalPathBytes);
+    } catch {
+      // Exact bytes remain available below.
+    }
+    const metadata = fs.statSync(physicalBuffer);
+    const filesystem = fs.statfsSync(physicalBuffer, { bigint: true });
+    rootEvidence.availability = "available";
+    rootEvidence.directory = metadata.isDirectory();
+    rootEvidence.physicalPath = physicalPath;
+    rootEvidence.physicalPathBytes = physicalPathBytes;
+    rootEvidence.filesystem = classifyFilesystem(filesystem.type);
+  } catch {
+    // Unavailable evidence is an unknown result, never a qualification.
+  }
+  return {
+    wsl: detectWsl(),
+    container: detectContainer(),
+    root: rootEvidence,
+  };
+}
+
+function classifyFilesystem(value) {
+  const type = BigInt.asUintN(64, BigInt(value));
+  const magic = `0x${type.toString(16)}`;
+  if (FILESYSTEM_MAGIC.ordinaryLocal.has(type)) return { kind: "ordinary-local", magic };
+  if (FILESYSTEM_MAGIC.network.has(type)) return { kind: "network", magic };
+  if (FILESYSTEM_MAGIC.fuse.has(type)) return { kind: "fuse", magic };
+  if (FILESYSTEM_MAGIC.overlay.has(type)) return { kind: "overlay", magic };
+  return { kind: "unknown", magic };
+}
+
+function detectWsl() {
+  if (process.platform !== "linux") return null;
+  return /microsoft/iu.test(os.release()) || /microsoft/iu.test(readText("/proc/version") ?? "");
+}
+
+function detectContainer() {
+  try {
+    if (fs.existsSync("/.dockerenv") || fs.existsSync("/run/.containerenv")) return true;
+    const indicators = [readText("/proc/1/cgroup"), readText("/proc/self/mountinfo")]
+      .filter((value) => value !== null)
+      .join("\n");
+    if (/(?:docker|kubepods|containerd|podman|lxc)/iu.test(indicators)) return true;
+    return indicators.length === 0 ? null : false;
+  } catch {
+    return null;
+  }
+}
+
+function readText(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function packageDelivery(manifest) {
   const delivery = manifest?.watchbound?.delivery;
   if (
@@ -364,6 +622,7 @@ function runtimeFacts() {
 
 function deepFreeze(value, seen = new Set()) {
   if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  if (ArrayBuffer.isView(value)) return value;
   seen.add(value);
   for (const nested of Object.values(value)) deepFreeze(nested, seen);
   return Object.freeze(value);

@@ -122,7 +122,7 @@ async function runSmoke() {
 
   logPhase("native-module-start");
   const module = await import(pathToFileURL(wrapperEntry));
-  const { capabilities, createEngine } = module;
+  const { capabilities, createEngine, qualifyRoot } = module;
   assert.deepEqual(capabilities.versions, {
     wrapper: options.version,
     native: options.version,
@@ -131,7 +131,7 @@ async function runSmoke() {
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
   assert.equal(capabilities.build.prebuilt, true);
-  assert.equal(capabilities.schemaVersion, 6);
+  assert.equal(capabilities.schemaVersion, 7);
   assert.equal(capabilities.features.directoryNameExclusions, true);
   assert.equal(capabilities.features.observedExcludedPaths, true);
   assert.equal(capabilities.build.packagedTarget.id, nativeTarget.id);
@@ -167,9 +167,13 @@ async function runSmoke() {
     nativeTarget.qualification,
   );
   assert.equal(
-    capabilities.support.currentRuntime.supported,
+    capabilities.support.currentRuntime.targetCompatible,
     nativeTarget.qualification === "supported",
   );
+  const qualification = qualifyRoot(process.cwd());
+  assert.equal(qualification.schemaVersion, 1);
+  assert.ok(["qualified", "unqualified", "unknown"].includes(qualification.state));
+  assert.equal(qualification.target.packagedTargetId, nativeTarget.id);
 
   const engine = createEngine();
   const inactiveRuntime = {

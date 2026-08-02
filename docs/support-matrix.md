@@ -75,21 +75,27 @@ and never creates another binary. WSL, unusual containers, network filesystems,
 FUSE, overlay filesystems, and adversarially mutated roots remain outside the
 ordinary-host claim unless separately qualified.
 
-## Capability schema 6
+## Capability schema 7
 
 The additive schema keeps the schema-4 target and old single-target `support`
 fields with
 `scope: "legacy-primary-target"`; their Ubuntu 24.04/x64 meaning is not silently
-changed. Schema 5 added exclusion feature/option facts; schema 6 adds explicit
-physical-root resolution without changing target qualification. New consumers use:
+changed. Schema 5 added exclusion feature/option facts, schema 6 added explicit
+physical-root resolution, and schema 7 separates packaged-target compatibility
+from enforceable host/root qualification. New consumers use:
 
 - `build.packagedTarget` for the selected package, binary, triple, and SHA;
 - `support.targets[]` for target-specific qualification;
 - `support.qualificationLanes[]` for distro/runtime evidence requirements;
-- `support.currentRuntime` for the selected target, exact-match result,
-  qualification state, and supported boolean;
+- `support.currentRuntime` only for selected packaged-target compatibility;
+- `qualifyRoot(root)` for kernel/glibc floors, WSL/container evidence, root
+  filesystem classification, and a conservative full qualification state;
 - `runtime` for observed facts, which never widen support; and
 - `support.intentionallyUnsupported[]` for explicit target exclusions.
+
+The full machine-readable contract is in
+[`runtime-qualification.md`](runtime-qualification.md). Network, FUSE, overlay,
+WSL, container, below-floor, and unknown states never return `qualified`.
 
 ## Promotion rule
 

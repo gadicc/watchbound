@@ -26,7 +26,7 @@ a public `WatchboundError` from native-shaped failures and conservatively maps
 an unrecognized native exception to `WATCHBOUND_INTERNAL`. Consumers must not
 parse messages to make policy decisions.
 
-The operation values are `create-engine`, `subscribe`, `replace-exclusions`,
+The operation values are `create-engine`, `qualify-root`, `subscribe`, `replace-exclusions`,
 `reconcile`, `recover-root`, `dispose`, and `deliver-batch`.
 
 ## Codes and retry conditions

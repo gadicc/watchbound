@@ -24,6 +24,7 @@ import {
   WRAPPER_VERSION,
   buildCapabilities,
   normalizeRuntimeStats,
+  qualifyRootCapabilities,
 } from "./capabilities.js";
 import { establishNativeSubscription } from "./native-establishment.js";
 
@@ -48,6 +49,16 @@ export const capabilities = invokeWatchbound("create-engine", () =>
     nativeBinding.nativeDeliveryMetadata(),
     nativeBinding.nativeTargetMatrix(),
   ));
+
+export function qualifyRoot(root) {
+  if (typeof root !== "string" || root.length === 0) {
+    throw invalidArgumentError("qualify-root", "root must be a non-empty string");
+  }
+  return invokeWatchbound(
+    "qualify-root",
+    () => qualifyRootCapabilities(capabilities, root),
+  );
+}
 
 const automaticReconciliationDisabled = Object.freeze({ state: "disabled" });
 let defaultEngine;

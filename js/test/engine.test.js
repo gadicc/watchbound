@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   capabilities,
   createEngine,
+  qualifyRoot,
   subscribe,
 } from "../index.js";
 import nativeMatrix from "../../config/native-matrix.json" with {
@@ -14,7 +15,7 @@ import nativeMatrix from "../../config/native-matrix.json" with {
 };
 import wrapperPackage from "../package.json" with { type: "json" };
 import nativeBinding from "../../node/index.js";
-import { buildCapabilities } from "../capabilities.js";
+import { buildCapabilities, evaluateQualification } from "../capabilities.js";
 
 const currentTarget = nativeMatrix.targets.find(
   (target) =>
@@ -33,7 +34,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v6 exposes physical root resolution and target qualification", () => {
+test("capability schema v7 separates target compatibility from root qualification", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -44,7 +45,7 @@ test("capability schema v6 exposes physical root resolution and target qualifica
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 6);
+  assert.equal(capabilities.schemaVersion, 7);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
@@ -132,10 +133,12 @@ test("capability schema v6 exposes physical root resolution and target qualifica
   );
   assert.equal(capabilities.support.qualificationLanes.length, 7);
   assert.deepEqual(capabilities.support.currentRuntime, {
+    scope: "packaged-target-compatibility",
     packagedTargetId: currentTarget.id,
     runtimeMatchesPackagedTarget: true,
     qualification: currentTarget.qualification,
-    supported: currentTarget.qualification === "supported",
+    targetCompatible: currentTarget.qualification === "supported",
+    fullQualification: "qualify-root-required",
   });
   assert.deepEqual(
     capabilities.support.intentionallyUnsupported.map(({ target }) => target),
@@ -156,6 +159,7 @@ test("capability schema v6 exposes physical root resolution and target qualifica
     automaticReconciliation: true,
     rootReplacementRecovery: true,
     physicalRootResolution: true,
+    rootQualification: true,
     exactPathBytes: true,
     orderedBatches: true,
     observedState: true,
@@ -280,6 +284,154 @@ test("capability schema v6 exposes physical root resolution and target qualifica
   });
   assertDeeplyFrozen(capabilities);
   assert.doesNotThrow(() => JSON.stringify(capabilities));
+});
+
+test("root qualification never outruns floor, environment, or filesystem evidence", () => {
+  const target = capabilities.support.targets.find(
+    ({ id }) => id === capabilities.support.currentRuntime.packagedTargetId,
+  );
+  assert.ok(target);
+  const baseEvidence = {
+    wsl: false,
+    container: false,
+    root: {
+      availability: "available",
+      directory: true,
+      lexicalPath: "/workspace",
+      lexicalPathBytes: Uint8Array.from(Buffer.from("/workspace")),
+      physicalPath: "/workspace",
+      physicalPathBytes: Uint8Array.from(Buffer.from("/workspace")),
+      filesystem: { kind: "ordinary-local", magic: "0xef53" },
+    },
+  };
+  const evaluate = ({ runtime = capabilities.runtime, evidence = baseEvidence } = {}) =>
+    evaluateQualification({
+      runtime,
+      currentRuntime: capabilities.support.currentRuntime,
+      target,
+      evidence,
+    });
+
+  const qualified = evaluate({
+    runtime: {
+      ...capabilities.runtime,
+      kernel: target.kernelMinimum,
+      libc: {
+        family: "glibc",
+        version: target.libc.maximumRequiredSymbolVersion,
+      },
+    },
+  });
+  assert.equal(qualified.state, "qualified");
+  assert.deepEqual(qualified.reasons, []);
+
+  for (const [label, input, expectedState, expectedReason] of [
+    [
+      "kernel below floor",
+      { runtime: { ...capabilities.runtime, kernel: "5.14.99", libc: { family: "glibc", version: "2.35" } } },
+      "unqualified",
+      "kernel-below-floor",
+    ],
+    [
+      "glibc below floor",
+      { runtime: { ...capabilities.runtime, kernel: "5.15.0", libc: { family: "glibc", version: "2.34" } } },
+      "unqualified",
+      "glibc-below-floor",
+    ],
+    [
+      "unknown floors",
+      { runtime: { ...capabilities.runtime, kernel: "unknown", libc: { family: "unknown", version: null } } },
+      "unknown",
+      "kernel-unknown",
+    ],
+    [
+      "WSL",
+      { evidence: { ...baseEvidence, wsl: true } },
+      "unqualified",
+      "wsl-detected",
+    ],
+    [
+      "unknown WSL evidence",
+      { evidence: { ...baseEvidence, wsl: null } },
+      "unknown",
+      "wsl-unknown",
+    ],
+    [
+      "container",
+      { evidence: { ...baseEvidence, container: true } },
+      "unqualified",
+      "container-detected",
+    ],
+    [
+      "unknown container evidence",
+      { evidence: { ...baseEvidence, container: null } },
+      "unknown",
+      "container-unknown",
+    ],
+    ...["network", "fuse", "overlay"].map((kind) => [
+      `${kind} filesystem`,
+      {
+        evidence: {
+          ...baseEvidence,
+          root: {
+            ...baseEvidence.root,
+            filesystem: { kind, magic: "0x0" },
+          },
+        },
+      },
+      "unqualified",
+      `filesystem-${kind}`,
+    ]),
+    [
+      "unknown filesystem",
+      {
+        evidence: {
+          ...baseEvidence,
+          root: {
+            ...baseEvidence.root,
+            filesystem: { kind: "unknown", magic: "0x0" },
+          },
+        },
+      },
+      "unknown",
+      "filesystem-unknown",
+    ],
+  ]) {
+    const result = evaluate(input);
+    assert.equal(result.state, expectedState, label);
+    assert.ok(result.reasons.includes(expectedReason), label);
+    assert.notEqual(result.state, "qualified", label);
+  }
+});
+
+test("qualifyRoot inspects a real root without acquiring watcher resources", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-qualification-"));
+  const engine = createEngine();
+  try {
+    const before = engine.runtimeStats();
+    const result = qualifyRoot(root);
+    assert.equal(result.schemaVersion, 1);
+    assert.ok(["qualified", "unqualified", "unknown"].includes(result.state));
+    assert.equal(result.target.packagedTargetId, currentTarget.id);
+    assert.equal(result.root.physicalPath, root);
+    assert.notEqual(result.root.filesystem.magic, null);
+    assert.deepEqual(engine.runtimeStats(), before);
+    if (result.state === "qualified") {
+      assert.deepEqual(result.reasons, []);
+      assert.equal(result.target.state, "qualified");
+      assert.equal(result.host.state, "qualified");
+      assert.equal(result.root.state, "qualified");
+    } else {
+      assert.ok(result.reasons.length > 0);
+    }
+    assert.equal(Object.isFrozen(result), true);
+    assert.throws(
+      () => qualifyRoot(""),
+      (error) => error.operation === "qualify-root" && !error.retryable,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("capability handshake fails closed without native exclusion isolation", () => {

@@ -6,6 +6,7 @@ import {
   createEngine,
   isWatchboundError,
   normalizeWatchboundError,
+  qualifyRoot,
   subscribe,
   type AutomaticReconciliationStatus,
   type BatchCallback,
@@ -16,6 +17,7 @@ import {
   type PartialReason,
   type RootRecoveryFailureReason,
   type RootRecoveryResult,
+  type RootQualificationResult,
   type RuntimeStats,
   type Subscription,
   type UncertainReason,
@@ -170,6 +172,7 @@ function inspectSystemCause(cause: WatchboundSystemCause): string {
 function inspectOperation(operation: WatchboundOperation): string {
   switch (operation) {
     case "create-engine":
+    case "qualify-root":
     case "subscribe":
     case "replace-exclusions":
     case "reconcile":
@@ -230,7 +233,7 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 6 = capabilities.schemaVersion;
+  const schemaVersion: 7 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const callbackCompletion: "promise-aware-serialized" =
     capabilities.observability.callbackCompletion;
@@ -245,6 +248,8 @@ function inspectCapabilities(): void {
     capabilities.build.packagedTarget.architecture;
   const runtimeMatchesPackagedTarget: boolean =
     capabilities.support.currentRuntime.runtimeMatchesPackagedTarget;
+  const targetCompatible: boolean =
+    capabilities.support.currentRuntime.targetCompatible;
   const targetPackage: string = capabilities.support.targets[0]!.package;
   const nodeRange: ">=24.15.0 <25" = capabilities.support.nodeRange;
   const initialExclusions: boolean = capabilities.features.initialExclusions;
@@ -253,6 +258,7 @@ function inspectCapabilities(): void {
   const observedExcludedPaths: boolean = capabilities.features.observedExcludedPaths;
   const physicalRootResolution: boolean =
     capabilities.features.physicalRootResolution;
+  const rootQualification: boolean = capabilities.features.rootQualification;
   const rootPathDefault: "strict" =
     capabilities.options.subscription.rootPathPolicy.default;
   const initialExclusionGeneration: 0 =
@@ -303,6 +309,7 @@ function inspectCapabilities(): void {
   void directoryNameExclusions;
   void observedExcludedPaths;
   void physicalRootResolution;
+  void rootQualification;
   void rootPathDefault;
   void initialExclusionGeneration;
   void directoryNameGeneration;
@@ -312,6 +319,7 @@ function inspectCapabilities(): void {
   void prebuilt;
   void packagedArchitecture;
   void runtimeMatchesPackagedTarget;
+  void targetCompatible;
   void targetPackage;
   void nodeRange;
   void supportStatus;
@@ -330,6 +338,14 @@ function inspectCapabilities(): void {
   void deliveryAdmission;
   void dispatcherWorkQuantum;
   void dispatcherPollMilliseconds;
+}
+
+function inspectQualification(): string {
+  const result: RootQualificationResult = qualifyRoot("/tmp/watchbound-types");
+  const kernelMinimum: string = result.host.kernelFloor.minimum;
+  const filesystemMagic: string | null = result.root.filesystem.magic;
+  const physicalBytes: Uint8Array | null = result.root.physicalPathBytes;
+  return `${result.state}:${result.reasons.join(",")}:${kernelMinimum}:${filesystemMagic}:${physicalBytes?.byteLength}`;
 }
 
 function inspectRuntimeStats(stats: RuntimeStats): string {
@@ -426,6 +442,7 @@ async function inspectSubscription(subscription: Subscription): Promise<void> {
 
 async function usePublicApi(): Promise<void> {
   inspectCapabilities();
+  inspectQualification();
 
   const unbounded: Engine = createEngine();
   const explicitUnbounded: Engine = createEngine({ nativeWatchBudget: null });

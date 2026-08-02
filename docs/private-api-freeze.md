@@ -36,7 +36,7 @@ packages remain private and both Rust crates remain `publish = false`.
 The public npm package is `watchbound`; JSR uses `@gadicc/watchbound`. The
 wrapper has one ESM `.` entry point with `js/index.js` implementation and
 `js/index.d.ts` declarations. Its runtime
-exports are `capabilities`, `createEngine`, `subscribe`, `WatchboundError`,
+exports are `capabilities`, `qualifyRoot`, `createEngine`, `subscribe`, `WatchboundError`,
 `WatchboundErrorCode`, `WatchboundRetryAfter`, `isWatchboundError`, and
 `normalizeWatchboundError`. The declaration file additionally names the types
 needed to exhaustively consume those values.
@@ -159,8 +159,9 @@ codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
 `target-pending-clean-ci` and `supported`; both current target entries emit the
 supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
-Capability schema 6 and binding API 5 additionally expose physical-root
-resolution alongside `directoryNameExclusions` and `observedExcludedPaths`;
+Capability schema 7 and binding API 5 additionally expose full root
+qualification and physical-root resolution alongside `directoryNameExclusions`
+and `observedExcludedPaths`;
 loader metadata remains schema 1 and raw native capabilities advance to schema
 5. Wrappers and loaders
 fail closed against older or newer unproved native contracts.

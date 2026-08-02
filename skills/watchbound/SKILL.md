@@ -15,10 +15,10 @@ Before changing an integration:
 
 1. Inspect the installed `watchbound` version, its declarations, and its
    exported `capabilities`.
-2. Check `capabilities.support.currentRuntime` and the matching entry in
-   `capabilities.support.targets`; matching diagnostic runtime facts alone do
-   not widen the declared support target. Older packages may expose only the
-   legacy single-target fields.
+2. Check `capabilities.support.currentRuntime.targetCompatible`, the matching
+   entry in `capabilities.support.targets`, and `qualifyRoot(root).state`.
+   Matching diagnostic runtime facts alone do not widen the declared support
+   target. Older packages may expose only the legacy single-target fields.
 3. Confirm that the consumer can rescan after a conservative root invalidation
    and can operate honestly with partial or uncertain coverage.
 4. Prefer another watcher when the consumer needs a cross-platform package,
@@ -119,7 +119,8 @@ globs or basenames, and are applied before the generation-zero topology scan.
 An empty prefix excludes the root. Watchbound does not discover Git ignores or
 application policy; consumers must compute and update that complete prefix set.
 
-When capability schema 6 proves support, use `excludedDirectoryNames` for exact
+When capability schema 7 is present and `qualifyRoot()` reports a qualified root,
+use `excludedDirectoryNames` for exact
 directory components that must be pruned at every depth, including future and
 renamed-in directories. Use `observedExcludedPaths` for nonempty exact
 root-relative excluded boundaries whose creation, deletion, rename,

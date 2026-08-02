@@ -196,19 +196,19 @@ reports complete only if the scan leaves no other gap. Uncertainty is sticky,
 with stronger loss reasons (notably native overflow) taking precedence over
 weaker ones.
 
-## Capability schema version 6
+## Capability schema version 7
 
 The JavaScript `capabilities` export is deeply frozen, JSON-serializable, and
 has these top-level sections:
 
 | Section | Contract |
 | --- | --- |
-| `schemaVersion` | Exactly `6`. |
+| `schemaVersion` | Exactly `7`. |
 | `versions` | Wrapper, native package, and Rust engine versions plus binding API version. |
 | `build` | Manifest-derived delivery, build profile, triple, Node-API/Rust floors, and the exact packaged target/package/file/SHA when generated. |
 | `runtime` | Observed process platform, architecture, kernel release, libc family/version, and Node/Node-API versions. |
-| `support` | Compatibility-preserved legacy x64 fields plus `targets`, `qualificationLanes`, `currentRuntime`, recognized compatibility families, and explicit unsupported targets. `SupportStatus` is `target-pending-clean-ci | supported`; both candidate GNU/Linux targets are supported in the source matrix. |
-| `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
+| `support` | Compatibility-preserved legacy x64 fields plus `targets`, `qualificationLanes`, explicitly target-only `currentRuntime`, recognized compatibility families, and explicit unsupported targets. `SupportStatus` is `target-pending-clean-ci | supported`. |
+| `features` | Recursive watching, moved-in discovery, subscription limits, process budget, shared native watches, overflow, exclusions, manual/automatic reconciliation, root recovery/qualification, exact bytes, ordered batches, observed state, cancellable establishment, and shared Node delivery. |
 | `options` | Machine-readable types, scopes, accounting units, defaults, hard bounds, and the automatic-delay ordering constraint. |
 | `observability` | Ordered-batch authority, before-callback observation, allowed native/result lead, initial state, subscription/runtime stats, counter encodings, the one-entry native callback queue, Node-environment dispatcher scope, single-credit admission, and callback completion/error/disposal/teardown policy. |
 
@@ -219,13 +219,19 @@ Feature booleans are `recursive`, `movedInTreeDiscovery`,
 `explicitWatchLimits`, `processNativeWatchBudget`, `sharedNativeWatches`,
 `overflowReporting`, `initialExclusions`, `dynamicExclusions`,
 `directoryNameExclusions`, `observedExcludedPaths`, `reconciliation`,
-`automaticReconciliation`, `rootReplacementRecovery`, `physicalRootResolution`, `exactPathBytes`,
+`automaticReconciliation`, `rootReplacementRecovery`, `physicalRootResolution`,
+`rootQualification`, `exactPathBytes`,
 `orderedBatches`, `observedState`, `cancellableEstablishment`, and
 `sharedNodeDelivery`.
 
 Runtime facts describe the process that loaded the binding; they are not a
-support claim and do not widen the fixed `support` target. Qualification comes
-only from the exact-commit clean CI recorded in `support-matrix.md`.
+support claim and do not widen the fixed `support` target.
+`support.currentRuntime.targetCompatible` is explicitly limited to packaged
+target selection and exact-commit target status. Full qualification requires
+`qualifyRoot(root)`, which enforces kernel/glibc floors, WSL/container evidence,
+and physical filesystem classification without starting the watcher. Unknown
+evidence never qualifies. See
+[`runtime-qualification.md`](runtime-qualification.md).
 
 Positive JavaScript options crossing the native boundary share bounds 1 through
 `2^32 - 1`. `options.engine.nativeWatchBudget` defaults to `null`, has scope

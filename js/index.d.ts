@@ -56,6 +56,7 @@ export type WatchboundRetryAfter =
 /** The public operation during which a {@link WatchboundError} occurred. */
 export type WatchboundOperation =
   | "create-engine"
+  | "qualify-root"
   | "subscribe"
   | "replace-exclusions"
   | "reconcile"
@@ -67,6 +68,106 @@ export type WatchboundOperation =
 export type WatchboundPackageDelivery =
   | "controlled-source-build"
   | "bundled-native-package";
+
+/** Final qualification state for a target, host, or subscription root. */
+export type QualificationState = "qualified" | "unqualified" | "unknown";
+
+/** Machine-readable reason that full root qualification did not succeed. */
+export type QualificationReason =
+  | "packaged-target-mismatch"
+  | "packaged-target-unqualified"
+  | "kernel-below-floor"
+  | "kernel-unknown"
+  | "glibc-below-floor"
+  | "glibc-unknown"
+  | "wsl-detected"
+  | "wsl-unknown"
+  | "container-detected"
+  | "container-unknown"
+  | "root-unavailable"
+  | "root-not-directory"
+  | "filesystem-network"
+  | "filesystem-fuse"
+  | "filesystem-overlay"
+  | "filesystem-unknown";
+
+/** Evidence comparing one observed runtime version with a published floor. */
+export interface VersionFloorEvidence {
+  /** Whether the observed version satisfies the floor. */
+  readonly state: "satisfied" | "below-floor" | "unknown";
+  /** Observed version, or null when unavailable. */
+  readonly observed: string | null;
+  /** Required minimum version. */
+  readonly minimum: string;
+}
+
+/** Evidence for WSL or container execution. */
+export interface EnvironmentEvidence {
+  /** Whether the environment was detected, not detected, or could not be determined. */
+  readonly state: "detected" | "not-detected" | "unknown";
+}
+
+/** Root filesystem family relevant to Watchbound qualification. */
+export type RootFilesystemKind =
+  | "ordinary-local"
+  | "network"
+  | "fuse"
+  | "overlay"
+  | "unknown";
+
+/** Machine-readable full target, host, and root qualification result. */
+export interface RootQualificationResult {
+  /** Version of this qualification result schema. */
+  readonly schemaVersion: 1;
+  /** Conservative aggregate state; unknown evidence never qualifies. */
+  readonly state: QualificationState;
+  /** Deduplicated reasons preventing a qualified result. */
+  readonly reasons: readonly QualificationReason[];
+  /** Packaged target compatibility and exact-commit qualification evidence. */
+  readonly target: {
+    /** Target evidence state. */
+    readonly state: "qualified" | "unqualified";
+    /** Loader-selected target identifier. */
+    readonly packagedTargetId: "linux-x64-gnu" | "linux-arm64-gnu";
+    /** Whether platform, architecture, libc family, and triple agree. */
+    readonly runtimeMatchesPackagedTarget: boolean;
+    /** Exact-commit qualification state of the target artifact. */
+    readonly qualification: SupportStatus;
+  };
+  /** Host floor and execution-environment evidence. */
+  readonly host: {
+    /** Conservative host evidence state. */
+    readonly state: QualificationState;
+    /** Host kernel comparison with the supported floor. */
+    readonly kernelFloor: VersionFloorEvidence;
+    /** Runtime glibc comparison with the supported floor. */
+    readonly glibcFloor: VersionFloorEvidence;
+    /** WSL detection evidence. */
+    readonly wsl: EnvironmentEvidence;
+    /** Container detection evidence. */
+    readonly container: EnvironmentEvidence;
+  };
+  /** Canonical root and filesystem evidence. */
+  readonly root: {
+    /** Conservative root evidence state. */
+    readonly state: QualificationState;
+    /** Absolute lexical pathname supplied to qualification. */
+    readonly lexicalPath: string;
+    /** Exact bytes of the absolute lexical pathname. */
+    readonly lexicalPathBytes: Uint8Array;
+    /** Canonical pathname, or null when unavailable or not valid UTF-8. */
+    readonly physicalPath: string | null;
+    /** Exact canonical bytes, or null when resolution failed. */
+    readonly physicalPathBytes: Uint8Array | null;
+    /** Filesystem classification and Linux statfs magic. */
+    readonly filesystem: {
+      /** Qualification-relevant filesystem family. */
+      readonly kind: RootFilesystemKind;
+      /** Unsigned hexadecimal statfs magic, or null when unavailable. */
+      readonly magic: string | null;
+    };
+  };
+}
 
 /** Sanitized operating-system or Node-API details for a structured error. */
 export interface WatchboundSystemCause {
@@ -552,16 +653,20 @@ export interface QualificationLaneCapability {
     | "native-nix-closure-required";
 }
 
-/** Loader-selected target and whether this process is qualified to use it. */
+/** Loader-selected packaged-target compatibility, not host/root qualification. */
 export interface CurrentRuntimeQualificationCapability {
+  /** Explicitly narrows this object to packaged-target compatibility. */
+  readonly scope: "packaged-target-compatibility";
   /** Stable identifier of the artifact selected by the loader. */
   readonly packagedTargetId: "linux-x64-gnu" | "linux-arm64-gnu";
   /** Whether platform, architecture, libc, and target triple all agree. */
   readonly runtimeMatchesPackagedTarget: boolean;
   /** Exact-commit qualification state of the packaged target. */
   readonly qualification: SupportStatus;
-  /** True only for an exact runtime match whose target is qualified. */
-  readonly supported: boolean;
+  /** True only for an exact runtime match whose packaged target is qualified. */
+  readonly targetCompatible: boolean;
+  /** Full host/root qualification requires {@link qualifyRoot}. */
+  readonly fullQualification: "qualify-root-required";
 }
 
 /** A deliberately excluded target and the reason it cannot be claimed. */
@@ -578,7 +683,7 @@ export interface IntentionallyUnsupportedTargetCapability {
  */
 export interface Capabilities {
   /** Version of this capabilities object’s schema. */
-  readonly schemaVersion: 6;
+  readonly schemaVersion: 7;
   /** Wrapper, native engine, and binding API versions. */
   readonly versions: {
     readonly wrapper: string;
@@ -679,6 +784,7 @@ export interface Capabilities {
     readonly automaticReconciliation: boolean;
     readonly rootReplacementRecovery: boolean;
     readonly physicalRootResolution: boolean;
+    readonly rootQualification: boolean;
     readonly exactPathBytes: boolean;
     readonly orderedBatches: boolean;
     readonly observedState: boolean;
@@ -889,6 +995,12 @@ export interface Engine {
 
 /** Frozen capabilities for the loaded wrapper, native addon, and runtime. */
 export declare const capabilities: Readonly<Capabilities>;
+
+/**
+ * Evaluates packaged-target, host-floor, environment, and root-filesystem
+ * evidence without starting a watcher or acquiring native resources.
+ */
+export declare function qualifyRoot(root: string): Readonly<RootQualificationResult>;
 
 /**
  * Creates a resource-free subscription factory.

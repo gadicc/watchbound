@@ -96,7 +96,7 @@ caller accessors, callback work, or contended locks can still pause it.
 ## Native identity, capabilities, and engine handles
 
 The one native binary loaded into the process exposes metadata schema version 1:
-native and engine versions, binding API version 4, Node-API 6, target triple,
+native and engine versions, binding API version 5, Node-API 6, target triple,
 and build profile. Its raw capability schema is version 5 and also provides
 establishment-cancellation, shared-delivery, and callback-completion facts
 alongside feature flags, including generation-zero initial exclusions,
@@ -107,14 +107,17 @@ with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 6`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 7`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
 The release metadata marks both exact GNU/Linux target entries `supported`
 after the complete status-bearing matrix. The release workflow still requires
 all exact artifacts and independent publication guards. Current process facts
-never broaden the target matrix.
+never broaden the target matrix. `currentRuntime` reports only packaged-target
+compatibility; `qualifyRoot(root)` performs full read-only host/root
+qualification as specified in
+[`runtime-qualification.md`](runtime-qualification.md).
 
 Node exposes a cheap `NativeEngine`, and the wrapper exposes
 `createEngine({ nativeWatchBudget: number | null })`. Creation stores a request

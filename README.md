@@ -210,7 +210,9 @@ packages against a qualified kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`; both targets are supported by the checked-in source matrix.
 WSL, network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
 unusual container mounts, musl, ARMv7, and all non-Linux platforms remain
-unqualified or unsupported. See
+unqualified or unsupported. Target compatibility is not a full host/root
+decision: call `qualifyRoot(root)` and require its machine-readable state to be
+`qualified` before enabling the watcher. See
 [`docs/support-matrix.md`](docs/support-matrix.md).
 
 One motivating Codex case transiently previews a repository and observed
@@ -386,17 +388,21 @@ and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
 default engine. `engine.nativeWatchBudget` is its request, while
 `engine.runtimeStats()` describes actual process-global resources.
 
-The deeply frozen, JSON-serializable `capabilities` export has schema version 5
+The deeply frozen, JSON-serializable `capabilities` export has schema version 7
 and separates versions/build facts, observed runtime facts, packaged target,
 per-target qualification, the legacy single-target support fields,
 features, option defaults and bounds, and observability. It reports
 establishment cancellation, per-environment shared delivery, a one-entry
 callback queue, single-credit admission, and promise-aware serialized callback
-completion explicitly. Runtime facts do not widen support. The published target
-entries are deliberately `supported` after exact-commit native and kernel-floor
+completion explicitly. `support.currentRuntime.targetCompatible` is explicitly
+limited to packaged-target selection. `qualifyRoot(root)` separately enforces
+kernel/glibc floors, WSL/container evidence, and root filesystem classification;
+below-floor, unknown, network, FUSE, and overlay states never qualify. Target
+entries become `supported` only after exact-commit native and kernel-floor
 evidence plus both supervised overflow scenarios. See
-[`docs/api-lifecycle.md`](docs/api-lifecycle.md)
-and [`docs/support-matrix.md`](docs/support-matrix.md). The private API revision
+[`docs/api-lifecycle.md`](docs/api-lifecycle.md),
+[`docs/support-matrix.md`](docs/support-matrix.md), and
+[`docs/runtime-qualification.md`](docs/runtime-qualification.md). The private API revision
 and compatibility policy are recorded in
 [`docs/private-api-freeze.md`](docs/private-api-freeze.md).
 

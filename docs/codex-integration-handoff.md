@@ -97,8 +97,9 @@ not substitute `latest` or synthesize integrity from a local build.
 4. Stage the JS packages in `app.asar`, allow the `.node` file to be unpacked
    by the existing `{*.node,*.so,*.dylib}` ASAR rule, and retain the package
    directory relationship expected by Node resolution.
-5. Read `capabilities.support.currentRuntime.supported`; do not infer support
-   from `runtime`, successful load, or the legacy single-target fields.
+5. Require `capabilities.support.currentRuntime.targetCompatible`, then call
+   `qualifyRoot(workspaceRoot)` and require `state === "qualified"`; do not
+   infer support from `runtime`, successful load, or legacy fields.
 6. Enable x64 only on exact green Ubuntu 22.04/24.04, Debian 12, Fedora 42,
    Arch, openSUSE, Electron, and release-artifact evidence. Enable ARM64 only
    after its applicable native lanes are green. Derivative families remain

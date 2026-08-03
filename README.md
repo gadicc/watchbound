@@ -1,29 +1,31 @@
 # Watchbound
 
+_A conservative Linux recursive directory watcher with explicit coverage,
+bounded resources, and joined lifecycle guarantees._
+
+[![npm](https://img.shields.io/npm/v/watchbound)](https://www.npmjs.com/package/watchbound)
+[![JSR](https://jsr.io/badges/@gadicc/watchbound)](https://jsr.io/@gadicc/watchbound)
 [![JSR score](https://jsr.io/badges/@gadicc/watchbound/score)](https://jsr.io/@gadicc/watchbound)
 [![CI](https://github.com/gadicc/watchbound/actions/workflows/ci.yml/badge.svg)](https://github.com/gadicc/watchbound/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 
-Packages: [npm](https://www.npmjs.com/package/watchbound) and
-[JSR](https://jsr.io/@gadicc/watchbound). Version history and availability are
-recorded by package metadata, registry version pages,
-[Git tags](https://github.com/gadicc/watchbound/tags), and
-[GitHub Releases](https://github.com/gadicc/watchbound/releases).
+Copyright (c) 2026 by Gadi Cohen. [MIT Licensed](./LICENSE.txt).
+
+## Intro
 
 Watchbound is an experimental Linux recursive directory watcher. It treats
-filesystem coverage as an explicit
-result rather than an assumption, records one logical interest per included
-directory while overlapping identities can share a native inotify watch,
-batches invalidations, and reports partial or uncertain coverage when it cannot
-safely claim completeness.
+filesystem coverage as an explicit result rather than an assumption, records one
+logical interest per included directory while overlapping identities can share a
+native inotify watch, batches invalidations, and reports partial or uncertain
+coverage when it cannot safely claim completeness.
 
-The checked-in workspace packages remain private as an accidental-publish
-guard; registry packages are created only in controlled generated trees. CI
-validates those npm and JSR trees, and semantic-release uses Conventional
-Commits and tags as the version authority. Source manifests retain their
-development placeholder while the release workflow deterministically
-materializes its planned version across every builder, package, checksum, and
-software bill of materials without committing that transform.
+The checked-in workspace packages remain private as an accidental-publish guard;
+registry packages are created only in controlled generated trees. CI validates
+those npm and JSR trees, and semantic-release uses Conventional Commits and tags
+as the version authority. Source manifests retain their development placeholder
+while the release workflow deterministically materializes its planned version
+across every builder, package, checksum, and software bill of materials without
+committing that transform.
 
 Generated artifacts identify their exact packaged target separately from
 observed runtime and per-target qualification; source workspaces identify as
@@ -78,13 +80,13 @@ thread.
 
 The implementation divides work as follows:
 
-| Execution context | Work |
-| --- | --- |
-| JavaScript thread in each Node environment | Module loading and identity checks; wrapper argument, option, and `AbortSignal` handling; exclusion-policy encoding; callback normalization; `observedState`; automatic-reconciliation policy; and the consumer callback |
-| Node's shared libuv worker pool | One napi-rs asynchronous task for each pending establishment, exclusion replacement, reconciliation, root recovery, or joined disposal |
-| One lazy process-wide `watchbound-linux-runtime` Rust thread | inotify polling, recursive topology, native-watch allocation, batching, bounded engine queues, cancellation rollback, and ordered engine acknowledgements |
-| At most one `watchbound-node-dispatcher` Rust thread per Node environment with pending, active, or fallback-cleanup registrations | Fairly inspects registrations and admits at most one callback per subscription into its one-entry Node-API thread-safe-function queue |
-| At most one transient `watchbound-node-cleanup` Rust thread per affected Node environment | Advances garbage-collection, delivery-failure, or environment-teardown cleanup; a retained dispatcher is the fallback if coordinator creation fails |
+| Execution context                                                                                                                 | Work                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| JavaScript thread in each Node environment                                                                                        | Module loading and identity checks; wrapper argument, option, and `AbortSignal` handling; exclusion-policy encoding; callback normalization; `observedState`; automatic-reconciliation policy; and the consumer callback |
+| Node's shared libuv worker pool                                                                                                   | One napi-rs asynchronous task for each pending establishment, exclusion replacement, reconciliation, root recovery, or joined disposal                                                                                   |
+| One lazy process-wide `watchbound-linux-runtime` Rust thread                                                                      | inotify polling, recursive topology, native-watch allocation, batching, bounded engine queues, cancellation rollback, and ordered engine acknowledgements                                                                |
+| At most one `watchbound-node-dispatcher` Rust thread per Node environment with pending, active, or fallback-cleanup registrations | Fairly inspects registrations and admits at most one callback per subscription into its one-entry Node-API thread-safe-function queue                                                                                    |
+| At most one transient `watchbound-node-cleanup` Rust thread per affected Node environment                                         | Advances garbage-collection, delivery-failure, or environment-teardown cleanup; a retained dispatcher is the fallback if coordinator creation fails                                                                      |
 
 Steady state therefore has one Watchbound runtime thread for the loaded native
 binding and one dispatcher for each Node environment that owns subscriptions,
@@ -114,13 +116,13 @@ thread-safe-function queues, and one callback admission credit. The dispatcher
 does not drain a second engine batch until the callback returns a non-thenable
 or its returned Promise-like settles. Async callbacks are therefore serialized
 per subscription and participate in consumer-backpressure accounting. If a
-consumer remains slow, that subscription's engine queue can
-fill; Watchbound drops over-detailed output, marks coverage
-`consumer-backpressure`, and retains a conservative root invalidation for later
-delivery. A synchronously blocked JavaScript loop also prevents peer callbacks
-in that environment from completing, so sustained peer traffic can fill each
-peer's own bounded engine queue. Callback progress while another callback is
-blocked requires a separate Worker environment.
+consumer remains slow, that subscription's engine queue can fill; Watchbound
+drops over-detailed output, marks coverage `consumer-backpressure`, and retains
+a conservative root invalidation for later delivery. A synchronously blocked
+JavaScript loop also prevents peer callbacks in that environment from
+completing, so sustained peer traffic can fill each peer's own bounded engine
+queue. Callback progress while another callback is blocked requires a separate
+Worker environment.
 
 The detailed lifecycle and ownership rules are in
 [`docs/node-binding.md`](docs/node-binding.md) and
@@ -136,8 +138,8 @@ until native success or rollback completes; queued work may therefore delay
 cancellation settlement.
 
 Subscription options may also include `initialExclusions`, an array of exact
-normalized root-relative directory prefixes; `excludedDirectoryNames`, an
-array of exact directory components pruned at every depth; and
+normalized root-relative directory prefixes; `excludedDirectoryNames`, an array
+of exact directory components pruned at every depth; and
 `observedExcludedPaths`, an array of nonempty normalized root-relative
 boundaries whose descendants remain excluded while the boundary itself is
 invalidated conservatively. All three sets are installed at generation zero
@@ -159,10 +161,10 @@ await subscription.replaceExclusions(1n, {
 });
 ```
 
-Names match complete path components using exact Linux bytes; they are not
-globs or substrings. Observation overrides pruning only for delivery of the
-named boundary. It never follows a boundary symlink, traverses its descendants,
-or turns a matching excluded directory into watched topology.
+Names match complete path components using exact Linux bytes; they are not globs
+or substrings. Observation overrides pruning only for delivery of the named
+boundary. It never follows a boundary symlink, traverses its descendants, or
+turns a matching excluded directory into watched topology.
 
 Batch callbacks receive a stable frozen context with an `AbortSignal` and
 idempotent `stop(): void`. Explicit disposal aborts that signal and joins an
@@ -184,43 +186,42 @@ consumers that cannot rescan after invalidation, unsupported
 platforms/filesystems, or applications that cannot own native delivery and a
 joined-disposal lifecycle. The supported native targets are GNU/Linux x64 and
 ARM64, with a qualified kernel 5.15/glibc 2.35 baseline and Node
-`>=24.15.0 <25`; both targets are supported by the checked-in source matrix.
-WSL and environments with recognized container evidence cannot qualify.
-Network filesystems, Filesystem in Userspace (FUSE), overlay filesystems, musl,
-ARMv7, and all non-Linux platforms remain unqualified or unsupported. Target
-compatibility is not a full host/root
-decision: call `qualifyRoot(root)` and require its machine-readable state to be
-`qualified` before enabling the watcher. See
-[`docs/support-matrix.md`](docs/support-matrix.md).
+`>=24.15.0 <25`; both targets are supported by the checked-in source matrix. WSL
+and environments with recognized container evidence cannot qualify. Network
+filesystems, Filesystem in Userspace (FUSE), overlay filesystems, musl, ARMv7,
+and all non-Linux platforms remain unqualified or unsupported. Target
+compatibility is not a full host/root decision: call `qualifyRoot(root)` and
+require its machine-readable state to be `qualified` before enabling the
+watcher. See [`docs/support-matrix.md`](docs/support-matrix.md).
 
-One motivating Codex case transiently previews a repository and observed
-251,811 Node `fs.watch` calls. That number is an observed call count, not a
-directory count, unique-watch count, or Watchbound measurement, and this
-repository contains no artifact mapping those calls to unique paths or
-directories. A cancellable, bounded, invalidation-oriented watcher could fit
-such a preview if the consumer accepts root rescans and explicit partial or
-uncertain coverage. The historical 1,001- and 10,001-directory tmpfs trials do
-not predict that repository's startup, memory, watch count, or cancellation
-latency. A later maintainer decision authorized an opt-in Codex Desktop Linux
-integration experiment; this observation still provides no platform,
-performance, artifact, or release evidence for that integration.
+One motivating Codex case transiently previews a repository and observed 251,811
+Node `fs.watch` calls. That number is an observed call count, not a directory
+count, unique-watch count, or Watchbound measurement, and this repository
+contains no artifact mapping those calls to unique paths or directories. A
+cancellable, bounded, invalidation-oriented watcher could fit such a preview if
+the consumer accepts root rescans and explicit partial or uncertain coverage.
+The historical 1,001- and 10,001-directory tmpfs trials do not predict that
+repository's startup, memory, watch count, or cancellation latency. A later
+maintainer decision authorized an opt-in Codex Desktop Linux integration
+experiment; this observation still provides no platform, performance, artifact,
+or release evidence for that integration.
 
 ## Evidence boundaries
 
 Read claims in this repository according to their stated evidence:
 
-- **Public API guarantee**: behavior exposed by the Watchbound
-  JavaScript declarations and lifecycle contract, or by Parcel 2.5.6's
-  published declarations and README.
-- **Implementation fact**: a property traced to the checked-in
-  Watchbound source and tests.
+- **Public API guarantee**: behavior exposed by the Watchbound JavaScript
+  declarations and lifecycle contract, or by Parcel 2.5.6's published
+  declarations and README.
+- **Implementation fact**: a property traced to the checked-in Watchbound source
+  and tests.
 - **Tagged-source fact**: a property traced to the source shipped with exactly
   `@parcel/watcher` 2.5.6 or its `v2.5.6` tag; it is not a Parcel API promise.
 - **Reproduced conformance result**: a result from the recorded isolated Linux
   harness with Parcel's inotify backend forced.
 - **Historical benchmark measurement**: a first-milestone result tied to its
-  recorded source, binaries, adapters, host, tmpfs tree, and seven-trial
-  series; it does not describe later Watchbound performance.
+  recorded source, binaries, adapters, host, tmpfs tree, and seven-trial series;
+  it does not describe later Watchbound performance.
 - **Proposed work**: an item in a deliberate-gap or future-gate section. It is
   not implemented and grants no authority to publish, generate prebuilds, or
   integrate a consumer.
@@ -233,32 +234,32 @@ typed file events plus historical snapshot queries. This repository compares
 Watchbound with exactly `@parcel/watcher` 2.5.6 and forces Parcel's Linux
 inotify backend.
 
-| Capability | Watchbound source | `@parcel/watcher` 2.5.6 |
-| --- | --- | --- |
-| Public recursive and query API | `subscribe()` returns a subscription with joined `dispose()`; no historical query | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public |
-| Delivery and targets | Controlled source checkout or registry package with a neutral loader and exact qualified x64/ARM64 GNU target packages | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
-| Recursive Linux subscription | Directory-only inotify watches | Directory-only inotify watches |
-| Event contract | Conservative invalidated paths; no exact create/update/delete claim | Coalesced `create`, `update`, and `delete` events |
-| Native batching | Yes, with bounded path and output queues | Yes, through a native debouncer |
-| Historical snapshot query | No | `writeSnapshot()` and `getEventsSince()` |
-| Initial static ignores | Generation-zero exact root-relative prefixes, recursive directory names, and observed excluded boundaries; no glob or Git policy in the engine | Subscribe-time path and glob ignores |
-| Active exclusion replacement | Generation-based whole exact-byte policy; atomic per subscription; compatible prefix-array form retained | No public active-subscription update |
-| Public watch limits and accounting | Per-subscription logical limit, process native-watch budget, and statistics | No public limit or active-watch accounting |
-| Explicit coverage and loss | `complete`, reasoned `partial`, or reasoned `uncertain` | No public coverage state |
-| Linux queue overflow | Typed `event-overflow`, root invalidation, and bounded reconciliation | No public loss result; 2.5.6's inotify backend skips `IN_Q_OVERFLOW` |
-| Populated moved-in subtree | Recursively discovered before the transition becomes observable | Incoming directory is watched, but existing descendants were not discovered in reproduced 2.5.6 trials |
-| Watched-root replacement | Typed loss plus explicit policy-gated recovery | No public recovery; replacement was not watched in reproduced 2.5.6 trials |
-| Consumer backpressure | Bounded and subscription-local, with typed uncertainty | No public backpressure state |
-| Post-loss reconciliation | Explicit manual operation plus default-disabled bounded automatic wrapper policy | No public reconciliation operation |
-| Cancel pending establishment | Establishment-only `AbortSignal`; cooperative after native work starts; joined rollback | Not exposed by the public `subscribe()` API |
-| Native delivery thread scaling | At most one lazy process runtime; one dispatcher per Node environment while pending, established, or cleanup-keepalive state exists; at most one transient cleanup coordinator per affected environment | Shared backend and debounce threads; no bridge thread per subscription |
-| Node callback admission | Per-subscription one-entry queue, one admission credit, and bounded engine output | One thread-safe-function per callback with an explicitly unlimited queue |
-| Disposal contract | Idempotent, joined, and no callback may start after resolution | Async `unsubscribe()`; no equivalent public joined/no-later-callback guarantee |
+| Capability                         | Watchbound source                                                                                                                                                                                       | `@parcel/watcher` 2.5.6                                                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Public recursive and query API     | `subscribe()` returns a subscription with joined `dispose()`; no historical query                                                                                                                       | `subscribe()` returns an `AsyncSubscription` with `unsubscribe()`; top-level `unsubscribe()`, `writeSnapshot()`, and `getEventsSince()` are public                             |
+| Delivery and targets               | Controlled source checkout or registry package with a neutral loader and exact qualified x64/ARM64 GNU target packages                                                                                  | Published optional prebuild packages cover Linux glibc/musl and several architectures, macOS, Windows, FreeBSD x64, and Android arm64; local-build fallbacks are also packaged |
+| Recursive Linux subscription       | Directory-only inotify watches                                                                                                                                                                          | Directory-only inotify watches                                                                                                                                                 |
+| Event contract                     | Conservative invalidated paths; no exact create/update/delete claim                                                                                                                                     | Coalesced `create`, `update`, and `delete` events                                                                                                                              |
+| Native batching                    | Yes, with bounded path and output queues                                                                                                                                                                | Yes, through a native debouncer                                                                                                                                                |
+| Historical snapshot query          | No                                                                                                                                                                                                      | `writeSnapshot()` and `getEventsSince()`                                                                                                                                       |
+| Initial static ignores             | Generation-zero exact root-relative prefixes, recursive directory names, and observed excluded boundaries; no glob or Git policy in the engine                                                          | Subscribe-time path and glob ignores                                                                                                                                           |
+| Active exclusion replacement       | Generation-based whole exact-byte policy; atomic per subscription; compatible prefix-array form retained                                                                                                | No public active-subscription update                                                                                                                                           |
+| Public watch limits and accounting | Per-subscription logical limit, process native-watch budget, and statistics                                                                                                                             | No public limit or active-watch accounting                                                                                                                                     |
+| Explicit coverage and loss         | `complete`, reasoned `partial`, or reasoned `uncertain`                                                                                                                                                 | No public coverage state                                                                                                                                                       |
+| Linux queue overflow               | Typed `event-overflow`, root invalidation, and bounded reconciliation                                                                                                                                   | No public loss result; 2.5.6's inotify backend skips `IN_Q_OVERFLOW`                                                                                                           |
+| Populated moved-in subtree         | Recursively discovered before the transition becomes observable                                                                                                                                         | Incoming directory is watched, but existing descendants were not discovered in reproduced 2.5.6 trials                                                                         |
+| Watched-root replacement           | Typed loss plus explicit policy-gated recovery                                                                                                                                                          | No public recovery; replacement was not watched in reproduced 2.5.6 trials                                                                                                     |
+| Consumer backpressure              | Bounded and subscription-local, with typed uncertainty                                                                                                                                                  | No public backpressure state                                                                                                                                                   |
+| Post-loss reconciliation           | Explicit manual operation plus default-disabled bounded automatic wrapper policy                                                                                                                        | No public reconciliation operation                                                                                                                                             |
+| Cancel pending establishment       | Establishment-only `AbortSignal`; cooperative after native work starts; joined rollback                                                                                                                 | Not exposed by the public `subscribe()` API                                                                                                                                    |
+| Native delivery thread scaling     | At most one lazy process runtime; one dispatcher per Node environment while pending, established, or cleanup-keepalive state exists; at most one transient cleanup coordinator per affected environment | Shared backend and debounce threads; no bridge thread per subscription                                                                                                         |
+| Node callback admission            | Per-subscription one-entry queue, one admission credit, and bounded engine output                                                                                                                       | One thread-safe-function per callback with an explicitly unlimited queue                                                                                                       |
+| Disposal contract                  | Idempotent, joined, and no callback may start after resolution                                                                                                                                          | Async `unsubscribe()`; no equivalent public joined/no-later-callback guarantee                                                                                                 |
 
-The Watchbound semantic and lifecycle rows are private API guarantees.
-Its named threads, scheduling rounds, and queue construction are
-implementation facts also exposed where applicable through `capabilities`;
-their internal shape is not a public major-version stability promise.
+The Watchbound semantic and lifecycle rows are private API guarantees. Its named
+threads, scheduling rounds, and queue construction are implementation facts also
+exposed where applicable through `capabilities`; their internal shape is not a
+public major-version stability promise.
 
 The Parcel API claims in the table come from its published
 [`index.d.ts`](https://github.com/parcel-bundler/watcher/blob/v2.5.6/index.d.ts)
@@ -275,47 +276,46 @@ backpressure, watch-accounting, or reconciliation result.
 The moved-in-tree and root-replacement rows are reproduced conformance results,
 not broad claims about every Parcel backend. With exactly 2.5.6's Linux inotify
 backend, moving in a populated tree installed a watch only on the incoming
-directory; a later change under an existing descendant was not delivered.
-Moving the watched root away produced its deletion, but a same-path replacement
-and later deep change were not watched. The recorded forced-overflow trials
-also observed silent path loss and later sentinel delivery, matching the
-tagged source's explicit `IN_Q_OVERFLOW` skip. See
+directory; a later change under an existing descendant was not delivered. Moving
+the watched root away produced its deletion, but a same-path replacement and
+later deep change were not watched. The recorded forced-overflow trials also
+observed silent path loss and later sentinel delivery, matching the tagged
+source's explicit `IN_Q_OVERFLOW` skip. See
 [`docs/conformance-findings.md`](docs/conformance-findings.md).
 
 Parcel remains the better default for supported cross-platform applications,
 published prebuilds, mature packaging, typed coalesced events, historical
 snapshot queries, static path/glob ignores, and consumers that do not need
-Watchbound's explicit resource and loss contract. Watchbound's comparison is
-not a claim that every Parcel backend or workload is incorrect or slower.
+Watchbound's explicit resource and loss contract. Watchbound's comparison is not
+a claim that every Parcel backend or workload is incorrect or slower.
 
 The first final startup series is historical. Each cell below is median
 milliseconds with `[min–max]` across seven passing trials on tmpfs:
 
-| Tree / phase | Historical Watchbound build | Exact Codex Linux JavaScript helper | `@parcel/watcher` 2.5.6, `backend: "inotify"` |
-| --- | ---: | ---: | ---: |
-| 1,001 directories, cold | 7.20 `[3.47–8.20]` | 38.44 `[28.77–47.00]` | 5.58 `[4.21–9.01]` |
-| 1,001 directories, warm | 7.54 `[3.25–8.30]` | 37.25 `[31.37–42.07]` | 8.58 `[5.88–9.68]` |
-| 10,001 directories, cold | 32.31 `[31.55–44.39]` | 273.05 `[249.56–319.78]` | 49.11 `[45.61–52.74]` |
-| 10,001 directories, warm | 36.59 `[32.76–40.04]` | 239.37 `[184.88–380.16]` | 47.42 `[43.51–50.65]` |
+| Tree / phase             | Historical Watchbound build | Exact Codex Linux JavaScript helper | `@parcel/watcher` 2.5.6, `backend: "inotify"` |
+| ------------------------ | --------------------------: | ----------------------------------: | --------------------------------------------: |
+| 1,001 directories, cold  |          7.20 `[3.47–8.20]` |               38.44 `[28.77–47.00]` |                            5.58 `[4.21–9.01]` |
+| 1,001 directories, warm  |          7.54 `[3.25–8.30]` |               37.25 `[31.37–42.07]` |                            8.58 `[5.88–9.68]` |
+| 10,001 directories, cold |       32.31 `[31.55–44.39]` |            273.05 `[249.56–319.78]` |                         49.11 `[45.61–52.74]` |
+| 10,001 directories, warm |       36.59 `[32.76–40.04]` |            239.37 `[184.88–380.16]` |                         47.42 `[43.51–50.65]` |
 
-The benchmark used clean commit
-`74b846d0621deaf8cc63a4dda2e640565544885d`, Watchbound source digest
-`4252eaa787a9575b6f2ebd7160a1c5a05fed3c6222754bba6af824881fb93044`,
-loaded native SHA-256
-`186d47fdb6a87c8e0af8c81016a655be11334fbd136d5d6486bf2381b209738e`,
-the exact Codex helper SHA-256
-`e619307502b7330421232b703757b8acbc9b7136c2b1942898eade214ade5f6e`,
-and exactly `@parcel/watcher` 2.5.6 with `backend: "inotify"`.
-The host's `/tmp` reported filesystem magic `0x01021994`, so the series
-characterizes tmpfs rather than persistent-storage latency.
+The benchmark used clean commit `74b846d0621deaf8cc63a4dda2e640565544885d`,
+Watchbound source digest
+`4252eaa787a9575b6f2ebd7160a1c5a05fed3c6222754bba6af824881fb93044`, loaded
+native SHA-256
+`186d47fdb6a87c8e0af8c81016a655be11334fbd136d5d6486bf2381b209738e`, the exact
+Codex helper SHA-256
+`e619307502b7330421232b703757b8acbc9b7136c2b1942898eade214ade5f6e`, and exactly
+`@parcel/watcher` 2.5.6 with `backend: "inotify"`. The host's `/tmp` reported
+filesystem magic `0x01021994`, so the series characterizes tmpfs rather than
+persistent-storage latency.
 
 These readings show feasibility on that host and tree shape. They do not show a
-universal speedup, persistent-filesystem behavior, later Watchbound
-performance, production readiness, Electron responsiveness, or behavior on the
-251,811-call repository preview. The adapters had different batching and
-callback policies, and the first-milestone Watchbound source predates the
-shared runtime, delivery, cancellation, exclusions, and recovery work.
-See
+universal speedup, persistent-filesystem behavior, later Watchbound performance,
+production readiness, Electron responsiveness, or behavior on the 251,811-call
+repository preview. The adapters had different batching and callback policies,
+and the first-milestone Watchbound source predates the shared runtime, delivery,
+cancellation, exclusions, and recovery work. See
 [`docs/benchmark-results.md`](docs/benchmark-results.md) for adapter and
 artifact identities, incremental resident set size (RSS), raw-artifact hashes,
 and the complete caveats.
@@ -324,12 +324,11 @@ and the complete caveats.
 
 The manifests intentionally admit only Node `>=24.15.0 <25` and Linux glibc.
 Supported native x64 and ARM64 targets require a kernel 5.15/glibc 2.35
-baseline, Rust 1.88+, pnpm 10.33.2, and a working C
-toolchain. See
+baseline, Rust 1.88+, pnpm 10.33.2, and a working C toolchain. See
 [`docs/support-matrix.md`](docs/support-matrix.md). Node-API 6 is the addon ABI
-floor, not a broader support claim. See the
-[release runbook](docs/releasing.md) for artifact validation, registry
-bootstrap, OIDC, provenance, and the remaining release gates.
+floor, not a broader support claim. See the [release runbook](docs/releasing.md)
+for artifact validation, registry bootstrap, OIDC, provenance, and the remaining
+release gates.
 
 ```sh
 pnpm install
@@ -343,13 +342,13 @@ pnpm test:soak
 The controlled build produces exactly the local
 `node/watchbound.linux-x64-gnu.node` binding. The hand-owned loader accepts no
 environment override, optional prebuild package, WASI branch, download, or
-runtime compiler fallback, and verifies native/package/API/build identity
-before exporting the binding. Generated `.node` binaries and napi-rs's private
+runtime compiler fallback, and verifies native/package/API/build identity before
+exporting the binding. Generated `.node` binaries and napi-rs's private
 declaration output are ignored by Git. See
 [`docs/native-delivery.md`](docs/native-delivery.md). The JavaScript wrapper
 preserves exact Linux path bytes and conservatively collapses a non-UTF-8 child
-to a representable physical root. If the physical root itself is not UTF-8,
-the batch is explicitly bytes-only and never substitutes a lexical alias.
+to a representable physical root. If the physical root itself is not UTF-8, the
+batch is explicitly bytes-only and never substitutes a lexical alias.
 
 `initialCoverage` and `initialRootState` expose the immutable establishment
 baseline. `subscription.observedState` is the frozen projection of that baseline
@@ -359,8 +358,8 @@ ahead, while ordered batches remain authoritative for JavaScript observation.
 
 JavaScript `createEngine({ nativeWatchBudget })` owns an optional process-wide
 unique-native-watch budget; `null` means no Watchbound-imposed budget. Creating
-an engine is resource-free. The first admitted establishment provisionally
-fixes the one loaded native binary's shared runtime configuration, equal
+an engine is resource-free. The first admitted establishment provisionally fixes
+the one loaded native binary's shared runtime configuration, equal
 configurations coexist, and a mismatch rejects with
 `WATCHBOUND_RUNTIME_CONFIGURATION_CONFLICT` until the final lease is released
 and shutdown joins. The top-level `subscribe()` lazily uses one unbounded
@@ -369,23 +368,23 @@ default engine. `engine.nativeWatchBudget` is its request, while
 
 The deeply frozen, JSON-serializable `capabilities` export has schema version 8
 and separates versions/build facts, observed runtime facts, packaged target,
-per-target qualification, the legacy single-target support fields,
-features, option defaults and bounds, and observability. It reports
-establishment cancellation, per-environment shared delivery, a one-entry
-callback queue, single-credit admission, and promise-aware serialized callback
-completion explicitly. `support.currentRuntime.targetCompatible` is explicitly
-limited to packaged-target selection. `qualifyRoot(root)` separately enforces
-kernel/glibc floors, WSL/container evidence, and root filesystem classification;
-below-floor, unknown, network, FUSE, and overlay states never qualify. A
-negative container result requires all designated probes to complete. Target
-entries become `supported` only after exact-commit native and kernel-floor
-evidence plus both supervised overflow scenarios. See
+per-target qualification, the legacy single-target support fields, features,
+option defaults and bounds, and observability. It reports establishment
+cancellation, per-environment shared delivery, a one-entry callback queue,
+single-credit admission, and promise-aware serialized callback completion
+explicitly. `support.currentRuntime.targetCompatible` is explicitly limited to
+packaged-target selection. `qualifyRoot(root)` separately enforces kernel/glibc
+floors, WSL/container evidence, and root filesystem classification; below-floor,
+unknown, network, FUSE, and overlay states never qualify. A negative container
+result requires all designated probes to complete. Target entries become
+`supported` only after exact-commit native and kernel-floor evidence plus both
+supervised overflow scenarios. See
 [`docs/api-lifecycle.md`](docs/api-lifecycle.md),
 [`docs/support-matrix.md`](docs/support-matrix.md), and
-[`docs/runtime-qualification.md`](docs/runtime-qualification.md). The private API revision
-and compatibility policy are recorded in
-[`docs/private-api-freeze.md`](docs/private-api-freeze.md).
-Consumers of the removed `currentRuntime.supported` field should follow
+[`docs/runtime-qualification.md`](docs/runtime-qualification.md). The private
+API revision and compatibility policy are recorded in
+[`docs/private-api-freeze.md`](docs/private-api-freeze.md). Consumers of the
+removed `currentRuntime.supported` field should follow
 [`docs/migrate-root-qualification.md`](docs/migrate-root-qualification.md).
 
 ## Evaluate
@@ -404,25 +403,24 @@ node --expose-gc benches/benchmark.mjs --help
 `pnpm test:baseline` is the safe local end-to-end check. It builds the native
 addon, runs Watchbound's strict ordinary quick conformance, and exercises the
 quick benchmark paths with one 100-operation trial. It writes reports only to a
-temporary directory, removes them, never selects forced overflow, and treats
-the observed timings as functionality smoke rather than performance evidence.
+temporary directory, removes them, never selects forced overflow, and treats the
+observed timings as functionality smoke rather than performance evidence.
 
-The targeted reconciliation and root-recovery commands are
-ordinary-development conformance checks. The first calls the explicit
-`subscription.reconcile()` primitive; the second enables the JavaScript
-wrapper's bounded automatic policy; the third exercises explicit direct and
-ancestor replacement recovery on the original subscription. The first two use
-deterministic native-to-JavaScript consumer backpressure; the third uses
-ordinary temporary-directory replacement. None induces a real inotify queue
-overflow. The I/O-heavy forced-overflow scenarios are removed by `--quick` and
-require the `--allow-forced-overflow` acknowledgement. Local runs additionally
-require explicit host preparation. Exact-source qualification uses
-the guarded GitHub-hosted x64/ARM64 workflow, records host context, and treats
-timings as non-authoritative. The flag is a safety interlock, not permission
-for another attempt.
+The targeted reconciliation and root-recovery commands are ordinary-development
+conformance checks. The first calls the explicit `subscription.reconcile()`
+primitive; the second enables the JavaScript wrapper's bounded automatic policy;
+the third exercises explicit direct and ancestor replacement recovery on the
+original subscription. The first two use deterministic native-to-JavaScript
+consumer backpressure; the third uses ordinary temporary-directory replacement.
+None induces a real inotify queue overflow. The I/O-heavy forced-overflow
+scenarios are removed by `--quick` and require the `--allow-forced-overflow`
+acknowledgement. Local runs additionally require explicit host preparation.
+Exact-source qualification uses the guarded GitHub-hosted x64/ARM64 workflow,
+records host context, and treats timings as non-authoritative. The flag is a
+safety interlock, not permission for another attempt.
 
-`pnpm test:soak` runs 25 bounded lifecycle cycles without inducing overflow
-or recording benchmark evidence. It covers deferred promotion, exclusion
+`pnpm test:soak` runs 25 bounded lifecycle cycles without inducing overflow or
+recording benchmark evidence. It covers deferred promotion, exclusion
 replacement, callback failure containment, topology churn, reconciliation,
 joined disposal, and final process-resource baselines. The root-recovery stress
 command repeats the ordinary direct and ancestor recovery scenario three times;
@@ -435,32 +433,24 @@ the next-milestone decision.
 
 ## Prototype gaps
 
-The Linux engine shares one process-wide worker and inotify instance,
-allocates unique native watches fairly across subscriptions, and implements
+The Linux engine shares one process-wide worker and inotify instance, allocates
+unique native watches fairly across subscriptions, and implements
 generation-based atomic dynamic exclusion policies. Its public conformance
-scenario
-exercises bounded reconciliation in place on an existing subscription,
+scenario exercises bounded reconciliation in place on an existing subscription,
 including an unchanged exclusion generation, a conservative root boundary,
-peer-subscription isolation, post-recovery delivery, and joined cleanup. It
-also contains separately gated manual and automatic overflow-reconciliation
-scenarios that apply those checks after supervised genuine `event-overflow`.
-Confirmed targeted follow-ups passed both public recovery paths; they are
-correctness evidence, not new performance readings.
+peer-subscription isolation, post-recovery delivery, and joined cleanup. It also
+contains separately gated manual and automatic overflow-reconciliation scenarios
+that apply those checks after supervised genuine `event-overflow`. Confirmed
+targeted follow-ups passed both public recovery paths; they are correctness
+evidence, not new performance readings.
 
 The JavaScript wrapper also offers opt-in `automaticReconciliation`. It is
 disabled by default, coalesces the three recoverable uncertainty reasons, uses
-finite capped exponential backoff, and exposes only its bounded status.
-It never claims recovered lost detail. `root-replaced` blocks this automatic
-policy: it never chooses a
-replacement identity. A caller may instead invoke the distinct
+finite capped exponential backoff, and exposes only its bounded status. It never
+claims recovered lost detail. `root-replaced` blocks this automatic policy: it
+never chooses a replacement identity. A caller may instead invoke the distinct
 `recoverRoot({ identityPolicy })` operation, which revalidates and scans the
 captured physical root under an explicit `original-only` or `accept-replacement`
 decision and emits one conservative root boundary on success. Native packages
-outside the supported x64/ARM64 GNU/Linux matrix and non-Linux backends
-remain unsupported and outside the approved stabilization scope.
-
-## Maintainer and license
-
-Maintainer: Gadi Cohen <dragon@wastelands.net>
-
-Copyright (c) 2026 by Gadi Cohen, [MIT Licensed](LICENSE.txt).
+outside the supported x64/ARM64 GNU/Linux matrix and non-Linux backends remain
+unsupported and outside the approved stabilization scope.

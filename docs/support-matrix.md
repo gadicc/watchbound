@@ -95,8 +95,9 @@ bytes-only physical invalidations. New consumers use:
 - `support.intentionallyUnsupported[]` for explicit target exclusions.
 
 The full machine-readable contract is in
-[`runtime-qualification.md`](runtime-qualification.md). Network, FUSE, overlay,
-WSL, container, below-floor, and unknown states never return `qualified`.
+[`runtime-qualification.md`](runtime-qualification.md). An environment with
+recognized container evidence cannot qualify. Network, FUSE, overlay, WSL,
+below-floor, and unknown states never return `qualified`.
 
 ## Promotion rule
 

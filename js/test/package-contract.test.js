@@ -137,6 +137,31 @@ test("README files defer Watchbound release versioning to package and release re
   }
 });
 
+test("qualification summaries limit container exclusions to recognized evidence", () => {
+  const summaries = [
+    ["README.md", "The supported native targets"],
+    ["docs/support-matrix.md", "The full machine-readable contract"],
+  ];
+
+  for (const [relativePath, marker] of summaries) {
+    const source = fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8");
+    const paragraph = source
+      .split(/\n\s*\n/u)
+      .find((candidate) => candidate.includes(marker));
+    assert.ok(paragraph, `${relativePath} qualification summary is missing`);
+    assert.match(
+      paragraph,
+      /(?:recognized container evidence|detected container)[\s\S]{0,200}(?:cannot qualify|never return\s+`qualified`)/iu,
+      `${relativePath} must limit container exclusion to recognized evidence`,
+    );
+    assert.doesNotMatch(
+      paragraph,
+      /\b(?:all|every|any)\s+(?:possible\s+)?container(?:s| runtime)?\b/iu,
+      `${relativePath} must not imply exhaustive container detection`,
+    );
+  }
+});
+
 test("release evidence accepts only the canonical independent matrix schema", () => {
   const fixtureRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "watchbound-native-evidence-"),

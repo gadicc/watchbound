@@ -185,9 +185,10 @@ platforms/filesystems, or applications that cannot own native delivery and a
 joined-disposal lifecycle. The supported native targets are GNU/Linux x64 and
 ARM64, with a qualified kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`; both targets are supported by the checked-in source matrix.
-WSL, containers, network filesystems, Filesystem in Userspace (FUSE), overlay
-filesystems, musl, ARMv7, and all non-Linux platforms remain
-unqualified or unsupported. Target compatibility is not a full host/root
+WSL and environments with recognized container evidence cannot qualify.
+Network filesystems, Filesystem in Userspace (FUSE), overlay filesystems, musl,
+ARMv7, and all non-Linux platforms remain unqualified or unsupported. Target
+compatibility is not a full host/root
 decision: call `qualifyRoot(root)` and require its machine-readable state to be
 `qualified` before enabling the watcher. See
 [`docs/support-matrix.md`](docs/support-matrix.md).

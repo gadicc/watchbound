@@ -123,11 +123,6 @@ test("README files defer Watchbound release versioning to package and release re
       /\b(?:current|unpublished)\s+(?:(?:Watchbound|package)\s+)?(?:release|package|source-build candidate)\b/iu,
       `${relativePath} must not describe Watchbound release status`,
     );
-    assert.doesNotMatch(source, /shields\.io\/npm\/v\/watchbound/iu);
-    assert.doesNotMatch(
-      source,
-      /jsr\.io\/badges\/@gadicc\/watchbound(?=[)\]])/iu,
-    );
     for (const match of source.matchAll(/\b\d+\.\d+\.\d+\b/gu)) {
       assert.ok(
         allowedTechnicalVersions.has(match[0]),

@@ -856,10 +856,10 @@ other backends or product surface.
 
 The published `1.2.0` matrix in `docs/support-matrix.md` covers supported
 x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35 baseline and Node
-`>=24.15.0 <25`. WSL, network
-filesystems, Filesystem in Userspace (FUSE), overlay filesystems, unusual
-container mounts, musl, ARMv7, and non-Linux platforms are unqualified or
-unsupported. The engine traverses existing mount points, has no
+`>=24.15.0 <25`. Detected WSL and environments with recognized container
+evidence cannot qualify. Network filesystems, Filesystem in Userspace (FUSE),
+and overlay filesystems are unqualified; musl, ARMv7, and non-Linux platforms
+are unsupported. The engine traverses existing mount points, has no
 one-filesystem mode, and cannot observe a later descendant mount insertion
 through inotify alone.
 

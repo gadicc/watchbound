@@ -18,14 +18,12 @@ Before changing an integration:
 2. Check `capabilities.support.currentRuntime.targetCompatible`, the matching
    entry in `capabilities.support.targets`, and `qualifyRoot(root).state`.
    Matching diagnostic runtime facts alone do not widen the declared support
-   target. Treat `container-unknown` as unknown evidence, never as a negative
-   container result. Older packages may expose only the legacy single-target
+   target. In the current API, the older
+   `capabilities.support.currentRuntime.supported` field is removed:
+   `targetCompatible` covers only the selected packaged target, while
+   `qualifyRoot(root)` supplies the required host and root decision. Older
+   packages may still expose the removed field or only the legacy single-target
    fields.
-
-The older `capabilities.support.currentRuntime.supported` field is removed.
-`targetCompatible` is not a compatibility alias for full support: it covers
-only the selected packaged target, while `qualifyRoot(root)` supplies the
-required host and root decision.
 3. Confirm that the consumer can rescan after a conservative root invalidation
    and can operate honestly with partial or uncertain coverage.
 4. Prefer another watcher when the consumer needs a cross-platform package,
@@ -36,15 +34,20 @@ The source repository can be ahead of immutable registry releases. Do not use a
 source-candidate API merely because this skill describes it; verify that the
 selected package version exports the capability.
 
-Treat the maintained target as deliberately evidence-bound. Release `1.1.0`
-publishes supported x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc
-2.35 baseline and Node `>=24.15.0 <25`. Exact native, distro, Electron, Nix,
-reproducibility, kernel-floor, separately supervised overflow, and
-post-publication npm/JSR smoke evidence backs those declarations. Treat distro
-recognition, successful loading, and runtime facts as unqualified unless the
-selected package's exact target says `supported`. WSL, network filesystems,
-FUSE, overlay filesystems, musl, ARMv7, and non-Linux hosts remain outside the
-published matrix.
+Treat support as deliberately evidence-bound. Use the installed package's
+capabilities and immutable registry, tag, and release records instead of a
+hard-coded release number. The checked-in source matrix declares
+supported x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35
+baseline and Node `>=24.15.0 <25`; exact native, distro, Electron, Nix,
+reproducibility, kernel-floor, separately supervised overflow, and registry
+smoke evidence backs those source declarations.
+
+An environment with recognized container evidence cannot qualify. Treat
+`container-unknown` as unknown evidence, never as a negative container result;
+`not-detected` covers only the designated probes and is not exhaustive.
+Detected WSL and network, FUSE, or overlay roots cannot qualify. Musl, ARMv7,
+and non-Linux hosts are unsupported. Distro recognition, successful loading,
+and runtime facts never widen the selected package's exact target status.
 
 ## Preserve the semantic model
 
@@ -129,14 +132,15 @@ globs or basenames, and are applied before the generation-zero topology scan.
 An empty prefix excludes the root. Watchbound does not discover Git ignores or
 application policy; consumers must compute and update that complete prefix set.
 
-When capability schema 8 is present and `qualifyRoot()` reports a qualified root,
-use `excludedDirectoryNames` for exact
-directory components that must be pruned at every depth, including future and
-renamed-in directories. Use `observedExcludedPaths` for nonempty exact
-root-relative excluded boundaries whose creation, deletion, rename,
-replacement, or identity change should trigger policy refresh. Observation
-overrides only boundary delivery: descendants remain unwatched and symlinks are
-not followed. Both options join `initialExclusions` at generation zero.
+When `capabilities.features.directoryNameExclusions` and
+`capabilities.features.observedExcludedPaths` are true, use
+`excludedDirectoryNames` for exact directory components that must be pruned at
+every depth, including future and renamed-in directories. Use
+`observedExcludedPaths` for nonempty exact root-relative excluded boundaries
+whose creation, deletion, rename, replacement, or identity change should
+trigger policy refresh. Observation overrides only boundary delivery:
+descendants remain unwatched and symlinks are not followed. Both options join
+`initialExclusions` at generation zero.
 
 `subscription.replaceExclusions(generation, policy)` atomically replaces all
 three sets. Omitted object fields are empty. The legacy array form remains a
@@ -200,8 +204,9 @@ Watchbound. Never follow directory symlinks.
 
 ## Contribute to the repository
 
-Read `AGENTS.md` and the relevant documents under `docs/` before editing.
-Maintain these ownership boundaries:
+Read `AGENTS.md` and `CONTRIBUTING.md` before editing. Use `docs/README.md` to
+find the relevant contract, evidence, or decision records. Maintain these
+ownership boundaries:
 
 - Put filesystem semantics and the Linux inotify state machine in `engine/`.
 - Keep `node/` to representation translation and lifecycle bridging.
@@ -218,11 +223,16 @@ pnpm test
 pnpm check
 ```
 
-After public declarations, documentation, entrypoint, or package-surface
-changes, also run:
+After public declaration or API-documentation changes, also run:
 
 ```sh
 deno doc --lint js/index.d.ts
+```
+
+Before handing off declaration, entrypoint, package-surface, or package
+documentation changes, also run:
+
+```sh
 pnpm test:packages
 ```
 

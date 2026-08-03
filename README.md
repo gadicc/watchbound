@@ -17,6 +17,8 @@ Watchbound is an experimental Linux-first watcher built directly on inotify. It 
 
 Packages are available from [npm](https://www.npmjs.com/package/watchbound) and [JSR](https://jsr.io/@gadicc/watchbound). Version history and availability come from registry metadata, [Git tags](https://github.com/gadicc/watchbound/tags), and [GitHub Releases](https://github.com/gadicc/watchbound/releases).
 
+The checked-in source can be ahead of those immutable releases. Before using an API described on this branch, verify that the installed package's declarations and exports include it.
+
 ## Contents
 
 - [Why Watchbound](#why-watchbound)
@@ -58,7 +60,9 @@ const root = process.cwd();
 const qualification = qualifyRoot(root);
 
 if (qualification.state !== "qualified") {
-  throw new Error(`Unsupported root: ${qualification.reasons.join(", ")}`);
+  throw new Error(
+    `Watchbound root is ${qualification.state}: ${qualification.reasons.join(", ")}`,
+  );
 }
 
 const subscription = await subscribe(root, (batch) => {
@@ -72,7 +76,7 @@ await new Promise<void>((resolve) => process.once("SIGINT", () => resolve()));
 await subscription.dispose();
 ```
 
-Callbacks are ordered and serialized per subscription. If `batch.coverage.state` is not `complete`, treat the paths as conservative rescan boundaries. See the [API and lifecycle contract](docs/api-lifecycle.md) for exclusion replacement, cancellation, reconciliation, root recovery, and callback shutdown.
+Callbacks are ordered and serialized per subscription. On `uncertain` coverage, rescan the safe reported boundary or use the applicable recovery operation. On `partial` coverage, surface the ongoing blind spot or maintain a fallback; a one-time rescan does not make future coverage complete. See the [API and lifecycle contract](docs/api-lifecycle.md) for exclusion replacement, cancellation, reconciliation, root recovery, and callback shutdown.
 
 ## Support matrix
 

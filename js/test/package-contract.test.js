@@ -109,9 +109,20 @@ test("private manifests retain source-build development and architecture-neutral
   }
 });
 
-test("README files defer Watchbound release versioning to package and release records", () => {
-  const allowedTechnicalVersions = new Set(["2.5.6", "10.33.2", "24.15.0"]);
-  for (const relativePath of ["README.md", "benches/README.md"]) {
+test("public guides defer Watchbound release versioning to package and release records", () => {
+  const allowedTechnicalVersions = new Set([
+    "0.0.0",
+    "2.5.6",
+    "10.33.2",
+    "24.15.0",
+  ]);
+  for (const relativePath of [
+    "README.md",
+    "CONTRIBUTING.md",
+    "benches/README.md",
+    "docs/README.md",
+    "skills/watchbound/SKILL.md",
+  ]) {
     const source = fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8");
     assert.doesNotMatch(
       source,
@@ -135,7 +146,10 @@ test("README files defer Watchbound release versioning to package and release re
 test("qualification summaries limit container exclusions to recognized evidence", () => {
   const summaries = [
     ["README.md", "The supported native targets"],
+    ["docs/api-lifecycle.md", "The candidate target matrix"],
+    ["docs/architecture.md", "The published `1.2.0` matrix"],
     ["docs/support-matrix.md", "The full machine-readable contract"],
+    ["skills/watchbound/SKILL.md", "An environment with recognized container evidence"],
   ];
 
   for (const [relativePath, marker] of summaries) {
@@ -146,7 +160,7 @@ test("qualification summaries limit container exclusions to recognized evidence"
     assert.ok(paragraph, `${relativePath} qualification summary is missing`);
     assert.match(
       paragraph,
-      /(?:recognized container evidence|detected container)[\s\S]{0,200}(?:cannot qualify|never return\s+`qualified`)/iu,
+      /(?:recognized\s+container\s+evidence|detected\s+container)[\s\S]{0,200}(?:cannot\s+qualify|never\s+return\s+`qualified`)/iu,
       `${relativePath} must limit container exclusion to recognized evidence`,
     );
     assert.doesNotMatch(

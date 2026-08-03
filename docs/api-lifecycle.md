@@ -712,10 +712,11 @@ model is acceptable.
 The candidate target matrix is x64 and ARM64 GNU/Linux, kernel 5.15 and
 glibc at most 2.35, with Node `>=24.15.0 <25`; both GNU/Linux targets are
 supported by the checked-in source matrix.
-Node-API compatibility or successful loading does not widen that matrix. WSL,
-network filesystems, Filesystem in Userspace (FUSE), overlay filesystems,
-unusual container mounts, musl, ARMv7, and non-Linux platforms are unqualified
-or unsupported. Existing mount points are traversed; no one-filesystem option or
+Node-API compatibility or successful loading does not widen that matrix.
+Detected WSL and environments with recognized container evidence cannot
+qualify. Network filesystems, Filesystem in Userspace (FUSE), and overlay
+filesystems are unqualified; musl, ARMv7, and non-Linux platforms are
+unsupported. Existing mount points are traversed; no one-filesystem option or
 runtime descendant-mount reconciliation is implemented. See
 [`support-matrix.md`](support-matrix.md).
 

@@ -83,6 +83,7 @@ export interface JsNativeDeliveryMetadata {
   targetTriple: string
   architecture: "x64" | "arm64" | "arm"
   armAbi: { version: 7; floatAbi: "hard"; endianness: "little" } | null
+  runtimeArmAbi: { version: 7; floatAbi: "hard"; endianness: "little" } | null
   libc: "glibc"
   binary: string
   sha256: string

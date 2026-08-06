@@ -66,7 +66,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
     throw new Error("native cancellation and shared-delivery capabilities are incompatible");
   }
 
-  const runtime = runtimeFacts();
+  const runtime = runtimeFacts(deliveryMetadata);
   const minimum = native.positiveIntegerMinimum;
   const maximum = native.positiveIntegerMaximum;
   const defaults = native.subscriptionDefaults;
@@ -672,7 +672,7 @@ function integerOption(unit, defaultValue, minimum, maximum) {
   };
 }
 
-function runtimeFacts() {
+function runtimeFacts(deliveryMetadata) {
   let report;
   try {
     report = process.report?.getReport?.();
@@ -686,15 +686,7 @@ function runtimeFacts() {
   return {
     platform: process.platform,
     architecture: process.arch,
-    armAbi: process.arch === "arm"
-      ? {
-          version: numericArmVersion(process.config?.variables?.arm_version),
-          floatAbi: typeof process.config?.variables?.arm_float_abi === "string"
-            ? process.config.variables.arm_float_abi
-            : null,
-          endianness: os.endianness() === "LE" ? "little" : "big",
-        }
-      : null,
+    armAbi: process.arch === "arm" ? deliveryMetadata.runtimeArmAbi : null,
     kernel: os.release(),
     libc: {
       family: typeof glibcVersion === "string" ? "glibc" : musl ? "musl" : "unknown",
@@ -705,12 +697,6 @@ function runtimeFacts() {
       api: process.versions.napi === undefined ? null : Number(process.versions.napi),
     },
   };
-}
-
-function numericArmVersion(value) {
-  if (typeof value === "number" && Number.isInteger(value)) return value;
-  if (typeof value === "string" && /^[0-9]+$/u.test(value)) return Number(value);
-  return null;
 }
 
 function sameArmAbi(runtime, packaged) {

@@ -163,6 +163,34 @@ test("loader selects only a little-endian ARMv7 hard-float runtime", () => {
     floatAbi: "hard",
     endianness: "little",
   });
+  assert.deepEqual(binding.nativeDeliveryMetadata().runtimeArmAbi, {
+    version: 7,
+    floatAbi: "hard",
+    endianness: "little",
+  });
+});
+
+test("loader attests Electron-shaped ARM runtimes from the running ELF", () => {
+  assert.ok(armv7Target, "native matrix must configure ARMv7 hard-float");
+  const contents = elfFor(armv7Target);
+  const binding = loadNative(loadOptions({
+    arch: "arm",
+    processConfig: { variables: {} },
+    machine: "armv7l",
+    readRuntimeElfHeader: () => contents,
+    readdirSync: () => [armv7Target.binary],
+    lstatSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      size: contents.length,
+    }),
+    readFileSync: () => contents,
+    requireNative: () => validBinding({
+      ...validMetadata,
+      targetTriple: armv7Target.rustTarget,
+    }),
+  }));
+  assert.deepEqual(binding.nativeDeliveryMetadata().runtimeArmAbi, armv7Target.armAbi);
 });
 
 test("loader fails closed for unsupported or unknown 32-bit ARM ABIs", () => {
@@ -192,6 +220,32 @@ test("loader fails closed for unsupported or unknown 32-bit ARM ABIs", () => {
       },
     );
     assert.equal(filesystemCalls, 0);
+  }
+});
+
+test("loader fallback rejects old machines, soft-float ELFs, and partial config", () => {
+  assert.ok(armv7Target, "native matrix must configure ARMv7 hard-float");
+  const hardFloat = elfFor(armv7Target);
+  const softFloat = Buffer.from(hardFloat);
+  softFloat.writeUInt32LE(0x05000200, 36);
+  for (const runtime of [
+    { variables: {}, machine: "armv6l", header: hardFloat },
+    { variables: {}, machine: "armv7l", header: softFloat },
+    {
+      variables: { arm_version: 7 },
+      machine: "armv7l",
+      header: hardFloat,
+    },
+  ]) {
+    expectLoaderError(
+      () => loadNative(loadOptions({
+        arch: "arm",
+        processConfig: { variables: runtime.variables },
+        machine: runtime.machine,
+        readRuntimeElfHeader: () => runtime.header,
+      })),
+      WatchboundLoaderErrorCode.UNSUPPORTED_PLATFORM,
+    );
   }
 });
 
@@ -439,6 +493,7 @@ test("bundled loader resolves one exact target package and verifies its digest",
     targetTriple: x64Target.rustTarget,
     architecture: "x64",
     armAbi: null,
+    runtimeArmAbi: null,
     libc: "glibc",
     binary: x64Target.binary,
     sha256,

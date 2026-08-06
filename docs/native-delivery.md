@@ -40,9 +40,14 @@ override, searches a cache, or falls back to another architecture/libc.
 ## Exact loader selection
 
 On Linux glibc, the loader maps `process.arch === "x64"`, `"arm64"`, or
-`"arm"` to one matrix entry. The `arm` route is accepted only when Node reports
-ARM version 7 and `arm_float_abi === "hard"` and the process is little-endian;
-missing facts, ARMv6, soft/softfp, or big-endian ARM fail with
+`"arm"` to one matrix entry. The `arm` route first accepts exact Node build
+variables reporting ARM version 7 and `arm_float_abi === "hard"`. When both
+variables are absent, as in the maintained Electron runtime, it instead
+requires an `armv7l`, `armv8l`, or compatible `aarch64` Linux machine and reads
+only the fixed ELF header of `/proc/self/exe` to prove ELF32, little-endian
+`EM_ARM`, EABI5, and the hard-float calling convention. Partial or contradictory
+build variables never fall back. ARMv6 machines, soft/softfp executables,
+big-endian ARM, or unreadable evidence fail with
 `WATCHBOUND_UNSUPPORTED_PLATFORM`. Musl fails independently with
 `WATCHBOUND_UNSUPPORTED_LIBC`. The loader then chooses one of two explicit
 delivery modes:

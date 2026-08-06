@@ -766,14 +766,14 @@ export interface Capabilities {
   readonly runtime: {
     readonly platform: string;
     readonly architecture: string;
-    /** Observed 32-bit ARM ABI facts, or null outside ARM runtimes. */
+    /** Loader-attested 32-bit ARM ABI facts, or null outside ARM runtimes. */
     readonly armAbi: {
-      /** Observed ARM instruction-set version, when reported by the runtime. */
-      readonly version: number | null;
-      /** Observed ARM floating-point calling convention. */
-      readonly floatAbi: string | null;
-      /** Observed runtime byte order. */
-      readonly endianness: "little" | "big";
+      /** Minimum attested ARM instruction-set version. */
+      readonly version: 7;
+      /** Attested ARM floating-point calling convention. */
+      readonly floatAbi: "hard";
+      /** Attested runtime byte order. */
+      readonly endianness: "little";
     } | null;
     readonly kernel: string;
     readonly libc: {

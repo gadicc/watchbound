@@ -61,7 +61,7 @@ function loadNative(options = {}) {
   const report = injected(options, "report", process.report);
   const libc = detectLibc(report);
   const target = platformTargets[0];
-  assertRuntimeAbi(options, target);
+  const runtimeArmAbi = assertRuntimeAbi(options, target);
   if (libc !== target.libc) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
@@ -114,6 +114,7 @@ function loadNative(options = {}) {
     targetTriple: target.rustTarget,
     architecture: target.architecture,
     armAbi: target.armAbi ?? null,
+    runtimeArmAbi,
     libc: target.libc,
     binary: target.binary,
     sha256: location.observedSha256,
@@ -210,15 +211,20 @@ function packagedLocation(options, target, expectedVersion) {
 }
 
 function assertRuntimeAbi(options, target) {
-  if (target.armAbi === undefined) return;
+  if (target.armAbi === undefined) return null;
   const processConfig = injected(options, "processConfig", process.config);
   const variables = processConfig?.variables;
   const version = numericArmVersion(variables?.arm_version);
   const floatAbi = variables?.arm_float_abi;
   const runtimeEndianness = injected(options, "endianness", os.endianness());
+  const configReportsArmAbi = variables?.arm_version !== undefined ||
+    variables?.arm_float_abi !== undefined;
+  const configMatches = version === target.armAbi.version &&
+    floatAbi === target.armAbi.floatAbi;
+  const executableMatches = !configReportsArmAbi &&
+    runtimeExecutableMatchesArmv7HardFloat(options);
   if (
-    version !== target.armAbi.version ||
-    floatAbi !== target.armAbi.floatAbi ||
+    (!configMatches && !executableMatches) ||
     runtimeEndianness !== "LE" ||
     target.armAbi.endianness !== "little"
   ) {
@@ -226,6 +232,53 @@ function assertRuntimeAbi(options, target) {
       WatchboundLoaderErrorCode.UNSUPPORTED_PLATFORM,
       "Watchbound ARM support requires an ARMv7 hard-float little-endian runtime",
     );
+  }
+  return {
+    version: target.armAbi.version,
+    floatAbi: target.armAbi.floatAbi,
+    endianness: target.armAbi.endianness,
+  };
+}
+
+function runtimeExecutableMatchesArmv7HardFloat(options) {
+  const machine = injected(options, "machine", os.machine());
+  if (machine !== "aarch64" && !/^armv[78]l$/u.test(machine)) return false;
+  const readRuntimeElfHeader = injected(
+    options,
+    "readRuntimeElfHeader",
+    readCurrentExecutableElfHeader,
+  );
+  let contents;
+  try {
+    contents = readRuntimeElfHeader();
+  } catch {
+    return false;
+  }
+  if (
+    !Buffer.isBuffer(contents) ||
+    contents.length < 52 ||
+    !contents.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+    contents[4] !== 1 ||
+    contents[5] !== 1 ||
+    contents.readUInt16LE(18) !== 40
+  ) {
+    return false;
+  }
+  const flags = contents.readUInt32LE(36);
+  const eabiVersion = flags & 0xff000000;
+  const softFloat = flags & 0x00000200;
+  const hardFloat = flags & 0x00000400;
+  return eabiVersion === 0x05000000 && softFloat === 0 && hardFloat !== 0;
+}
+
+function readCurrentExecutableElfHeader() {
+  const descriptor = fs.openSync("/proc/self/exe", "r");
+  try {
+    const contents = Buffer.alloc(52);
+    const bytesRead = fs.readSync(descriptor, contents, 0, contents.length, 0);
+    return contents.subarray(0, bytesRead);
+  } finally {
+    fs.closeSync(descriptor);
   }
 }
 

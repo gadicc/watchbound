@@ -153,9 +153,12 @@ jobs:
       tag: ${{ steps.select.outputs.tag }}
       source: ${{ steps.matrix.outputs.source }}
       build: ${{ steps.matrix.outputs.build }}
+      compare: ${{ steps.matrix.outputs.compare }}
+      runtime: ${{ steps.matrix.outputs.runtime }}
       qualification: ${{ steps.matrix.outputs.qualification }}
       kernel: ${{ steps.matrix.outputs.kernel }}
       registry: ${{ steps.matrix.outputs.registry }}
+      registry-emulated: ${{ steps.matrix.outputs.registryEmulated }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -237,6 +240,12 @@ jobs:
           node-version: 24.15.0
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
+      - name: Install the ARMv7 hard-float cross linker
+        if: matrix.buildMode == 'cross'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf
       - name: Assert exact isolated clean source
         shell: bash
         run: |
@@ -254,11 +263,18 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+          if [[ "${{ matrix.buildMode }}" = cross ]]; then
+            rustup target add armv7-unknown-linux-gnueabihf
+          fi
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm config set store-dir "$PNPM_STORE_DIR"
           pnpm install --frozen-lockfile
-          pnpm build:node
+          if [[ "${{ matrix.buildMode }}" = cross ]]; then
+            node scripts/build-node.mjs --target "${{ matrix.target }}"
+          else
+            pnpm build:node
+          fi
           test -f "node/${{ matrix.binary }}"
           test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
           test "$(node --version)" = v24.15.0
@@ -298,7 +314,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.source) }}
+        include: ${{ fromJSON(needs.plan.outputs.compare) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -375,6 +391,78 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           overwrite: true
+
+  release-armv7-runtime:
+    name: Release ARMv7 Electron lifecycle (${{ matrix.target }})
+    needs: [plan, aggregate]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.plan.outputs.qualify == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.runtime) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.version }}
+      - name: Install QEMU user mode and the ARM hard-float runtime sysroot
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-arm-linux-gnueabihf qemu-user unzip
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: watchbound-approved-native-matrix
+          path: ${{ runner.temp }}/approved-matrix
+      - name: Exercise the canonical ARMv7 package under exact Electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          WATCHBOUND_NATIVE_ARTIFACTS_DIR="$RUNNER_TEMP/approved-matrix" \
+            WATCHBOUND_REQUIRE_ALL_TARGETS=1 pnpm package:prepare
+          archive="$RUNNER_TEMP/electron-armv7.zip"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/electron/electron/releases/download/v42.3.0/electron-v42.3.0-linux-${{ matrix.electronArchitecture }}.zip"
+          expected_hex="$(printf '%s' '${{ matrix.electronSha256SRI }}' | sed 's/^sha256-//' | base64 -d | od -An -vtx1 | tr -d ' \n')"
+          printf '%s  %s\n' "$expected_hex" "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/electron-armv7"
+          unzip -q "$archive" -d "$RUNNER_TEMP/electron-armv7"
+          node scripts/check-electron-asar.mjs \
+            --electron "$RUNNER_TEMP/electron-armv7/electron" \
+            --emulator "${{ matrix.emulator }}" \
+            --emulator-cpu "${{ matrix.emulatorCpu }}" \
+            --sysroot "${{ matrix.sysroot }}" \
+            --target "${{ matrix.target }}" \
+            --evidence "$RUNNER_TEMP/release-armv7-runtime-${{ matrix.target }}.json"
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.version }}"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-release-armv7-runtime-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-armv7-runtime-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 90
 
   release-distro:
     name: Release artifact ABI (${{ matrix.lane }}, ${{ matrix.architecture }})
@@ -633,13 +721,14 @@ jobs:
 
   qualification-verified:
     name: Manual qualification verified
-    needs: [plan, tests, aggregate, release-distro, release-electron, release-kernel-baseline, release-overflow]
+    needs: [plan, tests, aggregate, release-armv7-runtime, release-distro, release-electron, release-kernel-baseline, release-overflow]
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
       needs.plan.result == 'success' &&
       needs.tests.result == 'success' &&
       needs.aggregate.result == 'success' &&
+      needs.release-armv7-runtime.result == 'success' &&
       needs.release-distro.result == 'success' &&
       needs.release-electron.result == 'success' &&
       needs.release-kernel-baseline.result == 'success' &&
@@ -653,11 +742,11 @@ jobs:
           ATTEMPT: ${{ inputs.attempt }}
         run: >-
           echo "Qualified $CANDIDATE_SHA $SCENARIO attempt $ATTEMPT
-          on native x64 and ARM64."
+          on native x64/ARM64 and QEMU-executed ARMv7 hard-float."
 
   release:
     name: Publish exact qualified target matrix
-    needs: [plan, tests, aggregate, release-distro, release-electron, release-kernel-baseline, release-overflow]
+    needs: [plan, tests, aggregate, release-armv7-runtime, release-distro, release-electron, release-kernel-baseline, release-overflow]
     if: >-
       always() &&
       github.event_name == 'push' &&
@@ -665,6 +754,7 @@ jobs:
       needs.plan.result == 'success' &&
       needs.tests.result == 'success' &&
       needs.aggregate.result == 'success' &&
+      needs.release-armv7-runtime.result == 'success' &&
       needs.release-distro.result == 'success' &&
       needs.release-electron.result == 'success' &&
       needs.release-kernel-baseline.result == 'success' &&
@@ -797,12 +887,80 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-  verified:
-    name: Stable target matrix verified
-    needs: registry-smoke
+  registry-armv7-smoke:
+    name: Registry QEMU ARMv7 (${{ matrix.route }}, ${{ matrix.target }})
+    needs: [plan, release]
     if: >-
       always() &&
-      needs.registry-smoke.result == 'success'
+      needs.plan.result == 'success' &&
+      needs.release.result == 'success' &&
+      needs.release.outputs.published == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.registry-emulated) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: watchbound-approved-native-matrix
+          path: ${{ runner.temp }}/approved-matrix
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - name: Install the ARMv7 execution runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-arm-linux-gnueabihf qemu-user unzip
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          npm install --global npm@11.18.0
+      - name: Exercise exact immutable registry packages under ARMv7
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/electron-armv7.zip"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/electron/electron/releases/download/v42.3.0/electron-v42.3.0-linux-${{ matrix.electronArchitecture }}.zip"
+          expected_hex="$(printf '%s' '${{ matrix.electronSha256SRI }}' | sed 's/^sha256-//' | base64 -d | od -An -vtx1 | tr -d ' \n')"
+          printf '%s  %s\n' "$expected_hex" "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/electron-armv7"
+          unzip -q "$archive" -d "$RUNNER_TEMP/electron-armv7"
+          digest="$(sha256sum "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" | cut -d ' ' -f 1)"
+          node scripts/check-registry-packages.mjs \
+            --route "${{ matrix.route }}" \
+            --version "${{ needs.release.outputs.version }}" \
+            --native-target "${{ matrix.target }}" \
+            --native-sha256 "$digest" \
+            --electron "$RUNNER_TEMP/electron-armv7/electron" \
+            --emulator "${{ matrix.emulator }}" \
+            --emulator-cpu "${{ matrix.emulatorCpu }}" \
+            --sysroot "${{ matrix.sysroot }}" \
+            --evidence "$RUNNER_TEMP/registry-armv7-${{ matrix.route }}-${{ matrix.target }}.json"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-registry-armv7-${{ matrix.route }}-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/registry-armv7-${{ matrix.route }}-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  verified:
+    name: Stable target matrix verified
+    needs: [registry-smoke, registry-armv7-smoke]
+    if: >-
+      always() &&
+      needs.registry-smoke.result == 'success' &&
+      needs.registry-armv7-smoke.result == 'success'
     runs-on: ubuntu-24.04
     steps:
       - run: echo "Every exact npm and JSR target route passed."

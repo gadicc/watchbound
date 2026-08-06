@@ -86,6 +86,14 @@ try {
       unpackedNativeSha256: sha256(unpackedNative),
     },
     smoke: result,
+    execution: options.emulator
+      ? {
+          mode: "qemu-user",
+          emulator: path.basename(options.emulator),
+          cpu: options["emulator-cpu"],
+          sysroot: options.sysroot,
+        }
+      : { mode: "native" },
   };
   if (options.evidence) writeJson(path.resolve(options.evidence), evidence);
   process.stdout.write(`Electron ${runtime.electron} ASAR smoke passed for ${target.id}\n`);
@@ -94,7 +102,19 @@ try {
 }
 
 function runElectron(executable, args, environment = {}) {
-  const result = spawnSync(executable, args, {
+  const command = options.emulator ? path.resolve(options.emulator) : executable;
+  const commandArguments = options.emulator
+    ? [
+        ...(options["emulator-cpu"] ? ["-cpu", options["emulator-cpu"]] : []),
+        "-L",
+        path.resolve(options.sysroot),
+        "-E",
+        `LD_LIBRARY_PATH=${path.dirname(executable)}`,
+        executable,
+        ...args,
+      ]
+    : args;
+  const result = spawnSync(command, commandArguments, {
     cwd: workspaceRoot,
     encoding: "utf8",
     stdio: "pipe",
@@ -113,12 +133,18 @@ function parseOptions(args) {
     const flag = args[index];
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
-      throw new Error("usage: check-electron-asar.mjs --electron <path> --target <id> [--evidence <path>]");
+      throw new Error("usage: check-electron-asar.mjs --electron <path> --target <id> [--evidence <path>] [--emulator <path> --emulator-cpu <cpu> --sysroot <path>]");
     }
     parsed[flag.slice(2)] = value;
   }
   assert.ok(parsed.electron, "--electron is required");
   assert.ok(parsed.target, "--target is required");
+  if (parsed.emulator) {
+    assert.ok(parsed.sysroot, "--sysroot is required with --emulator");
+  } else {
+    assert.equal(parsed.sysroot, undefined, "--sysroot requires --emulator");
+    assert.equal(parsed["emulator-cpu"], undefined, "--emulator-cpu requires --emulator");
+  }
   return parsed;
 }
 

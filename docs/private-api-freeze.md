@@ -157,15 +157,18 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; both current target entries emit the
-supported value. Exhaustive narrowing fixtures compile in the ordinary gate.
+`target-pending-clean-ci` and `supported`; the two published target entries emit the
+supported value in the published line. The ARMv7 source target emits
+`target-pending-clean-ci` until its exact execution evidence passes. Exhaustive
+narrowing fixtures compile in the ordinary gate.
 The formerly published `support.currentRuntime.supported` boolean is removed as
 an intentional breaking change: `targetCompatible` is target-only, and full
 host/root qualification requires `qualifyRoot(root)`. Migration guidance is in
 [`migrate-root-qualification.md`](migrate-root-qualification.md).
-Capability schema 8 and binding API 5 additionally expose full root
+Capability schema 9 and binding API 5 additionally expose full root
 qualification, physical-root resolution, and bytes-only physical invalidations
-alongside `directoryNameExclusions` and `observedExcludedPaths`;
+alongside `directoryNameExclusions`, `observedExcludedPaths`, and exact ARM ABI
+facts;
 loader metadata remains schema 1 and raw native capabilities advance to schema
 5. Wrappers and loaders
 fail closed against older or newer unproved native contracts.
@@ -193,15 +196,15 @@ enter afterward.
 
 ## Target and exclusions
 
-Release `1.1.0` defines controlled x64 and ARM64 GNU/Linux source and package
-targets, a kernel 5.15/glibc 2.35 baseline, Node
+The current source defines controlled x64, ARM64, and exact ARMv7 hard-float
+GNU/Linux source and package targets, a kernel 5.15/glibc 2.35 baseline, Node
 `>=24.15.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer, and
 pnpm 10.33.2 under trusted stable local roots. Each status-bearing target must
 pass its full exact matrix; a target description or successful load is not
 qualification evidence.
 
-Unsupported targets include other Node ranges; musl; ARMv7 and other
-architectures; non-Linux systems; WSL,
+Unsupported targets include other Node ranges; musl; soft-float, unknown,
+big-endian, and non-v7 32-bit ARM; other architectures; non-Linux systems; WSL,
 non-ordinary mounts, network/FUSE/overlay filesystems unless separately
 qualified; cross-compilation alone, install-time compiler
 fallback; and hostile or adversarially mutated roots. Support does not include

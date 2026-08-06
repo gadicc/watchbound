@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       source: ${{ steps.matrix.outputs.source }}
+      cross: ${{ steps.matrix.outputs.cross }}
+      runtime: ${{ steps.matrix.outputs.runtime }}
       qualification: ${{ steps.matrix.outputs.qualification }}
       kernel: ${{ steps.matrix.outputs.kernel }}
       nix: ${{ steps.matrix.outputs.nix }}
@@ -154,6 +156,145 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           overwrite: true
+
+  cross-build:
+    name: Cross-build and package (${{ matrix.target }})
+    needs: matrix
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.cross) }}
+    steps:
+      - name: Check out the exact clean source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
+      - name: Install the pinned ARMv7 hard-float cross toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf
+          rustup toolchain install 1.88.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.88.0
+          rustup target add "${{ matrix.rustTarget }}"
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          test "$(node --version)" = v24.15.0
+          test "$(node -p 'process.arch')" = x64
+          "${{ matrix.linker }}" --version
+      - name: Cross-compile and validate the exact target package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          node scripts/build-node.mjs --target "${{ matrix.target }}"
+          test -f "node/${{ matrix.binary }}"
+          test "$(find node -maxdepth 1 -type f -name '*.node' -print | wc -l)" -eq 1
+          file "node/${{ matrix.binary }}" | grep -F 'ELF 32-bit LSB shared object, ARM'
+          readelf --file-header "node/${{ matrix.binary }}" | grep -Eq 'Machine:[[:space:]]+ARM'
+          pnpm package:prepare
+          node scripts/check-target-package.mjs --target "${{ matrix.target }}"
+          node node/test/loader.cjs
+          node js/test/package-contract.test.js
+          pnpm check
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
+      - name: Retain the cross-built target artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}
+          path: node/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  armv7-runtime:
+    name: QEMU ARMv7 Electron lifecycle (${{ matrix.target }})
+    needs: [matrix, cross-build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.runtime) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
+      - name: Install QEMU user mode and the ARM hard-float runtime sysroot
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-arm-linux-gnueabihf qemu-user unzip
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}
+          path: node
+      - name: Load, watch, deliver, and dispose under ARMv7 Electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm package:prepare
+          archive="$RUNNER_TEMP/electron-armv7.zip"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/electron/electron/releases/download/v42.3.0/electron-v42.3.0-linux-${{ matrix.electronArchitecture }}.zip"
+          expected_hex="$(printf '%s' '${{ matrix.electronSha256SRI }}' | sed 's/^sha256-//' | base64 -d | od -An -vtx1 | tr -d ' \n')"
+          printf '%s  %s\n' "$expected_hex" "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/electron-armv7"
+          unzip -q "$archive" -d "$RUNNER_TEMP/electron-armv7"
+          node scripts/check-electron-asar.mjs \
+            --electron "$RUNNER_TEMP/electron-armv7/electron" \
+            --emulator "${{ matrix.emulator }}" \
+            --emulator-cpu "${{ matrix.emulatorCpu }}" \
+            --sysroot "${{ matrix.sysroot }}" \
+            --target "${{ matrix.target }}" \
+            --evidence "$RUNNER_TEMP/watchbound-armv7-runtime-${{ matrix.target }}.json"
+          if [[ -n "${{ inputs.candidate_version }}" ]]; then
+            node scripts/verify-release-candidate.mjs \
+              --source-sha "${{ inputs.candidate_sha }}" \
+              --version "${{ inputs.candidate_version }}"
+          fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-armv7-runtime-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-armv7-runtime-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 90
 
   moving-toolchain:
     name: Moving Node 24 and Rust stable

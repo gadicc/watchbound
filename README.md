@@ -80,16 +80,17 @@ Callbacks are ordered and serialized per subscription. On `uncertain` coverage, 
 
 ## Support matrix
 
-The release-qualification badge at the top reports the live `main` workflow. For release candidates, that workflow calls the full continuous integration (CI) matrix across both native targets. GitHub exposes a workflow badge rather than one badge per matrix cell, so each check below links to the retained exact-commit qualification record.
+The release-qualification badge at the top reports the live `main` workflow. For release candidates, that workflow calls the full continuous integration (CI) matrix across every native target. GitHub exposes a workflow badge rather than one badge per matrix cell, so each check below links to the retained exact-commit qualification record.
 
 | Target | Native package | Runtime baseline | Status |
 | --- | --- | --- | --- |
 | GNU/Linux x64 | `@gadicc/watchbound-node-linux-x64-gnu` | Node `>=24.15.0 <25`, kernel 5.15+, glibc 2.35+ | [✅ Supported](docs/support-matrix.md#published-target-contract) |
 | GNU/Linux ARM64 | `@gadicc/watchbound-node-linux-arm64-gnu` | Node `>=24.15.0 <25`, kernel 5.15+, glibc 2.35+ | [✅ Supported](docs/support-matrix.md#published-target-contract) |
+| GNU/Linux ARMv7 hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | ARMv7-A, hard-float EABI, little-endian glibc; Electron 42.3.0 / Node 24.15.0; kernel 5.15+ | [⏳ Cross-build implemented; runtime qualification pending](docs/support-matrix.md#source-candidate-armv7-contract) |
 
-CI also exercises pinned Ubuntu, Debian, Fedora, Arch x64, openSUSE, Nix, kernel 5.15, and Electron lanes. The [full support and qualification matrix](docs/support-matrix.md) records the exact lane, architecture, artifact, and promotion evidence.
+CI also exercises pinned Ubuntu, Debian, Fedora, Arch x64, openSUSE, Nix, kernel 5.15, Electron, and an ARMv7 QEMU-user Electron lifecycle lane. The [full support and qualification matrix](docs/support-matrix.md) records the exact lane, architecture, artifact, and promotion evidence.
 
-The supported native targets are GNU/Linux x64 and ARM64. They require Node `>=24.15.0 <25`, kernel 5.15 or newer, and glibc 2.35 or newer. WSL and environments with recognized container evidence cannot qualify. Network, Filesystem in Userspace (FUSE), and overlay filesystems are unqualified; musl, ARMv7, and non-Linux platforms are unsupported.
+The supported native targets published today remain GNU/Linux x64 and ARM64. The source candidate adds exact little-endian ARMv7 hard-float glibc delivery, but intentionally reports that target as `target-pending-clean-ci` until its cross-build, package, and QEMU Electron lifecycle jobs pass on the exact status-bearing revision. Upstream Node 24.15.0 does not publish an official Linux ARMv7 binary, so ARMv7 runtime qualification uses the pinned Electron 42.3.0 ARMv7 runtime; compatible consumer-managed Node builds must expose ARM version 7 and hard-float runtime facts. Environments with recognized container evidence cannot qualify. Soft-float, unknown ARM ABI, big-endian ARM, musl, and non-Linux platforms fail closed.
 
 Loading a compatible native package does not qualify the host or root. Call `qualifyRoot(root)` and require `state === "qualified"`; the [runtime qualification contract](docs/runtime-qualification.md) explains every accepted and rejected state.
 
@@ -118,7 +119,7 @@ Parcel remains the better default when its public contract is sufficient. It is 
 
 | Need | Watchbound | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
-| Platforms | Qualified GNU/Linux x64 and ARM64 | Broad cross-platform prebuild coverage |
+| Platforms | Qualified GNU/Linux x64 and ARM64; ARMv7 hard-float candidate pending execution evidence | Broad cross-platform prebuild coverage |
 | Event model | Conservative invalidated paths | Coalesced `create`, `update`, and `delete` events |
 | Coverage and loss | Explicit complete, partial, and uncertain states | No public coverage state |
 | Limits and pressure | Public watch limits, bounded queues, and accounting | No public active-watch or backpressure state |

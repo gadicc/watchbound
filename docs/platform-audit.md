@@ -49,3 +49,19 @@ distro families when built against the old glibc baseline and qualified in
 their userspaces. The wrapper and loader remain architecture-neutral. Nix
 builds from source inside the Nix closure instead of repackaging the registry
 ELF, keeping Nix pure and avoiding npm access.
+
+## 2026-08-06 ARMv7 follow-up
+
+The current task supplied additional consumer evidence that
+codex-desktop-linux carries ARMv7/armhf through its Debian, RPM, AppImage,
+Electron, managed-Node, and dependency setup paths. Watchbound therefore adds
+one exact GNU/Linux ARMv7 hard-float target rather than treating all
+`process.arch === "arm"` runtimes as compatible.
+
+The new source path cross-compiles `armv7-unknown-linux-gnueabihf`, packages
+`@gadicc/watchbound-node-linux-arm-gnueabihf`, and executes the official
+Electron 42.3.0 `linux-armv7l` archive through QEMU-user. This supplements but
+does not rewrite the historical 2026-07-26 audit table. The target remains
+pending until the exact runtime job passes; musl, soft-float, unknown ARM ABI,
+big-endian ARM, and non-v7 ARM remain unsupported. No codex-desktop-linux files
+are changed here.

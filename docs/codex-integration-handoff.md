@@ -1,6 +1,6 @@
 # Codex Desktop Linux handoff
 
-Status: release `1.2.0` is published. The native, distro, Electron, Nix,
+Status: release `2.0.0` is published. The retained native, distro, Electron, Nix,
 reproducibility, pinned-kernel, and both supervised-overflow scenarios are green
 for x64 and ARM64, and post-publication npm and JSR Node-route smokes passed on
 both architectures. A maintainer-reported, locally unpublished Codex Desktop
@@ -15,13 +15,49 @@ consumer-owned.
 | --- | --- | --- | --- |
 | x64 | `@gadicc/watchbound-node-linux-x64-gnu` | `watchbound.linux-x64-gnu.node` | `x86_64-unknown-linux-gnu` |
 | ARM64 | `@gadicc/watchbound-node-linux-arm64-gnu` | `watchbound.linux-arm64-gnu.node` | `aarch64-unknown-linux-gnu` |
+| ARMv7 hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `watchbound.linux-arm-gnueabihf.node` | `armv7-unknown-linux-gnueabihf` |
 
-Both routes also install `watchbound@<version>` and
+All routes also install `watchbound@<version>` and
 `@gadicc/watchbound-node@<same-version>`. The loader selects exactly one local
 target and verifies package metadata, SHA-256, ELF identity, binding metadata,
-versions, Node-API, triple, and release profile. Capability schema 5 retains
+versions, Node-API, triple, and release profile. Capability schema 8 retains
 `build.packagedTarget`, per-target qualification, and current-runtime matching;
 it also declares exclusion feature and option facts.
+
+The ARMv7 row describes the source candidate, not a published artifact. It
+requires little-endian ARM version 7, the hard-float EABI, and glibc; all other
+32-bit ARM variants fail closed. Capability schema 9 reports those ABI facts.
+
+## Proposed 2.1.0 ARMv7 handoff
+
+After the exact status-bearing revision passes both deterministic cross-builds,
+package validation, and the QEMU-user Electron start/callback/dispose lane, the
+proposed next release is `2.1.0`. Do not enable or pin the ARMv7 route before
+that release exists and its npm/JSR registry smokes pass.
+
+Codex will need these five exact lockstep package records:
+
+| Package | Version after release | Required identity |
+| --- | --- | --- |
+| `watchbound` | `2.1.0` | registry tarball URL, `dist.integrity`, npm shasum, tarball SHA-256 |
+| `@gadicc/watchbound-node` | `2.1.0` | registry tarball URL, `dist.integrity`, npm shasum, tarball SHA-256 |
+| `@gadicc/watchbound-node-linux-x64-gnu` | `2.1.0` | package identities plus native path and SHA-256 |
+| `@gadicc/watchbound-node-linux-arm64-gnu` | `2.1.0` | package identities plus native path and SHA-256 |
+| `@gadicc/watchbound-node-linux-arm-gnueabihf` | `2.1.0` | package identities plus `watchbound.linux-arm-gnueabihf.node` SHA-256 |
+
+Also pin tag `v2.1.0`, the tag's exact source commit, native-matrix schema 1,
+capability schema 9, binding API 5, metadata schema 1, Node-API floor 6, and the
+ARM target's `armv7-unknown-linux-gnueabihf` triple and ARMv7/hard/little ABI
+object. The release commit, npm integrities and shasums, tarball hashes, and
+native hashes do not exist yet; copy them from the retained release evidence
+and immutable registry responses after publication, never from this local
+development build.
+
+The consumer selector should map only its normalized Linux `arm`/`armhf`
+runtime with proven ARMv7 hard-float little-endian facts to the new record. It
+must retain exact x64 and ARM64 selection, reject musl/soft-float/unknown ARM,
+and install only the selected native target with the neutral loader and
+wrapper. This Watchbound change does not modify codex-desktop-linux.
 
 ## Published 1.2.0 exclusion-API manifest update
 
@@ -88,11 +124,12 @@ not substitute `latest` or synthesize integrity from a local build.
 
 ## Codex integration requirements
 
-1. Replace the single x64 Watchbound artifact record with wrapper, neutral
-   loader, x64 target, and ARM64 target records in lockstep.
-2. Select the target record from Codex's normalized `x64`/`arm64` Linux target;
-   reject ARMv7 and musl. Do not add a fallback.
-3. Keep all four packages at exact version `1.2.0` and pin the official URL,
+1. After `2.1.0` is published and verified, keep wrapper, neutral loader, x64,
+   ARM64, and ARMv7 hard-float target records in lockstep.
+2. Select the target record from Codex's normalized `x64`, `arm64`, or exact
+   `arm`/`armhf` Linux target; reject musl and every unproven ARM ABI. Do not
+   add a fallback.
+3. Keep all five packages at exact version `2.1.0` and pin the official URL,
    npm integrity/shasum, tarball SHA-256, native path, and native SHA-256.
 4. Stage the JS packages in `app.asar`, allow the `.node` file to be unpacked
    by the existing `{*.node,*.so,*.dylib}` ASAR rule, and retain the package
@@ -102,9 +139,12 @@ not substitute `latest` or synthesize integrity from a local build.
    infer support from `runtime`, successful load, or legacy fields.
 6. Enable x64 only on exact green Ubuntu 22.04/24.04, Debian 12, Fedora 42,
    Arch, openSUSE, Electron, and release-artifact evidence. Enable ARM64 only
-   after its applicable native lanes are green. Derivative families remain
-   compatibility claims, not separately qualified lanes.
-7. Keep ARMv7, musl, non-Linux, and unqualified families disabled.
+   after its applicable native lanes are green. Enable ARMv7 only after the
+   exact release's cross-build/package and QEMU-user Electron lifecycle plus
+   registry smokes are green. Derivative families remain compatibility claims,
+   not separately qualified lanes.
+7. Keep soft-float, unknown/big-endian/non-v7 ARM, musl, non-Linux, and
+   unqualified families disabled.
 
 For Nix, consume Watchbound's source/lock-based derivation pattern or vendor the
 same locked source into the Codex flake; do not fetch npm during a derivation.
@@ -120,6 +160,7 @@ source revision.
   capability-based fail-closed checks in its own repository.
 - Codex should exercise its actual Electron startup, repository-preview,
   cancellation, degraded-coverage, callback-pressure, and joined-shutdown
-  paths on x64 and ARM64 before treating the integration as production-ready.
+  paths on x64, ARM64, and ARMv7 hard-float before treating the integration as
+  production-ready.
 - Codex repository changes and production enablement remain consumer-owned;
   Watchbound's registry smokes do not substitute for that acceptance evidence.

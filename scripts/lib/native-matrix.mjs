@@ -56,30 +56,66 @@ export function validateNativeMatrix(matrix) {
     "native target binaries must be unique",
   );
   for (const target of matrix.targets) {
-    assert.match(target.id, /^linux-(?:x64|arm64)-gnu$/u);
+    assert.match(target.id, /^linux-(?:x64-gnu|arm64-gnu|arm-gnueabihf)$/u);
     assert.equal(target.platform, "linux");
-    assert.ok(["x64", "arm64"].includes(target.architecture));
-    assert.match(target.rustTarget, /^(?:x86_64|aarch64)-unknown-linux-gnu$/u);
-    assert.equal(target.libc, "glibc");
-    assert.equal(
-      target.overflowRunner,
-      target.architecture === "x64" ? "ubuntu-24.04" : "ubuntu-24.04-arm",
+    assert.ok(["x64", "arm64", "arm"].includes(target.architecture));
+    assert.match(
+      target.rustTarget,
+      /^(?:x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|armv7-unknown-linux-gnueabihf)$/u,
     );
+    assert.equal(target.libc, "glibc");
+    if (target.architecture === "arm") {
+      assert.deepEqual(target.armAbi, {
+        version: 7,
+        floatAbi: "hard",
+        endianness: "little",
+      });
+      assert.equal(target.buildMode, "cross");
+      assert.equal(target.buildArchitecture, "x64");
+      assert.equal(target.linker, "arm-linux-gnueabihf-gcc");
+      assert.equal(target.linkerBinary, "arm-linux-gnueabihf-ld");
+      assert.equal(target.runtimeQualification, "qemu-user-electron");
+      assert.equal(target.runtimeEmulator, "/usr/bin/qemu-arm");
+      assert.equal(target.runtimeCpu, "cortex-a15");
+      assert.equal(target.runtimeSysroot, "/usr/arm-linux-gnueabihf");
+      assert.equal(target.overflowRunner, null);
+      assert.equal(target.nixSystem, null);
+    } else {
+      assert.equal(target.armAbi, undefined);
+      assert.equal(target.buildMode, undefined);
+      assert.equal(
+        target.overflowRunner,
+        target.architecture === "x64" ? "ubuntu-24.04" : "ubuntu-24.04-arm",
+      );
+    }
     assert.equal(target.binary, `watchbound.${target.id}.node`);
     assert.equal(
       target.package,
       `@gadicc/watchbound-node-${target.id}`,
     );
     assert.ok(["target-pending-clean-ci", "supported"].includes(target.qualification));
-    assert.equal(target.elf.class, 2);
+    assert.equal(target.elf.class, target.architecture === "arm" ? 1 : 2);
     assert.equal(target.elf.endianness, 1);
     assert.ok(Number.isInteger(target.elf.machine));
+    assert.ok(Number.isInteger(target.elf.flags));
+    if (target.architecture === "arm") {
+      assert.equal(target.elf.flags, 0x05000400);
+      assert.equal(target.elf.flagsDescription, "Version5 EABI, hard-float ABI");
+    } else {
+      assert.equal(target.elf.flags, 0);
+      assert.equal(target.elf.flagsDescription, undefined);
+    }
     assert.ok(Array.isArray(target.elf.neededLibraries));
   }
   for (const lane of matrix.qualificationLanes) {
     assert.match(lane.id, /^[a-z0-9.-]+$/u);
     assert.ok(Array.isArray(lane.architectures) && lane.architectures.length > 0);
     assert.match(lane.image, /@sha256:[0-9a-f]{64}$/u);
+    assert.ok([
+      "runtime-qualification-required",
+      "qemu-user-runtime-required",
+      "native-nix-closure-required",
+    ].includes(lane.evidence));
   }
   return matrix;
 }

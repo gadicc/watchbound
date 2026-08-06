@@ -9,6 +9,11 @@ package selection. Release `1.2.0` advances to binding API 4 for whole-policy
 exclusion replacement; both targets completed exact qualification and the
 release is published.
 
+The current source candidate retains binding API 5 and adds exact ARMv7
+hard-float package selection. Public capability schema 9 carries ARM ABI facts;
+the new target remains pending until its cross-build/package and QEMU-user
+Electron runtime lanes pass.
+
 ## Choice
 
 Use napi-rs v3 with Node-API 6 for the thin binding.
@@ -107,12 +112,12 @@ with its own version, runtime facts, the approved support target, automatic
 policy limits, and observability semantics.
 
 The resulting public `capabilities` object is deeply frozen and
-JSON-serializable. Under `schemaVersion: 8`, its stable sections are `versions`,
+JSON-serializable. Under `schemaVersion: 9`, its stable sections are `versions`,
 `build`, `runtime`, `support`, `features`, `options`, and `observability`.
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
-The release metadata marks both exact GNU/Linux target entries `supported`
-after the complete status-bearing matrix. The release workflow still requires
+The release metadata marks x64 and ARM64 `supported`; ARMv7 remains
+`target-pending-clean-ci` until the complete status-bearing matrix. The release workflow still requires
 all exact artifacts and independent publication guards. Current process facts
 never broaden the target matrix. `currentRuntime` reports only packaged-target
 compatibility; `qualifyRoot(root)` performs full read-only host/root
@@ -314,9 +319,11 @@ surface when disposal joins it.
 ## Release boundary
 
 - qualify the exact release commit on native x64/ARM64, pinned distro,
-  Electron ASAR, Nix, and supervised overflow lanes;
-- build each registry artifact on two isolated clean Ubuntu 22.04 native
-  builders and compare it byte for byte before publication;
+  Electron ASAR, Nix, and supervised overflow lanes, plus the ARMv7 QEMU-user
+  Electron lifecycle lane;
+- build each registry artifact on two isolated clean Ubuntu 22.04 builders
+  (native for x64/ARM64 and GNU armhf cross for ARMv7) and compare it byte for
+  byte before publication;
 - publish only from an intentional `main` push after every pre-publication gate;
 - verify exact npm and JSR Node-route installs on fresh supported hosts after
   immutable publication.

@@ -128,7 +128,10 @@ export interface RootQualificationResult {
     /** Target evidence state. */
     readonly state: "qualified" | "unqualified";
     /** Loader-selected target identifier. */
-    readonly packagedTargetId: "linux-x64-gnu" | "linux-arm64-gnu";
+    readonly packagedTargetId:
+      | "linux-x64-gnu"
+      | "linux-arm64-gnu"
+      | "linux-arm-gnueabihf";
     /** Whether platform, architecture, libc family, and triple agree. */
     readonly runtimeMatchesPackagedTarget: boolean;
     /** Exact-commit qualification state of the target artifact. */
@@ -607,24 +610,38 @@ export type AutomaticReconciliationStatus =
 /** Qualification status declared for the exact package build and target. */
 export type SupportStatus = "target-pending-clean-ci" | "supported";
 
-/** One released GNU/Linux native target and its exact qualification state. */
+/** One configured GNU/Linux native target and its exact qualification state. */
 export interface SupportTargetCapability {
   /** Stable target identifier used by packages and qualification evidence. */
-  readonly id: "linux-x64-gnu" | "linux-arm64-gnu";
+  readonly id:
+    | "linux-x64-gnu"
+    | "linux-arm64-gnu"
+    | "linux-arm-gnueabihf";
   /** Qualification state for the exact source commit and native artifact. */
   readonly status: SupportStatus;
   /** npm package containing only this target's native artifact. */
   readonly package:
     | "@gadicc/watchbound-node-linux-x64-gnu"
-    | "@gadicc/watchbound-node-linux-arm64-gnu";
+    | "@gadicc/watchbound-node-linux-arm64-gnu"
+    | "@gadicc/watchbound-node-linux-arm-gnueabihf";
   /** Rust target triple embedded in the native binding. */
   readonly targetTriple:
     | "x86_64-unknown-linux-gnu"
-    | "aarch64-unknown-linux-gnu";
+    | "aarch64-unknown-linux-gnu"
+    | "armv7-unknown-linux-gnueabihf";
   /** Operating-system family required by the inotify engine. */
   readonly operatingSystem: "linux";
   /** Node architecture selected by the architecture-neutral loader. */
-  readonly architecture: "x64" | "arm64";
+  readonly architecture: "x64" | "arm64" | "arm";
+  /** Required 32-bit ARM ABI, or null for non-ARM targets. */
+  readonly armAbi: {
+    /** Minimum ARM instruction-set version. */
+    readonly version: 7;
+    /** Required GNU hard-float calling convention. */
+    readonly floatAbi: "hard";
+    /** Required byte order. */
+    readonly endianness: "little";
+  } | null;
   /** C-library ABI and audited maximum required symbol version. */
   readonly libc: {
     /** Supported C-library family. */
@@ -651,10 +668,11 @@ export interface QualificationLaneCapability {
   /** Compatibility family represented by this lane. */
   readonly family: "debian" | "rpm" | "pacman" | "nix";
   /** Native architectures covered by the lane. */
-  readonly architectures: readonly ("x64" | "arm64")[];
+  readonly architectures: readonly ("x64" | "arm64" | "arm")[];
   /** Evidence required before this lane can support a release claim. */
   readonly evidence:
     | "runtime-qualification-required"
+    | "qemu-user-runtime-required"
     | "native-nix-closure-required";
 }
 
@@ -663,7 +681,10 @@ export interface CurrentRuntimeQualificationCapability {
   /** Explicitly narrows this object to packaged-target compatibility. */
   readonly scope: "packaged-target-compatibility";
   /** Stable identifier of the artifact selected by the loader. */
-  readonly packagedTargetId: "linux-x64-gnu" | "linux-arm64-gnu";
+  readonly packagedTargetId:
+    | "linux-x64-gnu"
+    | "linux-arm64-gnu"
+    | "linux-arm-gnueabihf";
   /** Whether platform, architecture, libc, and target triple all agree. */
   readonly runtimeMatchesPackagedTarget: boolean;
   /** Exact-commit qualification state of the packaged target. */
@@ -677,7 +698,7 @@ export interface CurrentRuntimeQualificationCapability {
 /** A deliberately excluded target and the reason it cannot be claimed. */
 export interface IntentionallyUnsupportedTargetCapability {
   /** Unsupported target family. */
-  readonly target: "linux-armv7-gnu" | "linux-musl" | "non-linux";
+  readonly target: "linux-arm-soft-float" | "linux-musl" | "non-linux";
   /** Human-readable scope boundary; consumers must not parse it as policy. */
   readonly reason: string;
 }
@@ -688,7 +709,7 @@ export interface IntentionallyUnsupportedTargetCapability {
  */
 export interface Capabilities {
   /** Version of this capabilities object’s schema. */
-  readonly schemaVersion: 8;
+  readonly schemaVersion: 9;
   /** Wrapper, native engine, and binding API versions. */
   readonly versions: {
     readonly wrapper: string;
@@ -707,20 +728,34 @@ export interface Capabilities {
     /** Exact local artifact selected by the architecture-neutral loader. */
     readonly packagedTarget: {
       /** Stable target identifier. */
-      readonly id: "linux-x64-gnu" | "linux-arm64-gnu";
+      readonly id:
+        | "linux-x64-gnu"
+        | "linux-arm64-gnu"
+        | "linux-arm-gnueabihf";
       /** Target package name, or null for a controlled source build. */
       readonly package:
         | "@gadicc/watchbound-node-linux-x64-gnu"
         | "@gadicc/watchbound-node-linux-arm64-gnu"
+        | "@gadicc/watchbound-node-linux-arm-gnueabihf"
         | null;
       /** Exact native basename selected without fallback. */
       readonly binary:
         | "watchbound.linux-x64-gnu.node"
-        | "watchbound.linux-arm64-gnu.node";
+        | "watchbound.linux-arm64-gnu.node"
+        | "watchbound.linux-arm-gnueabihf.node";
       /** SHA-256 of the selected local native artifact. */
       readonly sha256: string;
       /** Node architecture of the selected artifact. */
-      readonly architecture: "x64" | "arm64";
+      readonly architecture: "x64" | "arm64" | "arm";
+      /** Required 32-bit ARM ABI, or null for non-ARM targets. */
+      readonly armAbi: {
+        /** Minimum ARM instruction-set version. */
+        readonly version: 7;
+        /** Required GNU hard-float calling convention. */
+        readonly floatAbi: "hard";
+        /** Required byte order. */
+        readonly endianness: "little";
+      } | null;
       /** C-library ABI of the selected artifact. */
       readonly libc: "glibc";
       /** Qualification state of this exact target. */
@@ -731,6 +766,15 @@ export interface Capabilities {
   readonly runtime: {
     readonly platform: string;
     readonly architecture: string;
+    /** Observed 32-bit ARM ABI facts, or null outside ARM runtimes. */
+    readonly armAbi: {
+      /** Observed ARM instruction-set version, when reported by the runtime. */
+      readonly version: number | null;
+      /** Observed ARM floating-point calling convention. */
+      readonly floatAbi: string | null;
+      /** Observed runtime byte order. */
+      readonly endianness: "little" | "big";
+    } | null;
     readonly kernel: string;
     readonly libc: {
       readonly family: "glibc" | "musl" | "unknown";

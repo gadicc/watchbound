@@ -1,9 +1,16 @@
 # Support and qualification matrix
 
-Status: release `1.2.0` publishes the exact x64 and ARM64 GNU/Linux targets
+Status: release `2.0.0` publishes the exact x64 and ARM64 GNU/Linux targets
 whose statuses are `supported` in the checked-in source matrix. The historical
 `1.0.1` release remains limited to its Ubuntu 24.04 x64 contract, and `1.1.0`
 was the first published multi-target release.
+
+The current source candidate adds GNU/Linux ARMv7 hard-float delivery under
+target id `linux-arm-gnueabihf`. Its status is deliberately
+`target-pending-clean-ci`: cross-build, package, loader, and QEMU-user runtime
+jobs are defined, but no exact-revision ARMv7 execution result exists yet.
+Until that job passes and a status-bearing follow-up revision is itself green,
+the target is buildable but not qualified or published.
 
 Source commit `4dbb0dc1c445de1d00e09d66f252d3d51f713cf2` completed both guarded
 release-qualification scenarios. The
@@ -28,8 +35,28 @@ post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 
 | Target | Package | Buildable | Release baseline | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.2.0` |
-| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `1.2.0` |
+| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `2.0.0` |
+| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `2.0.0` |
+
+## Source-candidate ARMv7 contract
+
+| Target | Package | Build contract | Runtime contract | Qualification |
+| --- | --- | --- | --- | --- |
+| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `armv7-unknown-linux-gnueabihf`; ELF32, little-endian, `EM_ARM=40`, EABI5 hard-float flags; Ubuntu 22.04 cross toolchain | ARMv7-A hard-float little-endian glibc, kernel 5.15+, Electron 42.3.0 / embedded Node 24.15.0 or a compatible consumer-managed Node 24 build | Cross-build implemented; exact QEMU-user Electron package/load/watch/dispose evidence pending |
+
+The glibc release ceiling remains 2.35, and artifact inspection must prove the
+actual maximum `GLIBC_*` symbol no newer than that ceiling. ARMv7 uses the same
+kernel floor as the published targets, but this revision does not add a
+separate pinned ARMv7 kernel-boot lane. Its QEMU-user lane supplies the Ubuntu
+22.04 armhf userspace and executes the official Electron ARMv7 archive on the
+host kernel.
+
+Node's official 24.15.0 download set has no Linux ARMv7 archive. This does not
+change Watchbound's Node version contract: an ARMv7 Node host must still be
+`>=24.15.0 <25`, Node-API 6 or newer, ARM version 7, hard-float, and
+little-endian. The maintained execution lane therefore uses Electron's
+official `linux-armv7l` build. A Node version match without those ABI facts is
+not accepted.
 
 “Buildable” describes implemented build and packaging paths. It is not a
 support claim. `supported` becomes true only when the exact runtime matches a
@@ -43,17 +70,17 @@ independently reproduced release artifacts require no symbol newer than
 
 ## Runtime lanes
 
-| Lane | x64 | ARM64 | Evidence meaning |
-| --- | --- | --- | --- |
-| Ubuntu 22.04 pinned / baseline builder | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Release ABI and oldest distro userspace lane |
-| Ubuntu 24.04 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Codex advertised Debian-family lane |
-| Debian 12 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Codex advertised Debian-family lane |
-| Fedora 42 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Codex advertised RPM lane |
-| Arch `base-devel` pinned | Passed at `4dbb0dc` | Not in Codex lane | Codex advertised pacman lane |
-| openSUSE Tumbleweed pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Representative current advertised openSUSE RPM lane |
-| locked Nix closure | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Source-built Nix package and exact Electron closure |
-| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Exact Codex host-runtime boundary |
-| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Kernel floor only; native runners separately prove architecture |
+| Lane | x64 | ARM64 | ARMv7 hard-float | Evidence meaning |
+| --- | --- | --- | --- | --- |
+| Ubuntu 22.04 pinned / baseline builder | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Cross-build defined; pending exact CI | Release ABI and oldest distro userspace lane |
+| Ubuntu 24.04 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Codex advertised Debian-family lane |
+| Debian 12 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Codex advertised Debian-family lane |
+| Fedora 42 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Codex advertised RPM lane |
+| Arch `base-devel` pinned | Passed at `4dbb0dc` | Not in Codex lane | Not configured | Codex advertised pacman lane |
+| openSUSE Tumbleweed pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Representative current advertised openSUSE RPM lane |
+| locked Nix closure | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Source-built Nix package and exact Electron closure |
+| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `4dbb0dc` | Passed at `4dbb0dc` | QEMU-user lane defined; pending exact CI | Exact Codex host-runtime boundary |
+| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Kernel floor only; native runners separately prove architecture |
 
 The images, official kernel/initrd hashes, and Nix inputs are pinned in
 `config/native-matrix.json` and `flake.lock`. A container changes userspace,
@@ -75,15 +102,16 @@ and never creates another binary. WSL, unusual containers, network filesystems,
 FUSE, overlay filesystems, and adversarially mutated roots remain outside the
 ordinary-host claim unless separately qualified.
 
-## Capability schema 8
+## Capability schema 9
 
 The additive schema keeps the schema-4 target and old single-target `support`
 fields with
 `scope: "legacy-primary-target"`; their Ubuntu 24.04/x64 meaning is not silently
 changed. Schema 5 added exclusion feature/option facts, schema 6 added explicit
 physical-root resolution, schema 7 separated packaged-target compatibility
-from enforceable host/root qualification, and schema 8 adds explicit
-bytes-only physical invalidations. New consumers use:
+from enforceable host/root qualification, schema 8 added explicit bytes-only
+physical invalidations, and schema 9 adds exact ARM ABI facts to the packaged
+target, runtime, and support entries. New consumers use:
 
 - `build.packagedTarget` for the selected package, binary, triple, and SHA;
 - `support.targets[]` for target-specific qualification;
@@ -101,8 +129,8 @@ below-floor, and unknown states never return `qualified`.
 
 ## Promotion rule
 
-Promotion of either target to `supported` requires the exact status-bearing
-commit to complete:
+Promotion of any target to `supported` requires the exact status-bearing
+commit to complete its applicable lanes. For x64 and ARM64 this means:
 
 1. clean source and semantic suites on x64 and native ARM64;
 2. two-builder byte reproduction per registry artifact;
@@ -115,6 +143,16 @@ commit to complete:
 
 A workflow definition, cross-build, QEMU-only result, local x64 pass, or a later
 distribution loading the ELF is insufficient on its own.
+
+ARMv7 has a deliberately narrower initial maintenance basis because no native
+GitHub-hosted ARMv7 runner is available: two deterministic Ubuntu 22.04
+cross-builds must byte-match, the generated npm package must pass its exact
+allowlist and metadata checks, and the canonical artifact must execute the
+production loader plus a real start/callback/dispose lifecycle under pinned
+Electron 42.3.0 through `qemu-arm` with an armhf glibc sysroot. Publication and
+registry verification are gated on that lane. If it is unavailable or red,
+the target remains `target-pending-clean-ci`; cross-compilation alone never
+promotes it.
 
 The forced-overflow item is correctness-only and can be satisfied by the
 guarded Release workflow dispatch on native GitHub-hosted Ubuntu 24.04 x64 and

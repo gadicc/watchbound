@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const packageManifest = require("./package.json");
@@ -60,6 +61,7 @@ function loadNative(options = {}) {
   const report = injected(options, "report", process.report);
   const libc = detectLibc(report);
   const target = platformTargets[0];
+  assertRuntimeAbi(options, target);
   if (libc !== target.libc) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
@@ -111,6 +113,7 @@ function loadNative(options = {}) {
     targetId: target.id,
     targetTriple: target.rustTarget,
     architecture: target.architecture,
+    armAbi: target.armAbi ?? null,
     libc: target.libc,
     binary: target.binary,
     sha256: location.observedSha256,
@@ -185,6 +188,7 @@ function packagedLocation(options, target, expectedVersion) {
     metadata?.target !== target.id ||
     metadata?.targetTriple !== target.rustTarget ||
     metadata?.architecture !== target.architecture ||
+    !sameArmAbi(metadata?.armAbi, target.armAbi) ||
     metadata?.libc !== target.libc ||
     metadata?.binary !== target.binary ||
     typeof metadata?.nativeSha256 !== "string" ||
@@ -203,6 +207,41 @@ function packagedLocation(options, target, expectedVersion) {
     expectedSha256: metadata.nativeSha256,
     missingCode: WatchboundLoaderErrorCode.TARGET_PACKAGE_INVALID,
   };
+}
+
+function assertRuntimeAbi(options, target) {
+  if (target.armAbi === undefined) return;
+  const processConfig = injected(options, "processConfig", process.config);
+  const variables = processConfig?.variables;
+  const version = numericArmVersion(variables?.arm_version);
+  const floatAbi = variables?.arm_float_abi;
+  const runtimeEndianness = injected(options, "endianness", os.endianness());
+  if (
+    version !== target.armAbi.version ||
+    floatAbi !== target.armAbi.floatAbi ||
+    runtimeEndianness !== "LE" ||
+    target.armAbi.endianness !== "little"
+  ) {
+    throw new WatchboundLoaderError(
+      WatchboundLoaderErrorCode.UNSUPPORTED_PLATFORM,
+      "Watchbound ARM support requires an ARMv7 hard-float little-endian runtime",
+    );
+  }
+}
+
+function numericArmVersion(value) {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^[0-9]+$/u.test(value)) return Number(value);
+  return null;
+}
+
+function sameArmAbi(metadata, expected) {
+  if (expected === undefined) return metadata === undefined || metadata === null;
+  return metadata !== null &&
+    typeof metadata === "object" &&
+    metadata.version === expected.version &&
+    metadata.floatAbi === expected.floatAbi &&
+    metadata.endianness === expected.endianness;
 }
 
 function inspectExactNative(options, location, target) {
@@ -285,13 +324,20 @@ function inspectElf(contents, target) {
     !contents.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
     contents[4] !== target.elf.class ||
     contents[5] !== target.elf.endianness ||
-    contents.readUInt16LE(18) !== target.elf.machine
+    contents.readUInt16LE(18) !== target.elf.machine ||
+    elfFlags(contents, target.elf.class) !== target.elf.flags
   ) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.NATIVE_ELF_MISMATCH,
       `Watchbound native addon ${target.binary} has the wrong ELF identity`,
     );
   }
+}
+
+function elfFlags(contents, elfClass) {
+  const offset = elfClass === 1 ? 36 : 48;
+  if (contents.length < offset + 4) return null;
+  return contents.readUInt32LE(offset);
 }
 
 function validateBinding(binding, expectedVersion, binaryPath, target) {
@@ -448,12 +494,21 @@ function validateNativeMatrix(matrix) {
       typeof target.architecture !== "string" ||
       typeof target.rustTarget !== "string" ||
       typeof target.libc !== "string" ||
+      (
+        target.architecture === "arm" &&
+        (
+          target.armAbi?.version !== 7 ||
+          target.armAbi?.floatAbi !== "hard" ||
+          target.armAbi?.endianness !== "little"
+        )
+      ) ||
       typeof target.binary !== "string" ||
       !/^watchbound\.[a-z0-9-]+\.node$/u.test(target.binary) ||
       typeof target.package !== "string" ||
       !Number.isInteger(target.elf?.class) ||
       !Number.isInteger(target.elf?.endianness) ||
       !Number.isInteger(target.elf?.machine)
+      || !Number.isInteger(target.elf?.flags)
     ) {
       throw new WatchboundLoaderError(
         WatchboundLoaderErrorCode.NATIVE_API_MISMATCH,

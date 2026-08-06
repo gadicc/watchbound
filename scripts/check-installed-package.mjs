@@ -131,7 +131,7 @@ async function runSmoke() {
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
   assert.equal(capabilities.build.prebuilt, true);
-  assert.equal(capabilities.schemaVersion, 8);
+  assert.equal(capabilities.schemaVersion, 9);
   assert.equal(capabilities.features.directoryNameExclusions, true);
   assert.equal(capabilities.features.observedExcludedPaths, true);
   assert.equal(capabilities.features.bytesOnlyInvalidations, true);
@@ -159,7 +159,7 @@ async function runSmoke() {
     family: "glibc",
     version: "2.39",
   });
-  assert.equal(capabilities.support.targets.length, 2);
+  assert.equal(capabilities.support.targets.length, nativeMatrix.targets.length);
   assert.equal(
     capabilities.support.currentRuntime.packagedTargetId,
     nativeTarget.id,

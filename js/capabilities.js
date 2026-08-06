@@ -78,6 +78,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
     targetTriple: target.rustTarget,
     operatingSystem: "linux",
     architecture: target.architecture,
+    armAbi: target.armAbi ?? null,
     libc: {
       family: target.libc,
       maximumRequiredSymbolVersion: matrix.releaseBaseline.glibcMaximum,
@@ -92,6 +93,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
     runtime.platform === "linux" &&
     runtime.architecture === deliveryMetadata.architecture &&
     runtime.libc.family === deliveryMetadata.libc &&
+    sameArmAbi(runtime.armAbi, deliveryMetadata.armAbi) &&
     metadata.targetTriple === deliveryMetadata.targetTriple;
   const currentTarget = supportTargets.find(
     (target) => target.id === deliveryMetadata.targetId,
@@ -101,7 +103,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
   }
 
   return deepFreeze({
-    schemaVersion: 8,
+    schemaVersion: 9,
     versions: {
       wrapper: WRAPPER_VERSION,
       native: metadata.nativeVersion,
@@ -121,6 +123,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
         binary: deliveryMetadata.binary,
         sha256: deliveryMetadata.sha256,
         architecture: deliveryMetadata.architecture,
+        armAbi: deliveryMetadata.armAbi,
         libc: deliveryMetadata.libc,
         qualification: deliveryMetadata.qualification,
       },
@@ -683,6 +686,15 @@ function runtimeFacts() {
   return {
     platform: process.platform,
     architecture: process.arch,
+    armAbi: process.arch === "arm"
+      ? {
+          version: numericArmVersion(process.config?.variables?.arm_version),
+          floatAbi: typeof process.config?.variables?.arm_float_abi === "string"
+            ? process.config.variables.arm_float_abi
+            : null,
+          endianness: os.endianness() === "LE" ? "little" : "big",
+        }
+      : null,
     kernel: os.release(),
     libc: {
       family: typeof glibcVersion === "string" ? "glibc" : musl ? "musl" : "unknown",
@@ -693,6 +705,20 @@ function runtimeFacts() {
       api: process.versions.napi === undefined ? null : Number(process.versions.napi),
     },
   };
+}
+
+function numericArmVersion(value) {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^[0-9]+$/u.test(value)) return Number(value);
+  return null;
+}
+
+function sameArmAbi(runtime, packaged) {
+  if (packaged === null || packaged === undefined) return runtime === null;
+  return runtime !== null &&
+    runtime.version === packaged.version &&
+    runtime.floatAbi === packaged.floatAbi &&
+    runtime.endianness === packaged.endianness;
 }
 
 function deepFreeze(value, seen = new Set()) {

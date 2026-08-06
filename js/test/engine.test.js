@@ -34,7 +34,7 @@ function assertDeeplyFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeeplyFrozen(nested, seen);
 }
 
-test("capability schema v8 exposes physical bytes-only delivery", () => {
+test("capability schema v9 exposes physical bytes-only and exact ARM ABI delivery", () => {
   assert.deepEqual(Object.keys(capabilities), [
     "schemaVersion",
     "versions",
@@ -45,7 +45,7 @@ test("capability schema v8 exposes physical bytes-only delivery", () => {
     "options",
     "observability",
   ]);
-  assert.equal(capabilities.schemaVersion, 8);
+  assert.equal(capabilities.schemaVersion, 9);
   assert.deepEqual(capabilities.versions, {
     wrapper: wrapperPackage.version,
     native: wrapperPackage.version,
@@ -65,6 +65,7 @@ test("capability schema v8 exposes physical bytes-only delivery", () => {
       binary: currentTarget.binary,
       sha256: capabilities.build.packagedTarget.sha256,
       architecture: currentTarget.architecture,
+      armAbi: currentTarget.armAbi ?? null,
       libc: currentTarget.libc,
       qualification: currentTarget.qualification,
     },
@@ -111,7 +112,7 @@ test("capability schema v8 exposes physical bytes-only delivery", () => {
     delivery: "controlled-source-build",
     rootThreatModel: "trusted-stable-local-roots",
   });
-  assert.equal(capabilities.support.targets.length, 2);
+  assert.equal(capabilities.support.targets.length, 3);
   assert.deepEqual(
     capabilities.support.targets.map(({ id, architecture, status }) => ({
       id,
@@ -129,9 +130,14 @@ test("capability schema v8 exposes physical bytes-only delivery", () => {
         architecture: "arm64",
         status: "supported",
       },
+      {
+        id: "linux-arm-gnueabihf",
+        architecture: "arm",
+        status: "target-pending-clean-ci",
+      },
     ],
   );
-  assert.equal(capabilities.support.qualificationLanes.length, 7);
+  assert.equal(capabilities.support.qualificationLanes.length, 8);
   assert.deepEqual(capabilities.support.currentRuntime, {
     scope: "packaged-target-compatibility",
     packagedTargetId: currentTarget.id,
@@ -142,7 +148,7 @@ test("capability schema v8 exposes physical bytes-only delivery", () => {
   });
   assert.deepEqual(
     capabilities.support.intentionallyUnsupported.map(({ target }) => target),
-    ["linux-armv7-gnu", "linux-musl", "non-linux"],
+    ["linux-arm-soft-float", "linux-musl", "non-linux"],
   );
   assert.deepEqual(capabilities.features, {
     recursive: true,

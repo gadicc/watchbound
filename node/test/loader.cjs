@@ -24,6 +24,7 @@ const nativePath = path.join(privateDirectory, nativeBasename);
 const nativeMatrix = require("../../config/native-matrix.json");
 const x64Target = nativeMatrix.targets.find((target) => target.architecture === "x64");
 const arm64Target = nativeMatrix.targets.find((target) => target.architecture === "arm64");
+const armv7Target = nativeMatrix.targets.find((target) => target.architecture === "arm");
 
 const validMetadata = Object.freeze({
   schemaVersion: 1,
@@ -57,6 +58,7 @@ function elfFor(target) {
   contents[4] = target.elf.class;
   contents[5] = target.elf.endianness;
   contents.writeUInt16LE(target.elf.machine, 18);
+  contents.writeUInt32LE(target.elf.flags, target.elf.class === 1 ? 36 : 48);
   return contents;
 }
 
@@ -67,6 +69,8 @@ function loadOptions(overrides = {}) {
     nodeVersion: "24.15.0",
     napiVersion: "9",
     report: glibcReport(),
+    processConfig: { variables: {} },
+    endianness: "LE",
     matrix: nativeMatrix,
     directory: privateDirectory,
     packageVersion,
@@ -131,6 +135,83 @@ test("loader accepts only configured Linux architectures", () => {
   }));
   assert.equal(armBinding.marker, "native-binding");
   assert.equal(armBinding.nativeDeliveryMetadata().architecture, "arm64");
+});
+
+test("loader selects only a little-endian ARMv7 hard-float runtime", () => {
+  assert.ok(armv7Target, "native matrix must configure ARMv7 hard-float");
+  const contents = elfFor(armv7Target);
+  const binding = loadNative(loadOptions({
+    arch: "arm",
+    processConfig: {
+      variables: { arm_version: 7, arm_float_abi: "hard" },
+    },
+    readdirSync: () => [armv7Target.binary],
+    lstatSync: () => ({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      size: contents.length,
+    }),
+    readFileSync: () => contents,
+    requireNative: () => validBinding({
+      ...validMetadata,
+      targetTriple: armv7Target.rustTarget,
+    }),
+  }));
+  assert.equal(binding.marker, "native-binding");
+  assert.deepEqual(binding.nativeDeliveryMetadata().armAbi, {
+    version: 7,
+    floatAbi: "hard",
+    endianness: "little",
+  });
+});
+
+test("loader fails closed for unsupported or unknown 32-bit ARM ABIs", () => {
+  assert.ok(armv7Target, "native matrix must configure ARMv7 hard-float");
+  for (const runtime of [
+    { variables: { arm_version: 6, arm_float_abi: "hard" }, endianness: "LE" },
+    { variables: { arm_version: 7, arm_float_abi: "softfp" }, endianness: "LE" },
+    { variables: { arm_version: 7, arm_float_abi: "hard" }, endianness: "BE" },
+    { variables: {}, endianness: "LE" },
+  ]) {
+    let filesystemCalls = 0;
+    assert.throws(
+      () => loadNative(loadOptions({
+        arch: "arm",
+        processConfig: { variables: runtime.variables },
+        endianness: runtime.endianness,
+        existsSync: () => {
+          filesystemCalls += 1;
+          return true;
+        },
+      })),
+      (error) => {
+        assert.ok(error instanceof WatchboundLoaderError);
+        assert.equal(error.code, WatchboundLoaderErrorCode.UNSUPPORTED_PLATFORM);
+        assert.match(error.message, /ARMv7 hard-float little-endian/u);
+        return true;
+      },
+    );
+    assert.equal(filesystemCalls, 0);
+  }
+});
+
+test("loader rejects musl on an otherwise compatible ARMv7 runtime", () => {
+  assert.ok(armv7Target, "native matrix must configure ARMv7 hard-float");
+  expectLoaderError(
+    () => loadNative(loadOptions({
+      arch: "arm",
+      processConfig: {
+        variables: { arm_version: 7, arm_float_abi: "hard" },
+      },
+      report: {
+        getReport: () => ({
+          header: {},
+          sharedObjects: ["/lib/ld-musl-armhf.so.1"],
+        }),
+      },
+    })),
+    WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
+  );
 });
 
 test("loader distinguishes detected glibc from musl and unknown libc", () => {
@@ -304,9 +385,10 @@ test("bundled loader resolves one exact target package and verifies its digest",
     watchbound: {
       delivery: "target-native-package",
       target: x64Target.id,
-      targetTriple: x64Target.rustTarget,
-      architecture: x64Target.architecture,
-      libc: x64Target.libc,
+    targetTriple: x64Target.rustTarget,
+    architecture: x64Target.architecture,
+      armAbi: null,
+    libc: x64Target.libc,
       binary: x64Target.binary,
       nativeSha256: sha256,
     },
@@ -356,6 +438,7 @@ test("bundled loader resolves one exact target package and verifies its digest",
     targetId: x64Target.id,
     targetTriple: x64Target.rustTarget,
     architecture: "x64",
+    armAbi: null,
     libc: "glibc",
     binary: x64Target.binary,
     sha256,
@@ -405,6 +488,28 @@ test("loader rejects wrong ELF identity and extra nearby addons", () => {
       readdirSync: () => [nativeBasename, arm64Target.binary],
     })),
     WatchboundLoaderErrorCode.TARGET_PACKAGE_INVALID,
+  );
+});
+
+test("loader rejects a soft-float ARM ELF mislabeled as ARMv7 hard-float", () => {
+  assert.ok(armv7Target, "native matrix must configure ARMv7 hard-float");
+  const softFloat = elfFor(armv7Target);
+  softFloat.writeUInt32LE(0x05000200, 36);
+  expectLoaderError(
+    () => loadNative(loadOptions({
+      arch: "arm",
+      processConfig: {
+        variables: { arm_version: 7, arm_float_abi: "hard" },
+      },
+      readdirSync: () => [armv7Target.binary],
+      lstatSync: () => ({
+        isFile: () => true,
+        isSymbolicLink: () => false,
+        size: softFloat.length,
+      }),
+      readFileSync: () => softFloat,
+    })),
+    WatchboundLoaderErrorCode.NATIVE_ELF_MISMATCH,
   );
 });
 

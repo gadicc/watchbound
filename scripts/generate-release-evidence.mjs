@@ -32,6 +32,8 @@ const expectedTarballs = packageNames.map((name) =>
 const nativeArtifacts = packageManifest.targets.map((packagedTarget) => {
   const target = matrix.targets.find(({ id }) => id === packagedTarget.id);
   assert.ok(target, `package manifest contains unknown target ${packagedTarget.id}`);
+  assert.equal(packagedTarget.name, target.package);
+  assert.equal(packagedTarget.binary, target.binary);
   const binaryPath = path.join(
     workspaceRoot,
     "dist",
@@ -40,6 +42,22 @@ const nativeArtifacts = packageManifest.targets.map((packagedTarget) => {
   );
   assert.ok(fs.existsSync(binaryPath), `missing native artifact: ${binaryPath}`);
   assert.equal(sha256(binaryPath), packagedTarget.sha256);
+  const targetManifest = readJson(path.join(
+    workspaceRoot,
+    "dist",
+    packagedTarget.root,
+    "package.json",
+  ));
+  assert.equal(targetManifest.name, target.package);
+  assert.deepEqual(targetManifest.cpu, [target.architecture]);
+  assert.deepEqual(targetManifest.libc, [target.libc]);
+  assert.equal(targetManifest.watchbound?.target, target.id);
+  assert.equal(targetManifest.watchbound?.targetTriple, target.rustTarget);
+  assert.equal(targetManifest.watchbound?.architecture, target.architecture);
+  assert.deepEqual(targetManifest.watchbound?.armAbi, target.armAbi ?? null);
+  assert.equal(targetManifest.watchbound?.libc, target.libc);
+  assert.equal(targetManifest.watchbound?.binary, target.binary);
+  assert.equal(targetManifest.watchbound?.nativeSha256, packagedTarget.sha256);
   return inspectNative(binaryPath, target);
 });
 
@@ -147,12 +165,19 @@ process.stdout.write(
 
 function inspectNative(binaryPath, target) {
   const fileReport = capture("file", ["--brief", binaryPath]);
-  assert.match(fileReport, /\bELF 64-bit LSB shared object\b/u);
+  const elfBits = target.elf.class === 1 ? 32 : 64;
+  assert.match(fileReport, new RegExp(`\\bELF ${elfBits}-bit LSB shared object\\b`, "u"));
   assert.match(fileReport, new RegExp(`\\b${escapeRegExp(target.elf.fileMachineName)}\\b`, "u"));
   assert.match(fileReport, /\bstripped\b/u);
 
   const headerReport = capture("readelf", ["--file-header", binaryPath]);
   assert.match(headerReport, new RegExp(`Machine:\\s+${escapeRegExp(target.elf.machineName)}`, "u"));
+  if (target.elf.flagsDescription) {
+    assert.match(
+      headerReport,
+      new RegExp(`Flags:\\s+0x${target.elf.flags.toString(16)},\\s+${escapeRegExp(target.elf.flagsDescription)}`, "u"),
+    );
+  }
   const dynamicReport = capture("readelf", ["--dynamic", binaryPath]);
   const neededLibraries = [
     ...dynamicReport.matchAll(/\(NEEDED\).*Shared library: \[([^\]]+)\]/gu),

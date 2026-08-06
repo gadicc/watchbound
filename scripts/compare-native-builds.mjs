@@ -159,6 +159,18 @@ function validateBuild(build, label, candidate, target) {
     `${label} target`,
   );
   assert.equal(manifest.release.profile, "release", `${label} profile`);
+  assert.equal(
+    manifest.release.buildMode,
+    target.buildMode ?? "native",
+    `${label} build mode`,
+  );
+  assert.equal(
+    manifest.release.metadataValidation,
+    target.buildMode === "cross"
+      ? "elf-and-embedded-metadata"
+      : "loaded-binding",
+    `${label} metadata validation`,
+  );
   assert.equal(manifest.buildEnvironment.cargoIncremental, "0");
   assert.equal(
     manifest.buildEnvironment.rustFlags,

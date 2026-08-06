@@ -81,7 +81,8 @@ export interface JsNativeDeliveryMetadata {
   targetPackage: string | null
   targetId: string
   targetTriple: string
-  architecture: "x64" | "arm64"
+  architecture: "x64" | "arm64" | "arm"
+  armAbi: { version: 7; floatAbi: "hard"; endianness: "little" } | null
   libc: "glibc"
   binary: string
   sha256: string
@@ -113,24 +114,35 @@ export interface JsNativeTargetMatrix {
   targets: Array<{
     id: string
     platform: "linux"
-    architecture: "x64" | "arm64"
-    unameArchitecture: "x86_64" | "aarch64"
+    architecture: "x64" | "arm64" | "arm"
+    unameArchitecture: "x86_64" | "aarch64" | "armv7l"
     rustTarget: string
     libc: "glibc"
+    armAbi?: { version: 7; floatAbi: "hard"; endianness: "little" }
     binary: string
     package: string
     runner: string
-    overflowRunner: ["self-hosted", "linux", "x64" | "arm64", "watchbound-overflow"]
-    nixSystem: "x86_64-linux" | "aarch64-linux"
+    overflowRunner: string | null
+    nixSystem: "x86_64-linux" | "aarch64-linux" | null
+    buildMode?: "cross"
+    buildArchitecture?: "x64"
+    linker?: "arm-linux-gnueabihf-gcc"
+    linkerBinary?: "arm-linux-gnueabihf-ld"
+    runtimeQualification?: "qemu-user-electron"
+    runtimeEmulator?: "/usr/bin/qemu-arm"
+    runtimeCpu?: "cortex-a15"
+    runtimeSysroot?: "/usr/arm-linux-gnueabihf"
     codexElectron: {
-      archiveArchitecture: "x64" | "arm64"
+      archiveArchitecture: "x64" | "arm64" | "armv7l"
       sha256SRI: string
     }
     qualification: "target-pending-clean-ci" | "supported"
     elf: {
-      class: 2
+      class: 1 | 2
       endianness: 1
       machine: number
+      flags: number
+      flagsDescription?: string
       machineName: string
       fileMachineName: string
       neededLibraries: Array<string>
@@ -142,7 +154,7 @@ export interface JsNativeTargetMatrix {
     version: string
     family: string
     evidence: string
-    architectures: Array<"x64" | "arm64">
+    architectures: Array<"x64" | "arm64" | "arm">
     image: string
   }>
   recognizedCompatibilityFamilies: Record<string, Array<string>>

@@ -6,12 +6,15 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const matrix = loadNativeMatrix(workspaceRoot);
+const nativeTarget = targetForId(matrix, options["native-target"]);
 const evidencePath = path.resolve(options.evidence);
 const projectRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), `watchbound-registry-${options.route}-`),
@@ -29,6 +32,7 @@ try {
       "--no-audit",
       "--no-fund",
       "--save-exact",
+      ...targetInstallArguments(),
       `watchbound@${options.version}`,
     ]);
   } else {
@@ -36,8 +40,24 @@ try {
       "add",
       "--ignore-scripts",
       "--save-exact",
+      ...targetInstallArguments(),
       `jsr:@gadicc/watchbound@${options.version}`,
     ]);
+  }
+  if (options.emulator) {
+    const installedTargets = matrix.targets
+      .filter((target) => fs.existsSync(path.join(
+        projectRoot,
+        "node_modules",
+        ...target.package.split("/"),
+        "package.json",
+      )))
+      .map(({ id }) => id);
+    assert.deepEqual(
+      installedTargets,
+      [nativeTarget.id],
+      "emulated install must contain only its selected native target",
+    );
   }
 
   run(process.execPath, [
@@ -75,6 +95,13 @@ async function installWithRetry(command, args) {
       env: {
         ...process.env,
         npm_config_cache: path.join(projectRoot, ".npm-cache"),
+        ...(options.emulator
+          ? {
+              npm_config_cpu: nativeTarget.architecture,
+              npm_config_libc: nativeTarget.libc,
+              npm_config_os: nativeTarget.platform,
+            }
+          : {}),
         PNPM_HOME: path.join(projectRoot, ".pnpm-home"),
       },
     });
@@ -99,10 +126,36 @@ async function installWithRetry(command, args) {
   }
 }
 
+function targetInstallArguments() {
+  return options.emulator
+    ? [
+        `--cpu=${nativeTarget.architecture}`,
+        `--libc=${nativeTarget.libc}`,
+        `--os=${nativeTarget.platform}`,
+      ]
+    : [];
+}
+
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const runtimeCommand = options.emulator ? path.resolve(options.emulator) : command;
+  const runtimeArguments = options.emulator
+    ? [
+        ...(options["emulator-cpu"] ? ["-cpu", options["emulator-cpu"]] : []),
+        "-L",
+        path.resolve(options.sysroot),
+        "-E",
+        `LD_LIBRARY_PATH=${path.dirname(path.resolve(options.electron))}`,
+        path.resolve(options.electron),
+        ...args,
+      ]
+    : args;
+  const result = spawnSync(runtimeCommand, runtimeArguments, {
     cwd: projectRoot,
     stdio: "inherit",
+    env: {
+      ...process.env,
+      ...(options.emulator ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    },
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -122,7 +175,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-target <id> --native-sha256 <digest> --evidence <path>",
+        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-target <id> --native-sha256 <digest> --evidence <path> [--electron <path> --emulator <path> --emulator-cpu <cpu> --sysroot <path>]",
       );
     }
     const name = flag.slice(2);
@@ -138,6 +191,15 @@ function parseOptions(args) {
     assert.ok(parsed[required], `--${required} is required`);
   }
   assert.match(parsed["native-sha256"], /^[0-9a-f]{64}$/u);
+  if (parsed.emulator) {
+    for (const required of ["electron", "sysroot"]) {
+      assert.ok(parsed[required], `--${required} is required with --emulator`);
+    }
+  } else {
+    for (const emulatorOnly of ["electron", "emulator-cpu", "sysroot"]) {
+      assert.equal(parsed[emulatorOnly], undefined, `--${emulatorOnly} requires --emulator`);
+    }
+  }
   assert.ok(Number.isSafeInteger(parsed.attempts) && parsed.attempts > 0);
   assert.ok(
     Number.isSafeInteger(parsed["retry-delay-ms"]) &&

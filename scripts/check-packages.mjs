@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectElfIdentity } from "./lib/native-artifact.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -33,15 +34,45 @@ try {
     "native-matrix.json",
     "package.json",
   ]);
-  const targets = packageManifest.targets.map((target) => ({
-    ...target,
-    ...packAndCheck(target.root, [
+  const targets = packageManifest.targets.map((packagedTarget) => {
+    const target = matrix.targets.find(({ id }) => id === packagedTarget.id);
+    assert.ok(target, `prepared package has unknown target ${packagedTarget.id}`);
+    const targetRoot = path.join(distRoot, packagedTarget.root);
+    const targetManifest = readJson(path.join(targetRoot, "package.json"));
+    assert.equal(targetManifest.name, target.package);
+    assert.deepEqual(targetManifest.os, [target.platform]);
+    assert.deepEqual(targetManifest.cpu, [target.architecture]);
+    assert.deepEqual(targetManifest.libc, [target.libc]);
+    assert.equal(targetManifest.main, `./${target.binary}`);
+    assert.deepEqual(targetManifest.watchbound, {
+      delivery: "target-native-package",
+      target: target.id,
+      targetTriple: target.rustTarget,
+      architecture: target.architecture,
+      armAbi: target.armAbi ?? null,
+      libc: target.libc,
+      binary: target.binary,
+      nativeSha256: packagedTarget.sha256,
+    });
+    assert.deepEqual(
+      inspectElfIdentity(fs.readFileSync(path.join(targetRoot, target.binary))),
+      {
+        class: target.elf.class,
+        endianness: target.elf.endianness,
+        machine: target.elf.machine,
+        flags: target.elf.flags,
+      },
+    );
+    return {
+      ...packagedTarget,
+      ...packAndCheck(packagedTarget.root, [
       "LICENSE.txt",
       "README.md",
       "package.json",
-      target.binary,
-    ]),
-  }));
+        packagedTarget.binary,
+      ]),
+    };
+  });
   const currentTargetPackage = targets.find(({ id }) => id === currentTarget.id);
   assert.ok(currentTargetPackage, `prepared packages omit current target ${currentTarget.id}`);
   const wrapper = packAndCheck(packageManifest.wrapper.root, [
@@ -82,7 +113,7 @@ try {
         "import assert from 'node:assert/strict';",
         "import { capabilities, qualifyRoot } from 'watchbound';",
         `assert.equal(capabilities.versions.wrapper, ${JSON.stringify(version)});`,
-        "assert.equal(capabilities.schemaVersion, 8);",
+        "assert.equal(capabilities.schemaVersion, 9);",
         `assert.equal(capabilities.build.packagedTarget.id, ${JSON.stringify(currentTarget.id)});`,
         "assert.equal(capabilities.build.delivery, 'bundled-native-package');",
         "assert.equal(capabilities.build.prebuilt, true);",

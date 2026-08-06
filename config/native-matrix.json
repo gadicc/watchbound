@@ -81,6 +81,7 @@
         "class": 2,
         "endianness": 1,
         "machine": 62,
+        "flags": 0,
         "machineName": "Advanced Micro Devices X86-64",
         "fileMachineName": "x86-64",
         "neededLibraries": [
@@ -111,9 +112,55 @@
         "class": 2,
         "endianness": 1,
         "machine": 183,
+        "flags": 0,
         "machineName": "AArch64",
         "fileMachineName": "ARM aarch64",
         "neededLibraries": [
+          "libc.so.6",
+          "libgcc_s.so.1"
+        ]
+      }
+    },
+    {
+      "id": "linux-arm-gnueabihf",
+      "platform": "linux",
+      "architecture": "arm",
+      "unameArchitecture": "armv7l",
+      "rustTarget": "armv7-unknown-linux-gnueabihf",
+      "libc": "glibc",
+      "armAbi": {
+        "version": 7,
+        "floatAbi": "hard",
+        "endianness": "little"
+      },
+      "binary": "watchbound.linux-arm-gnueabihf.node",
+      "package": "@gadicc/watchbound-node-linux-arm-gnueabihf",
+      "runner": "ubuntu-22.04",
+      "overflowRunner": null,
+      "nixSystem": null,
+      "buildMode": "cross",
+      "buildArchitecture": "x64",
+      "linker": "arm-linux-gnueabihf-gcc",
+      "linkerBinary": "arm-linux-gnueabihf-ld",
+      "runtimeQualification": "qemu-user-electron",
+      "runtimeEmulator": "/usr/bin/qemu-arm",
+      "runtimeCpu": "cortex-a15",
+      "runtimeSysroot": "/usr/arm-linux-gnueabihf",
+      "codexElectron": {
+        "archiveArchitecture": "armv7l",
+        "sha256SRI": "sha256-XRXmAtl41Tdy7AxYr07wLRulFNw9Z1L/55wK0hgEw4w="
+      },
+      "qualification": "target-pending-clean-ci",
+      "elf": {
+        "class": 1,
+        "endianness": 1,
+        "machine": 40,
+        "flags": 83887104,
+        "flagsDescription": "Version5 EABI, hard-float ABI",
+        "machineName": "ARM",
+        "fileMachineName": "ARM",
+        "neededLibraries": [
+          "ld-linux-armhf.so.3",
           "libc.so.6",
           "libgcc_s.so.1"
         ]
@@ -128,6 +175,15 @@
       "family": "debian",
       "evidence": "runtime-qualification-required",
       "architectures": ["x64", "arm64"],
+      "image": "docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7"
+    },
+    {
+      "id": "ubuntu-22.04-armv7-qemu-user",
+      "distribution": "ubuntu",
+      "version": "22.04",
+      "family": "debian",
+      "evidence": "qemu-user-runtime-required",
+      "architectures": ["arm"],
       "image": "docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7"
     },
     {
@@ -193,8 +249,8 @@
   },
   "intentionallyUnsupported": [
     {
-      "target": "linux-armv7-gnu",
-      "reason": "Codex has partial architecture mappings but no complete Electron, pacman, native-addon, release, and runtime qualification path"
+      "target": "linux-arm-soft-float",
+      "reason": "The ARM package requires ARMv7, the hard-float EABI, little-endian execution, and glibc"
     },
     {
       "target": "linux-musl",

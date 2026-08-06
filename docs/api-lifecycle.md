@@ -709,14 +709,15 @@ historical event queries. Parcel's typed coalesced events and query API remain
 the more useful contract for those needs when its public loss and resource
 model is acceptable.
 
-The candidate target matrix is x64 and ARM64 GNU/Linux, kernel 5.15 and
-glibc at most 2.35, with Node `>=24.15.0 <25`; both GNU/Linux targets are
-supported by the checked-in source matrix.
+The candidate target matrix is x64, ARM64, and exact ARMv7 hard-float GNU/Linux,
+kernel 5.15 and glibc at most 2.35, with Node `>=24.15.0 <25`; x64 and ARM64
+are supported while ARMv7 remains pending its declared runtime evidence.
 Node-API compatibility or successful loading does not widen that matrix.
 Detected WSL and environments with recognized container evidence cannot
 qualify. Network filesystems, Filesystem in Userspace (FUSE), and overlay
-filesystems are unqualified; musl, ARMv7, and non-Linux platforms are
-unsupported. Existing mount points are traversed; no one-filesystem option or
+filesystems are unqualified; musl, soft-float/unknown/non-v7 ARM, big-endian
+ARM, and non-Linux platforms are unsupported. The exact ARMv7 hard-float
+target remains pending until its declared runtime lane passes. Existing mount points are traversed; no one-filesystem option or
 runtime descendant-mount reconciliation is implemented. See
 [`support-matrix.md`](support-matrix.md).
 

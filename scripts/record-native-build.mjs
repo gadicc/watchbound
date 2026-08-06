@@ -11,6 +11,7 @@ import {
   targetForId,
   targetForRuntime,
 } from "./lib/native-matrix.mjs";
+import { validateNativeArtifact } from "./lib/native-artifact.mjs";
 import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const workspaceRoot = path.resolve(
@@ -42,13 +43,27 @@ assert.deepEqual(
 );
 assert.ok(fs.existsSync(artifactPath), `missing native artifact: ${artifactPath}`);
 
-const require = createRequire(import.meta.url);
-const binding = require(path.join(workspaceRoot, "node/index.js"));
-const metadata = binding.bindingMetadata();
-assert.equal(metadata.nativeVersion, rootPackage.version);
-assert.equal(metadata.engineVersion, rootPackage.version);
-assert.equal(metadata.targetTriple, target.rustTarget);
-assert.equal(metadata.buildProfile, "release");
+const nativeRuntime = target.platform === process.platform &&
+  target.architecture === process.arch;
+let metadata;
+if (nativeRuntime) {
+  const require = createRequire(import.meta.url);
+  const binding = require(path.join(workspaceRoot, "node/index.js"));
+  metadata = binding.bindingMetadata();
+  assert.equal(metadata.nativeVersion, rootPackage.version);
+  assert.equal(metadata.engineVersion, rootPackage.version);
+  assert.equal(metadata.targetTriple, target.rustTarget);
+  assert.equal(metadata.buildProfile, "release");
+} else {
+  validateNativeArtifact(artifactPath, target, { version: rootPackage.version });
+  metadata = {
+    nativeVersion: rootPackage.version,
+    engineVersion: rootPackage.version,
+    nodeApiVersion: matrix.nodeApiMinimum,
+    targetTriple: target.rustTarget,
+    buildProfile: "release",
+  };
+}
 
 const osRelease = readOsRelease();
 const manifest = {
@@ -69,6 +84,10 @@ const manifest = {
     targetId: target.id,
     target: metadata.targetTriple,
     architecture: target.architecture,
+    buildMode: target.buildMode ?? "native",
+    metadataValidation: nativeRuntime
+      ? "loaded-binding"
+      : "elf-and-embedded-metadata",
     profile: metadata.buildProfile,
     nodeApi: metadata.nodeApiVersion,
   },
@@ -101,8 +120,8 @@ const manifest = {
     pnpm: capture("pnpm", ["--version"]),
     rustc: capture("rustc", ["--version", "--verbose"]),
     cargo: capture("cargo", ["--version"]),
-    cc: capture("cc", ["--version"]),
-    ld: capture("ld", ["--version"]),
+    cc: capture(target.linker ?? "cc", ["--version"]),
+    ld: capture(target.linkerBinary ?? "ld", ["--version"]),
   },
   runner: {
     imageOs: process.env.ImageOS ?? null,

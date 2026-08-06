@@ -9,6 +9,7 @@ import {
   INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
   readOptionalEvidence,
 } from "../../scripts/lib/native-build-evidence.mjs";
+import { validateNativeArtifact } from "../../scripts/lib/native-artifact.mjs";
 import {
   jsrPackageExists,
   waitForJsrPackage,
@@ -115,6 +116,7 @@ test("public guides defer Watchbound release versioning to package and release r
     "2.5.6",
     "10.33.2",
     "24.15.0",
+    "42.3.0",
   ]);
   for (const relativePath of [
     "README.md",
@@ -147,7 +149,7 @@ test("qualification summaries limit container exclusions to recognized evidence"
   const summaries = [
     ["README.md", "The supported native targets"],
     ["docs/api-lifecycle.md", "The candidate target matrix"],
-    ["docs/architecture.md", "The published `1.2.0` matrix"],
+    ["docs/architecture.md", "The current source matrix"],
     ["docs/support-matrix.md", "The full machine-readable contract"],
     ["skills/watchbound/SKILL.md", "An environment with recognized container evidence"],
   ];
@@ -206,7 +208,7 @@ test("release evidence accepts only the canonical independent matrix schema", ()
   }
 });
 
-test("native matrix is the single source for x64 and ARM64 delivery", () => {
+test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float delivery", () => {
   const matrix = readJson("config/native-matrix.json");
   assert.equal(matrix.schemaVersion, 1);
   assert.equal(matrix.nodeRange, ">=24.15.0 <25");
@@ -263,9 +265,38 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
         runner: "ubuntu-22.04-arm",
         overflowRunner: "ubuntu-24.04-arm",
       },
+      {
+        id: "linux-arm-gnueabihf",
+        architecture: "arm",
+        package: "@gadicc/watchbound-node-linux-arm-gnueabihf",
+        qualification: "target-pending-clean-ci",
+        runner: "ubuntu-22.04",
+        overflowRunner: null,
+      },
     ],
   );
-  assert.equal(matrix.qualificationLanes.length, 7);
+  const armv7 = matrix.targets.find(({ id }) => id === "linux-arm-gnueabihf");
+  assert.deepEqual(armv7.armAbi, {
+    version: 7,
+    floatAbi: "hard",
+    endianness: "little",
+  });
+  assert.equal(armv7.rustTarget, "armv7-unknown-linux-gnueabihf");
+  assert.equal(armv7.binary, "watchbound.linux-arm-gnueabihf.node");
+  assert.equal(armv7.runtimeEmulator, "/usr/bin/qemu-arm");
+  assert.equal(armv7.runtimeCpu, "cortex-a15");
+  assert.equal(armv7.runtimeSysroot, "/usr/arm-linux-gnueabihf");
+  assert.deepEqual(armv7.elf, {
+    class: 1,
+    endianness: 1,
+    machine: 40,
+    flags: 83887104,
+    flagsDescription: "Version5 EABI, hard-float ABI",
+    machineName: "ARM",
+    fileMachineName: "ARM",
+    neededLibraries: ["ld-linux-armhf.so.3", "libc.so.6", "libgcc_s.so.1"],
+  });
+  assert.equal(matrix.qualificationLanes.length, 8);
   assert.deepEqual(matrix.codexRuntime, {
     electron: "42.3.0",
     node: "24.15.0",
@@ -277,8 +308,53 @@ test("native matrix is the single source for x64 and ARM64 delivery", () => {
   }
   assert.deepEqual(
     matrix.intentionallyUnsupported.map(({ target }) => target),
-    ["linux-armv7-gnu", "linux-musl", "non-linux"],
+    ["linux-arm-soft-float", "linux-musl", "non-linux"],
   );
+});
+
+test("ARMv7 artifact validation fails closed on filename, ELF identity, triple, and version", () => {
+  const target = readJson("config/native-matrix.json").targets.find(
+    ({ id }) => id === "linux-arm-gnueabihf",
+  );
+  assert.ok(target);
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-armv7-elf-"));
+  const artifact = path.join(fixtureRoot, target.binary);
+  const contents = Buffer.alloc(256);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(contents);
+  contents[4] = target.elf.class;
+  contents[5] = target.elf.endianness;
+  contents.writeUInt16LE(target.elf.machine, 18);
+  contents.writeUInt32LE(target.elf.flags, 36);
+  Buffer.from(target.rustTarget).copy(contents, 64);
+  Buffer.from("9.8.7").copy(contents, 160);
+  try {
+    fs.writeFileSync(artifact, contents);
+    assert.equal(validateNativeArtifact(artifact, target, { version: "9.8.7" }).bytes, 256);
+    assert.throws(
+      () => validateNativeArtifact(path.join(fixtureRoot, "wrong.node"), target),
+      /artifact filename/u,
+    );
+
+    const wrongFlags = Buffer.from(contents);
+    wrongFlags.writeUInt32LE(0x05000200, 36);
+    fs.writeFileSync(artifact, wrongFlags);
+    assert.throws(() => validateNativeArtifact(artifact, target), /flags/u);
+
+    fs.writeFileSync(artifact, Buffer.alloc(256));
+    assert.throws(() => validateNativeArtifact(artifact, target), /ELF magic/u);
+
+    const missingMetadata = Buffer.from(contents);
+    missingMetadata.fill(0, 64);
+    fs.writeFileSync(artifact, missingMetadata);
+    assert.throws(() => validateNativeArtifact(artifact, target), /target triple/u);
+    fs.writeFileSync(artifact, contents.subarray(0, 150));
+    assert.throws(
+      () => validateNativeArtifact(artifact, target, { version: "9.8.7" }),
+      /package version/u,
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test("manual qualification is read-only while semantic release stays push-only", () => {
@@ -406,6 +482,7 @@ test("manual qualification is read-only while semantic release stays push-only",
     "repro-build": ["plan"],
     "repro-compare": ["plan", "repro-build"],
     aggregate: ["plan", "repro-compare"],
+    "release-armv7-runtime": ["plan", "aggregate"],
     "release-distro": ["plan", "aggregate"],
     "release-electron": ["plan", "aggregate"],
     "release-kernel-baseline": ["plan", "aggregate"],
@@ -414,6 +491,7 @@ test("manual qualification is read-only while semantic release stays push-only",
       "plan",
       "tests",
       "aggregate",
+      "release-armv7-runtime",
       "release-distro",
       "release-electron",
       "release-kernel-baseline",
@@ -423,13 +501,15 @@ test("manual qualification is read-only while semantic release stays push-only",
       "plan",
       "tests",
       "aggregate",
+      "release-armv7-runtime",
       "release-distro",
       "release-electron",
       "release-kernel-baseline",
       "release-overflow",
     ],
     "registry-smoke": ["plan", "release"],
-    verified: ["registry-smoke"],
+    "registry-armv7-smoke": ["plan", "release"],
+    verified: ["registry-smoke", "registry-armv7-smoke"],
   };
   for (const [job, requiredResults] of Object.entries(cascadeJobs)) {
     const start = release.indexOf(`  ${job}:\n`);
@@ -465,11 +545,13 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /^  repro-compare:$/mu);
   assert.match(release, /^  aggregate:$/mu);
   assert.match(release, /^  release-distro:$/mu);
+  assert.match(release, /^  release-armv7-runtime:$/mu);
   assert.match(release, /^  release-electron:$/mu);
   assert.match(release, /^  release-kernel-baseline:$/mu);
   assert.match(release, /^  release-overflow:$/mu);
   assert.match(release, /^  qualification-verified:$/mu);
   assert.match(release, /^  registry-smoke:$/mu);
+  assert.match(release, /^  registry-armv7-smoke:$/mu);
   assert.match(release, /compare-native-builds\.mjs/u);
   assert.match(release, /aggregate-native-builds\.mjs/u);
   assert.match(release, /check-registry-packages\.mjs/u);
@@ -648,11 +730,11 @@ test("workflow artifact handoffs survive partial reruns", () => {
     ci.match(
       /^          name: watchbound-ci-native-\$\{\{ matrix\.target \}\}$/gmu,
     )?.length,
-    4,
+    6,
   );
   assert.equal(
     ci.match(/^          overwrite: true$/gmu)?.length,
-    1,
+    2,
   );
   assert.doesNotMatch(
     ci,

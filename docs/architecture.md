@@ -20,6 +20,12 @@ Release `1.2.0` adds exact recursive directory-name pruning and observed
 excluded boundaries. It advances binding API 4 and public capability schema 5,
 passed exact x64/ARM64 qualification, and is published on npm and JSR.
 
+The current source candidate adds one exact GNU/Linux ARMv7 hard-float target.
+It cross-builds `armv7-unknown-linux-gnueabihf`, packages the ELF32 binding
+separately, and requires a real loader/watch/dispose run through pinned ARMv7
+Electron under QEMU-user before promotion. Public capability schema 9 reports
+the exact ARM ABI and keeps the target pending until that evidence exists.
+
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support
 target. That historical decision did not authorize packaging, publishing,
@@ -426,7 +432,7 @@ The wrapper combines native capability-schema-version-5 feature/default metadata
 binary build/version identity, process runtime facts, and the approved support
 target into one deeply frozen JSON-serializable `capabilities` value. Its
 sections are `versions`, `build`, `runtime`, `support`, `features`, `options`,
-and `observability`, under `schemaVersion: 8`. Features distinguish
+and `observability`, under `schemaVersion: 9`. Features distinguish
 subscription logical limits from the process native-watch budget and shared
 watches, and expose recursive name exclusions, observed excluded boundaries,
 cancellable establishment, shared Node delivery, physical root resolution, and
@@ -854,12 +860,14 @@ platform range, and packaging are sufficient. Parcel's Linux inotify
 conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
-The published `1.2.0` matrix in `docs/support-matrix.md` covers supported
-x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35 baseline and Node
+The current source matrix in `docs/support-matrix.md` covers supported
+x64 and ARM64 GNU/Linux targets, plus a pending exact ARMv7 hard-float target,
+with a kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`. Detected WSL and environments with recognized container
 evidence cannot qualify. Network filesystems, Filesystem in Userspace (FUSE),
-and overlay filesystems are unqualified; musl, ARMv7, and non-Linux platforms
-are unsupported. The engine traverses existing mount points, has no
+and overlay filesystems are unqualified; musl, soft-float/unknown/non-v7 ARM,
+big-endian ARM, and non-Linux platforms are unsupported. The engine traverses
+existing mount points, has no
 one-filesystem mode, and cannot observe a later descendant mount insertion
 through inotify alone.
 

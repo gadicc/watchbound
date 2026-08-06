@@ -234,7 +234,7 @@ function inspectUnknownError(error: unknown): string {
 }
 
 function inspectCapabilities(): void {
-  const schemaVersion: 8 = capabilities.schemaVersion;
+  const schemaVersion: 9 = capabilities.schemaVersion;
   const bindingApi: number = capabilities.versions.bindingApi;
   const callbackCompletion: "promise-aware-serialized" =
     capabilities.observability.callbackCompletion;
@@ -245,7 +245,7 @@ function inspectCapabilities(): void {
     | "controlled-source-build"
     | "bundled-native-package" = capabilities.build.delivery;
   const prebuilt: boolean = capabilities.build.prebuilt;
-  const packagedArchitecture: "x64" | "arm64" =
+  const packagedArchitecture: "x64" | "arm64" | "arm" =
     capabilities.build.packagedTarget.architecture;
   const runtimeMatchesPackagedTarget: boolean =
     capabilities.support.currentRuntime.runtimeMatchesPackagedTarget;

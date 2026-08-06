@@ -1,10 +1,17 @@
 # Maintenance and release policy
 
-Status: release `1.2.0` is published and passed exact x64/ARM64 qualification
-plus npm and JSR Node-route registry smokes. It adds the exclusion-policy
-feature under capability schema 5 and binding API 4 while retaining the
-multi-target delivery introduced in `1.1.0`. Future releases and consumer
-production readiness remain separately gated.
+Status: release `2.0.0` is published and passed exact x64/ARM64 qualification
+plus npm and JSR Node-route registry smokes. Its public contract uses capability
+schema 8 and binding API 5 while retaining the multi-target delivery introduced
+in `1.1.0`. Future releases and consumer production readiness remain separately
+gated.
+
+The current source candidate adds GNU/Linux ARMv7 hard-float delivery and
+capability schema 9. The proposed next version is `2.1.0`: this is an additive
+platform and public capability-schema feature on top of published `2.0.0`, not
+a patch. The target remains `target-pending-clean-ci` until the exact ARMv7
+cross-build/package and QEMU-user Electron lifecycle jobs are green. No text in
+this document authorizes publication, tagging, or consumer integration.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved
@@ -44,6 +51,14 @@ after the authorized release-worthy push to `main` passed every distribution
 gate.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
+
+For ARMv7, the maintained contract is intentionally exact: GNU/Linux glibc,
+little-endian ARMv7-A, hard-float EABI, kernel 5.15 or newer, and the existing
+Node `>=24.15.0 <25` range. The reference execution host is Electron 42.3.0
+with embedded Node 24.15.0 under QEMU-user because upstream Node does not ship
+a Linux ARMv7 archive for that version. Consumer-managed Node builds may be
+compatible only when the loader can prove the same ARM ABI. Soft-float, musl,
+unknown ARM ABI, and other 32-bit ARM variants are outside support.
 
 The exact-commit verification and documentation gates supporting recognition
 as maintained-unpublished are recorded in `consumer-api-stabilization.md`.
@@ -98,6 +113,13 @@ Type declarations are checked by compiled consumer fixtures. Source-build and
 loader changes additionally exercise clean build/load, unsupported-platform,
 version-mismatch, and environment-teardown behavior.
 
+ARMv7-affecting changes additionally require two deterministic armhf
+cross-builds, exact ELF32/endianness/machine/EABI-hard-float inspection, target
+package allowlists and metadata checks, loader negative cases, and a real
+start/callback/dispose cycle under the pinned ARMv7 Electron/QEMU-user lane.
+Cross-compilation and packaging without that execution lane may be described
+only as cross-build support and must leave the target pending.
+
 The ordinary JavaScript suite also replays fixed seeded operation sequences
 across exclusion replacement, topology mutation, moved-in trees, in-root
 renames, reconciliation, asynchronous callback delivery, exact watch
@@ -134,3 +156,11 @@ lockstep version only after every pre-publication dependency succeeds and
 Conventional Commits require it. A stable release is
 published-but-verification-pending until clean exact-version npm and JSR
 Node-route installs pass on fresh supported runners.
+
+An ARMv7 release additionally remains verification-pending until both npm and
+JSR Node routes install only the selected armhf target package and complete the
+same Electron/QEMU watch lifecycle. If the ARMv7 runtime infrastructure cannot
+execute, fail the release; do not waive the lane or silently publish a
+cross-build-only target as supported. Native ARMv7 hardware may replace the
+emulated lane in a future maintenance change only with equivalent retained
+artifact and lifecycle evidence.

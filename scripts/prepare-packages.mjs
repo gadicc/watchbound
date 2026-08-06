@@ -175,6 +175,7 @@ for (const { target, artifactPath } of availableTargets) {
       target: target.id,
       targetTriple: target.rustTarget,
       architecture: target.architecture,
+      armAbi: target.armAbi ?? null,
       libc: target.libc,
       binary: target.binary,
       nativeSha256,

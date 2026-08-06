@@ -1,10 +1,15 @@
 # Native delivery contract
 
-Status: release `1.2.0` publishes the architecture-neutral loader and exact x64
+Status: release `2.0.0` publishes the architecture-neutral loader and exact x64
 and ARM64 GNU/Linux target packages supported by the checked-in source matrix.
 It keeps the package roles and binary filenames introduced in `1.1.0` while
-advancing the native contract to binding API 4 and capability schema 5. The
+advancing the native contract to binding API 5 and capability schema 8. The
 historical `1.0.1` release retains its one-target contract.
+
+The current source candidate adds an ARMv7 hard-float target package and
+capability schema 9. It remains `target-pending-clean-ci` until the exact
+cross-build, packaging, and QEMU-user Electron lifecycle lanes pass; it is not
+part of release `2.0.0`.
 
 ## One matrix, three package roles
 
@@ -21,6 +26,7 @@ The generated public boundary is:
 | CommonJS loader | `@gadicc/watchbound-node` | Linux, architecture-neutral; optional exact target packages |
 | x64 artifact | `@gadicc/watchbound-node-linux-x64-gnu` | `os=linux`, `cpu=x64`, `libc=glibc` |
 | ARM64 artifact | `@gadicc/watchbound-node-linux-arm64-gnu` | `os=linux`, `cpu=arm64`, `libc=glibc` |
+| ARMv7 hard-float artifact | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `os=linux`, `cpu=arm`, `libc=glibc`; manifest requires ARMv7, hard-float, little-endian |
 
 Workspace manifests remain private controlled-source packages. A source build
 places exactly the current host target beside `node/index.js`. Public package
@@ -33,8 +39,13 @@ override, searches a cache, or falls back to another architecture/libc.
 
 ## Exact loader selection
 
-On Linux glibc, the loader maps only `process.arch === "x64"` or `"arm64"` to
-one matrix entry. It then chooses one of two explicit delivery modes:
+On Linux glibc, the loader maps `process.arch === "x64"`, `"arm64"`, or
+`"arm"` to one matrix entry. The `arm` route is accepted only when Node reports
+ARM version 7 and `arm_float_abi === "hard"` and the process is little-endian;
+missing facts, ARMv6, soft/softfp, or big-endian ARM fail with
+`WATCHBOUND_UNSUPPORTED_PLATFORM`. Musl fails independently with
+`WATCHBOUND_UNSUPPORTED_LIBC`. The loader then chooses one of two explicit
+delivery modes:
 
 1. controlled source build: the one exact local matrix filename beside the
    loader; or
@@ -47,6 +58,11 @@ regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,
 class, endianness, and machine before `require()`. After load it verifies
 metadata schema 1, binding API 5, wrapper/native/engine version lockstep,
 Node-API floor 6, target triple, and release profile.
+
+ELF validation includes the ARM artifact's ELF32 class, little-endian encoding,
+`EM_ARM` machine value, and EABI5 hard-float `e_flags`; a soft-float ELF cannot
+be relabeled as the armhf package. Generated target metadata repeats the exact
+ARM ABI object and is covered by the package manifest and binding SHA.
 
 Node is restricted to `>=24.15.0 <25`. The Codex boundary is Electron 42.3.0,
 embedded Node 24.15.0, and Node-API 10. Stable bounded loader codes distinguish
@@ -62,8 +78,8 @@ must load through the production package resolver and deliver a real callback.
 
 For each registry native artifact, release qualification requires:
 
-- two clean isolated native builders on the target architecture and Ubuntu
-  22.04/glibc 2.35 baseline;
+- two clean isolated Ubuntu 22.04/glibc 2.35 builders, native for x64/ARM64 and
+  the pinned GNU armhf cross toolchain for ARMv7;
 - exact source/version/tool/environment metadata and byte identity;
 - SHA-256, ELF class/machine, exact dynamic-library allowlist, no
   RPATH/RUNPATH, and maximum required `GLIBC_* <= 2.35`;
@@ -84,9 +100,55 @@ For each registry native artifact, release qualification requires:
 
 Cross-compilation can demonstrate that source compiles. It cannot qualify a
 target. ARM64 execution uses a native ARM64 runner. Container distro lanes use
-the matching native host. The separate QEMU lane proves only that the exact
-package semantics run on the pinned 5.15 kernel; it never substitutes for the
-native target lanes.
+the matching native host. The separate system-QEMU lane proves only that the
+exact package semantics run on the pinned 5.15 kernel; it never substitutes
+for the native x64/ARM64 target lanes.
+
+ARMv7's initial lane is explicitly different: Ubuntu 22.04 x64 builders use
+`arm-linux-gnueabihf-gcc` for `armv7-unknown-linux-gnueabihf`, then the
+canonical ELF is loaded by the official Electron 42.3.0 `linux-armv7l` archive
+under `qemu-arm -cpu cortex-a15` and an Ubuntu armhf glibc sysroot. The fixture
+loads the production packages from ASAR and performs a real watch callback and
+joined disposal. That emulated execution is the target's maintained runtime
+evidence until a native ARMv7 lane is available; if it does not run, the matrix
+must keep the target pending and documentation must say only “cross-build
+supported.”
+
+## 32-bit implementation audit
+
+The ARMv7 review found no pointer-width representation in the filesystem
+identity or ordering contracts:
+
+- Linux device and inode identities, root generations, subscription ids,
+  sequence numbers, exclusion generations, delivery ids, and cumulative event
+  counters remain `u64` through the engine and Node boundary. JavaScript sees
+  identity/order fields as `bigint` where required; none are narrowed to
+  `usize`.
+- Linux inotify watch descriptors and poll timeouts remain kernel-compatible
+  `i32`. File descriptors use the platform `RawFd`; they are not stored in an
+  unsigned pointer-sized field.
+- User-configurable counts are first validated as positive `u32`. Their later
+  conversion to `usize` is lossless on the 32-bit target. Exported live-count
+  snapshots use an explicit saturating `usize` to `u32` conversion rather than
+  truncation.
+- Native read lengths and inotify name lengths are converted to `usize` only
+  after being bounded by the fixed 64 KiB input buffer and checked against the
+  available slice. Batch and queue allocation remain bounded by the existing
+  `u32` public maximums.
+- Filesystem object sizes are not part of the watch identity or event contract.
+  The one delivery size check is the loader's bounded 8 MiB addon file size,
+  which is exactly representable on both JavaScript and 32-bit Rust hosts.
+- The engine and delivery layer use `AtomicU64` for monotonic ids and counters
+  and `AtomicUsize` for live resource counts. Rust reports 8/16/32/64/pointer
+  atomic support for `armv7-unknown-linux-gnueabihf`; the cross-compile lane is
+  the continuing guard against target regressions.
+- Node environment keys are derived from a native pointer as `usize`, which is
+  the correct width on ARM32. Fixed napi-rs resource-name lengths are the only
+  `usize`-to-`isize` conversions and are bounded static strings.
+
+No Rust or Node-API semantic type change was required. Artifact ELF flags,
+loader runtime facts, and the executed lifecycle lane provide the ABI checks
+that source-level integer review cannot.
 
 ## Nix boundary
 
@@ -96,12 +158,12 @@ layout without npm access, loads it with Nix Node 24, and packs/runs it with the
 exact pinned Nix Electron 42.3.0 closure. The Nix addon is a source-built Nix
 output, not the registry ELF: Nix may apply its own interpreter/RPATH closure,
 so registry no-RPATH evidence and Nix closure evidence remain separate.
+ARMv7 is not added to the Nix outputs by this change.
 
 ## Deliberate exclusions
 
-- ARMv7 is unsupported. Codex contains partial mappings, but its Electron,
-  pacman, native-addon, release, and native-runtime paths do not form a complete
-  qualified target.
+- ARM soft-float, ARM versions other than 7, unknown ARM ABI, and big-endian
+  ARM are unsupported. The one ARM route is exact GNU/Linux ARMv7 hard-float.
 - musl is unsupported. Codex can embed a musl CLI, but Watchbound runs inside
   the host glibc Electron process.
 - non-Linux systems are unsupported because the engine is inotify-specific.

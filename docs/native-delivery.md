@@ -114,6 +114,9 @@ ARMv7's initial lane is explicitly different: Ubuntu 22.04 x64 builders use
 `arm-linux-gnueabihf-gcc` for `armv7-unknown-linux-gnueabihf`, then the
 canonical ELF is loaded by the official Electron 42.3.0 `linux-armv7l` archive
 under `qemu-arm -cpu cortex-a15` and a digest-pinned Ubuntu 22.04 armhf rootfs.
+The cross-build installs `libc6-dev-armhf-cross` explicitly because the
+workflows disable recommended packages; GCC alone does not supply the armhf
+startup objects and libc linker metadata.
 The rootfs is populated only from the checked-in Ubuntu snapshot timestamp,
 and its complete installed-package manifest is hashed into the retained
 evidence. Its minimal-image CA bootstrap relies on signed APT metadata, then

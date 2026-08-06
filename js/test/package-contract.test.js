@@ -624,6 +624,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /glibc 2\.35/u);
   assert.match(release, /check-electron-asar\.mjs/u);
   assert.match(release, /run-kernel-baseline-qualification\.mjs/u);
+  assert.match(
+    release,
+    /gcc-arm-linux-gnueabihf \\\n\s+libc6-dev-armhf-cross/u,
+  );
   assert.match(release, /--profile kernel/u);
   assert.match(release, /--prepared-rootfs/u);
   assert.match(release, /cp -a "\$host_node_root\/lib\/node_modules\/npm"/u);
@@ -661,6 +665,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(ci, /check-electron-asar\.mjs/u);
   assert.match(ci, /run-distro-qualification\.mjs/u);
   assert.match(ci, /run-kernel-baseline-qualification\.mjs/u);
+  assert.match(
+    ci,
+    /gcc-arm-linux-gnueabihf \\\n\s+libc6-dev-armhf-cross/u,
+  );
   assert.match(ci, /--profile kernel/u);
   assert.match(ci, /--prepared-rootfs/u);
   assert.match(ci, /cp -a "\$host_node_root\/lib\/node_modules\/npm"/u);

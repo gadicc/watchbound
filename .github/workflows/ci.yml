@@ -189,7 +189,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf
+            binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf \
+            libc6-dev-armhf-cross
           rustup toolchain install 1.88.0 --profile minimal --component clippy --component rustfmt
           rustup default 1.88.0
           rustup target add "${{ matrix.rustTarget }}"

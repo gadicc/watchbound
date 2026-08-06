@@ -245,7 +245,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf
+            binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf \
+            libc6-dev-armhf-cross
       - name: Assert exact isolated clean source
         shell: bash
         run: |

@@ -47,7 +47,7 @@
   },
   "devDependencies": {
     "@electron/asar": "4.2.1",
-    "@napi-rs/cli": "3.8.1",
+    "@napi-rs/cli": "3.8.2",
     "@parcel/watcher": "2.5.6",
     "conventional-changelog-conventionalcommits": "10.2.1",
     "semantic-release": "25.0.8",

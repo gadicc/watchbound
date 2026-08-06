@@ -16,6 +16,10 @@ const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const TARGET_BOOTSTRAP_VERSION = "0.0.0-bootstrap.0";
+const TARGET_BOOTSTRAP_DEPRECATION =
+  "Inert namespace bootstrap only; do not depend on this version.";
+const FIRST_PUBLICATION_TARGETS = ["linux-arm-gnueabihf"];
 
 export function prepare(_pluginConfig, { nextRelease }) {
   assertPlannedVersion(nextRelease.version);
@@ -48,6 +52,7 @@ export async function publish(_pluginConfig, { nextRelease }) {
   writeLedger(ledger);
 
   try {
+    await preflightNpmNamespaces(packages);
     const states = new Map();
     for (const descriptor of packages) {
       states.set(descriptor.name, await npmPackageState(`${descriptor.name}@${version}`));
@@ -64,12 +69,16 @@ export async function publish(_pluginConfig, { nextRelease }) {
         `loader or wrapper exists without exact native targets: ${missingTargets.map(({ name }) => name).join(", ")}`,
       );
     }
-
     for (const descriptor of packages) {
       const existing = states.get(descriptor.name);
       if (existing !== null) {
         verifyExistingNpmPackage(existing, descriptor, version);
-      } else {
+      }
+    }
+
+    for (const descriptor of packages) {
+      const existing = states.get(descriptor.name);
+      if (existing === null) {
         publishNpm(descriptor, distTag);
         recordOperation(ledger, `npm:${descriptor.name}`, "published-verification-pending");
         verifyExistingNpmPackage(
@@ -206,7 +215,7 @@ function releasePackages(version) {
     root: target.root,
     tarball: genericTarballPath(target.name, version),
   }));
-  return [
+  return orderReleasePackages([
     ...targets,
     {
       kind: "loader",
@@ -220,7 +229,33 @@ function releasePackages(version) {
       root: manifest.wrapper.root,
       tarball: genericTarballPath(manifest.wrapper.name, version),
     },
-  ];
+  ]);
+}
+
+export function orderReleasePackages(packages) {
+  const priority = new Map(
+    FIRST_PUBLICATION_TARGETS.map((targetId, index) => [targetId, index]),
+  );
+  return packages
+    .map((descriptor, index) => ({ descriptor, index }))
+    .sort((left, right) => {
+      const leftKind = packageKindOrder(left.descriptor.kind);
+      const rightKind = packageKindOrder(right.descriptor.kind);
+      if (leftKind !== rightKind) return leftKind - rightKind;
+      if (left.descriptor.kind === "target") {
+        const leftPriority = priority.get(left.descriptor.targetId) ?? priority.size;
+        const rightPriority = priority.get(right.descriptor.targetId) ?? priority.size;
+        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      }
+      return left.index - right.index;
+    })
+    .map(({ descriptor }) => descriptor);
+}
+
+function packageKindOrder(kind) {
+  const order = { target: 0, loader: 1, wrapper: 2 };
+  if (!Object.hasOwn(order, kind)) throw new Error(`unknown release package kind: ${kind}`);
+  return order[kind];
 }
 
 function publishNpm(descriptor, distTag) {
@@ -260,6 +295,42 @@ async function npmPackageState(specifier) {
   throw new Error(
     `could not determine whether ${specifier} exists:\n${result.stdout}\n${result.stderr}`.trim(),
   );
+}
+
+export async function preflightNpmNamespaces(packages, {
+  packageState = npmPackageState,
+} = {}) {
+  const states = new Map();
+  for (const descriptor of packages) {
+    const specifier = descriptor.kind === "target"
+      ? `${descriptor.name}@${TARGET_BOOTSTRAP_VERSION}`
+      : descriptor.name;
+    states.set(descriptor.name, await packageState(specifier));
+  }
+  for (const descriptor of packages) {
+    const state = states.get(descriptor.name);
+    if (state === null) {
+      throw new Error(
+        descriptor.kind === "target"
+          ? `npm target namespace lacks inert bootstrap ${descriptor.name}@${TARGET_BOOTSTRAP_VERSION}`
+          : `npm package namespace does not exist: ${descriptor.name}`,
+      );
+    }
+    if (state.name !== descriptor.name) {
+      throw new Error(`npm namespace identity mismatch for ${descriptor.name}`);
+    }
+    if (descriptor.kind === "target") {
+      if (
+        state.version !== TARGET_BOOTSTRAP_VERSION ||
+        state.deprecated !== TARGET_BOOTSTRAP_DEPRECATION ||
+        state["dist-tags"]?.bootstrap !== TARGET_BOOTSTRAP_VERSION ||
+        state.repository?.url !== "git+https://github.com/gadicc/watchbound.git"
+      ) {
+        throw new Error(`npm target bootstrap contract mismatch for ${descriptor.name}`);
+      }
+    }
+  }
+  return states;
 }
 
 async function waitForNpmPackage(specifier) {

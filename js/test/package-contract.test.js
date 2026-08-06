@@ -653,6 +653,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(plugin, /publication-ledger\.json/u);
   assert.match(plugin, /async function npmPackageState/u);
   assert.match(plugin, /\["view", specifier, "--json"\]/u);
+  assert.match(plugin, /preflightNpmNamespaces\(packages\)/u);
+  assert.match(plugin, /0\.0\.0-bootstrap\.0/u);
+  assert.match(plugin, /linux-arm-gnueabihf/u);
   assert.doesNotMatch(plugin, /deno", \["info"/u);
   assert.doesNotMatch(plugin, /minimum-dependency-age/u);
   assert.match(plugin, /https:\/\/jsr\.io\/@/u);

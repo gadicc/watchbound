@@ -13,7 +13,11 @@ import {
   materializeReleaseCandidate,
   verifyReleaseCandidate,
 } from "../../scripts/lib/release-version.mjs";
-import { verifyPublishPreconditions } from "../../scripts/semantic-release-watchbound.mjs";
+import {
+  orderReleasePackages,
+  preflightNpmNamespaces,
+  verifyPublishPreconditions,
+} from "../../scripts/semantic-release-watchbound.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -31,7 +35,7 @@ test("committed workspace versions are permanent development placeholders", () =
 });
 
 test("semantic-release publish preflight validates the exact generated candidate", () => {
-  const fixture = createFixture();
+  const fixture = createFixture({ qualifyTargets: true });
   const version = "9.8.7";
   const previousPlannedVersion = process.env.WATCHBOUND_PLANNED_VERSION;
   try {
@@ -50,6 +54,59 @@ test("semantic-release publish preflight validates the exact generated candidate
     }
     fs.rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+test("npm publication preflights every namespace and requires target bootstraps", async () => {
+  const packages = [
+    { kind: "target", targetId: "linux-x64-gnu", name: "@gadicc/x64" },
+    {
+      kind: "target",
+      targetId: "linux-arm-gnueabihf",
+      name: "@gadicc/armhf",
+    },
+    { kind: "loader", name: "@gadicc/loader" },
+    { kind: "wrapper", name: "wrapper" },
+  ];
+  const requested = [];
+  const packageState = async (specifier) => {
+    requested.push(specifier);
+    const name = specifier.replace(/@0\.0\.0-bootstrap\.0$/u, "");
+    if (name === "@gadicc/armhf") return null;
+    if (specifier.endsWith("@0.0.0-bootstrap.0")) {
+      return {
+        name,
+        version: "0.0.0-bootstrap.0",
+        deprecated: "Inert namespace bootstrap only; do not depend on this version.",
+        "dist-tags": { bootstrap: "0.0.0-bootstrap.0" },
+        repository: { url: "git+https://github.com/gadicc/watchbound.git" },
+      };
+    }
+    return { name };
+  };
+
+  await assert.rejects(
+    preflightNpmNamespaces(packages, { packageState }),
+    /lacks inert bootstrap @gadicc\/armhf@0\.0\.0-bootstrap\.0/u,
+  );
+  assert.deepEqual(requested, [
+    "@gadicc/x64@0.0.0-bootstrap.0",
+    "@gadicc/armhf@0.0.0-bootstrap.0",
+    "@gadicc/loader",
+    "wrapper",
+  ]);
+});
+
+test("npm publication contains a new native namespace failure before stable packages", () => {
+  assert.deepEqual(
+    orderReleasePackages([
+      { kind: "wrapper", name: "wrapper" },
+      { kind: "target", targetId: "linux-x64-gnu", name: "x64" },
+      { kind: "loader", name: "loader" },
+      { kind: "target", targetId: "linux-arm-gnueabihf", name: "armhf" },
+      { kind: "target", targetId: "linux-arm64-gnu", name: "arm64" },
+    ]).map(({ name }) => name),
+    ["armhf", "x64", "arm64", "loader", "wrapper"],
+  );
 });
 
 test("release versions are deterministic generated candidates", () => {
@@ -109,7 +166,7 @@ test("generated candidates reject any mutation outside the version transform", (
   }
 });
 
-function createFixture() {
+function createFixture({ qualifyTargets = false } = {}) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-release-version-"));
   const fixtureFiles = [...VERSION_FILES, "config/native-matrix.json"];
   for (const relativePath of fixtureFiles) {
@@ -119,6 +176,12 @@ function createFixture() {
       ? captureRaw(workspaceRoot, "git", ["show", `HEAD:${relativePath}`])
       : fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8");
     fs.writeFileSync(destination, source);
+  }
+  if (qualifyTargets) {
+    const matrixPath = path.join(fixture, "config/native-matrix.json");
+    const matrix = JSON.parse(fs.readFileSync(matrixPath, "utf8"));
+    for (const target of matrix.targets) target.qualification = "supported";
+    fs.writeFileSync(matrixPath, `${JSON.stringify(matrix, null, 2)}\n`);
   }
   run(fixture, "git", ["init", "--quiet"]);
   run(fixture, "git", ["add", ...fixtureFiles]);

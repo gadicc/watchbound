@@ -165,6 +165,15 @@ procedure requires, and configure the exact repository/workflow trusted
 publisher. This is a separate registry mutation requiring explicit maintainer
 authorization; this source change does not perform it.
 
+Semantic release now checks every package namespace before its first registry
+mutation. Every native target must expose the exact inert
+`0.0.0-bootstrap.0` version, deprecation text, `bootstrap` tag, and Watchbound
+repository identity; the loader and wrapper namespaces must already exist.
+It then reads and validates every already-published candidate version before
+publishing anything. Missing candidates are published ARMv7 first, then the
+established native targets, loader, and wrapper, so a new-namespace failure is
+contained before stable package versions are mutated.
+
 All established npm package routes use the trusted publisher for repository
 `gadicc/watchbound` and workflow `release.yml`; JSR authorizes the same GitHub
 workflow for `@gadicc/watchbound`. Ordinary release publication uses OIDC and

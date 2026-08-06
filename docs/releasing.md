@@ -81,8 +81,9 @@ For each x64, ARM64, and ARMv7 hard-float registry target, the release workflow:
    QEMU-user lane;
 6. runs the canonical package from `app.asar`/`app.asar.unpacked` under exact
    Electron 42.3.0 and Node 24.15.0; ARMv7 executes the official
-   `linux-armv7l` archive under `qemu-arm -cpu cortex-a15` with the Ubuntu
-   armhf sysroot;
+   `linux-armv7l` archive under `qemu-arm -cpu cortex-a15` with the
+   digest-pinned Ubuntu 22.04 armhf OCI rootfs, snapshot-locked packages, and
+   retained installed-package manifest;
 7. boots the checksum-pinned Canonical Ubuntu 22.04 kernel 5.15 under bounded
    QEMU and reruns the offline package, loader, real-delivery, exclusion-policy,
    recovery, and joined-disposal smoke on x64 and ARM64; this is kernel-floor

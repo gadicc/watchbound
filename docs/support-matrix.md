@@ -47,9 +47,15 @@ post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 The glibc release ceiling remains 2.35, and artifact inspection must prove the
 actual maximum `GLIBC_*` symbol no newer than that ceiling. ARMv7 uses the same
 kernel floor as the published targets, but this revision does not add a
-separate pinned ARMv7 kernel-boot lane. Its QEMU-user lane supplies the Ubuntu
-22.04 armhf userspace and executes the official Electron ARMv7 archive on the
-host kernel.
+separate pinned ARMv7 kernel-boot lane. Its QEMU-user lane constructs an
+isolated Ubuntu 22.04 armhf rootfs from the digest-pinned official OCI image,
+rewrites APT to the checked-in Ubuntu snapshot timestamp, records the complete
+installed-package manifest, and executes the official Electron ARMv7 archive
+on the host kernel. The GNU cross compiler's sysroot is build-only and is never
+used as runtime qualification evidence. The minimal OCI image initially lacks
+a CA bundle, so the lane bootstraps only `ca-certificates` from signed snapshot
+metadata, clears the indexes, and then re-fetches them with ordinary TLS peer
+verification before installing the runtime closure.
 
 Node's official 24.15.0 download set has no Linux ARMv7 archive. This does not
 change Watchbound's Node version contract: an ARMv7 Node host must still be
@@ -149,10 +155,10 @@ GitHub-hosted ARMv7 runner is available: two deterministic Ubuntu 22.04
 cross-builds must byte-match, the generated npm package must pass its exact
 allowlist and metadata checks, and the canonical artifact must execute the
 production loader plus a real start/callback/dispose lifecycle under pinned
-Electron 42.3.0 through `qemu-arm` with an armhf glibc sysroot. Publication and
-registry verification are gated on that lane. If it is unavailable or red,
-the target remains `target-pending-clean-ci`; cross-compilation alone never
-promotes it.
+Electron 42.3.0 through `qemu-arm` in the snapshot-locked armhf rootfs.
+Publication and registry verification are gated on that lane. If it is
+unavailable or red, the target remains `target-pending-clean-ci`;
+cross-compilation alone never promotes it.
 
 The forced-overflow item is correctness-only and can be satisfied by the
 guarded Release workflow dispatch on native GitHub-hosted Ubuntu 24.04 x64 and

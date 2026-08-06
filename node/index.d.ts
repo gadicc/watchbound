@@ -132,7 +132,13 @@ export interface JsNativeTargetMatrix {
     runtimeQualification?: "qemu-user-electron"
     runtimeEmulator?: "/usr/bin/qemu-arm"
     runtimeCpu?: "cortex-a15"
-    runtimeSysroot?: "/usr/arm-linux-gnueabihf"
+    runtimeRootfs?: {
+      platform: "linux/arm/v7"
+      image: string
+      binfmtImage: string
+      snapshot: string
+      packages: Array<string>
+    }
     codexElectron: {
       archiveArchitecture: "x64" | "arm64" | "armv7l"
       sha256SRI: string

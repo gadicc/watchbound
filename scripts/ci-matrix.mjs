@@ -57,7 +57,9 @@ const runtime = matrix.targets
     electronSha256SRI: target.codexElectron.sha256SRI,
     emulator: target.runtimeEmulator,
     emulatorCpu: target.runtimeCpu,
-    sysroot: target.runtimeSysroot,
+    rootfsImage: target.runtimeRootfs.image,
+    binfmtImage: target.runtimeRootfs.binfmtImage,
+    rootfsSnapshot: target.runtimeRootfs.snapshot,
   }));
 const qualification = matrix.qualificationLanes
   .filter(({ evidence }) => evidence === "runtime-qualification-required")
@@ -117,7 +119,9 @@ const registryEmulated = matrix.targets
     electronSha256SRI: target.codexElectron.sha256SRI,
     emulator: target.runtimeEmulator,
     emulatorCpu: target.runtimeCpu,
-    sysroot: target.runtimeSysroot,
+    rootfsImage: target.runtimeRootfs.image,
+    binfmtImage: target.runtimeRootfs.binfmtImage,
+    rootfsSnapshot: target.runtimeRootfs.snapshot,
   })));
 
 const outputs = {

@@ -145,7 +145,41 @@
       "runtimeQualification": "qemu-user-electron",
       "runtimeEmulator": "/usr/bin/qemu-arm",
       "runtimeCpu": "cortex-a15",
-      "runtimeSysroot": "/usr/arm-linux-gnueabihf",
+      "runtimeRootfs": {
+        "platform": "linux/arm/v7",
+        "image": "docker.io/library/ubuntu:22.04@sha256:cc310f0f0ac7cebeef5ea6ea12e1262e291e4fd7eec74d407f5de7711062cd6e",
+        "binfmtImage": "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0",
+        "snapshot": "20260701T000000Z",
+        "packages": [
+          "ca-certificates",
+          "libasound2",
+          "libatk-bridge2.0-0",
+          "libatk1.0-0",
+          "libatspi2.0-0",
+          "libc6",
+          "libcairo2",
+          "libcups2",
+          "libdbus-1-3",
+          "libdrm2",
+          "libexpat1",
+          "libgbm1",
+          "libgcc-s1",
+          "libglib2.0-0",
+          "libgtk-3-0",
+          "libnspr4",
+          "libnss3",
+          "libpango-1.0-0",
+          "libudev1",
+          "libx11-6",
+          "libxcb1",
+          "libxcomposite1",
+          "libxdamage1",
+          "libxext6",
+          "libxfixes3",
+          "libxkbcommon0",
+          "libxrandr2"
+        ]
+      },
       "codexElectron": {
         "archiveArchitecture": "armv7l",
         "sha256SRI": "sha256-XRXmAtl41Tdy7AxYr07wLRulFNw9Z1L/55wK0hgEw4w="
@@ -184,7 +218,7 @@
       "family": "debian",
       "evidence": "qemu-user-runtime-required",
       "architectures": ["arm"],
-      "image": "docker.io/library/ubuntu:22.04@sha256:962f6cadeae0ea6284001009daa4cc9a8c37e75d1f5191cf0eb83fe565b63dd7"
+      "image": "docker.io/library/ubuntu:22.04@sha256:cc310f0f0ac7cebeef5ea6ea12e1262e291e4fd7eec74d407f5de7711062cd6e"
     },
     {
       "id": "ubuntu-24.04",

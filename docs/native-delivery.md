@@ -112,12 +112,16 @@ for the native x64/ARM64 target lanes.
 ARMv7's initial lane is explicitly different: Ubuntu 22.04 x64 builders use
 `arm-linux-gnueabihf-gcc` for `armv7-unknown-linux-gnueabihf`, then the
 canonical ELF is loaded by the official Electron 42.3.0 `linux-armv7l` archive
-under `qemu-arm -cpu cortex-a15` and an Ubuntu armhf glibc sysroot. The fixture
-loads the production packages from ASAR and performs a real watch callback and
-joined disposal. That emulated execution is the target's maintained runtime
-evidence until a native ARMv7 lane is available; if it does not run, the matrix
-must keep the target pending and documentation must say only “cross-build
-supported.”
+under `qemu-arm -cpu cortex-a15` and a digest-pinned Ubuntu 22.04 armhf rootfs.
+The rootfs is populated only from the checked-in Ubuntu snapshot timestamp,
+and its complete installed-package manifest is hashed into the retained
+evidence. Its minimal-image CA bootstrap relies on signed APT metadata, then
+clears and re-fetches indexes with normal TLS verification before installing
+the closure. The fixture loads the production packages from ASAR and performs
+a real watch callback and joined disposal. That emulated execution is the
+target's maintained runtime evidence until a native ARMv7 lane is available;
+if it does not run, the matrix must keep the target pending and documentation
+must say only “cross-build supported.”
 
 ## 32-bit implementation audit
 

@@ -77,7 +77,20 @@ export function validateNativeMatrix(matrix) {
       assert.equal(target.runtimeQualification, "qemu-user-electron");
       assert.equal(target.runtimeEmulator, "/usr/bin/qemu-arm");
       assert.equal(target.runtimeCpu, "cortex-a15");
-      assert.equal(target.runtimeSysroot, "/usr/arm-linux-gnueabihf");
+      assert.equal(target.runtimeRootfs.platform, "linux/arm/v7");
+      assert.match(target.runtimeRootfs.image, /@sha256:[0-9a-f]{64}$/u);
+      assert.match(target.runtimeRootfs.binfmtImage, /@sha256:[0-9a-f]{64}$/u);
+      assert.match(target.runtimeRootfs.snapshot, /^20[0-9]{6}T[0-9]{6}Z$/u);
+      assert.ok(
+        Array.isArray(target.runtimeRootfs.packages) &&
+          target.runtimeRootfs.packages.length > 0,
+      );
+      assert.deepEqual(
+        [...target.runtimeRootfs.packages].sort(),
+        target.runtimeRootfs.packages,
+        "ARMHF runtime packages must be unique and sorted",
+      );
+      assert.equal(new Set(target.runtimeRootfs.packages).size, target.runtimeRootfs.packages.length);
       assert.equal(target.overflowRunner, null);
       assert.equal(target.nixSystem, null);
     } else {

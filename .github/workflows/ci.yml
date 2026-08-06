@@ -252,11 +252,11 @@ jobs:
         with:
           source-sha: ${{ inputs.candidate_sha }}
           version: ${{ inputs.candidate_version }}
-      - name: Install QEMU user mode and the ARM hard-float runtime sysroot
+      - name: Install QEMU user mode
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            gcc-arm-linux-gnueabihf qemu-user unzip
+            qemu-user unzip
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
@@ -264,6 +264,14 @@ jobs:
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
+      - name: Configure pinned ARM container emulation
+        run: docker run --privileged --rm "${{ matrix.binfmtImage }}" --install arm
+      - name: Prepare the pinned Ubuntu ARMHF runtime rootfs
+        run: |
+          node scripts/prepare-armhf-runtime.mjs \
+            --target "${{ matrix.target }}" \
+            --output "$RUNNER_TEMP/watchbound-armhf-rootfs-${{ matrix.target }}" \
+            --evidence "$RUNNER_TEMP/watchbound-armhf-rootfs-${{ matrix.target }}.json"
       - name: Load, watch, deliver, and dispose under ARMv7 Electron
         shell: bash
         run: |
@@ -280,7 +288,7 @@ jobs:
             --electron "$RUNNER_TEMP/electron-armv7/electron" \
             --emulator "${{ matrix.emulator }}" \
             --emulator-cpu "${{ matrix.emulatorCpu }}" \
-            --sysroot "${{ matrix.sysroot }}" \
+            --rootfs "$RUNNER_TEMP/watchbound-armhf-rootfs-${{ matrix.target }}" \
             --target "${{ matrix.target }}" \
             --evidence "$RUNNER_TEMP/watchbound-armv7-runtime-${{ matrix.target }}.json"
           if [[ -n "${{ inputs.candidate_version }}" ]]; then
@@ -292,7 +300,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: watchbound-armv7-runtime-${{ matrix.target }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbound-armv7-runtime-${{ matrix.target }}.json
+          path: |
+            ${{ runner.temp }}/watchbound-armhf-rootfs-${{ matrix.target }}.json
+            ${{ runner.temp }}/watchbound-armv7-runtime-${{ matrix.target }}.json
           if-no-files-found: warn
           retention-days: 90
 

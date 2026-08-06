@@ -285,7 +285,43 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
   assert.equal(armv7.binary, "watchbound.linux-arm-gnueabihf.node");
   assert.equal(armv7.runtimeEmulator, "/usr/bin/qemu-arm");
   assert.equal(armv7.runtimeCpu, "cortex-a15");
-  assert.equal(armv7.runtimeSysroot, "/usr/arm-linux-gnueabihf");
+  assert.deepEqual(armv7.runtimeRootfs, {
+    platform: "linux/arm/v7",
+    image:
+      "docker.io/library/ubuntu:22.04@sha256:cc310f0f0ac7cebeef5ea6ea12e1262e291e4fd7eec74d407f5de7711062cd6e",
+    binfmtImage:
+      "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0",
+    snapshot: "20260701T000000Z",
+    packages: [
+      "ca-certificates",
+      "libasound2",
+      "libatk-bridge2.0-0",
+      "libatk1.0-0",
+      "libatspi2.0-0",
+      "libc6",
+      "libcairo2",
+      "libcups2",
+      "libdbus-1-3",
+      "libdrm2",
+      "libexpat1",
+      "libgbm1",
+      "libgcc-s1",
+      "libglib2.0-0",
+      "libgtk-3-0",
+      "libnspr4",
+      "libnss3",
+      "libpango-1.0-0",
+      "libudev1",
+      "libx11-6",
+      "libxcb1",
+      "libxcomposite1",
+      "libxdamage1",
+      "libxext6",
+      "libxfixes3",
+      "libxkbcommon0",
+      "libxrandr2",
+    ],
+  });
   assert.deepEqual(armv7.elf, {
     class: 1,
     endianness: 1,

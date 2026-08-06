@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { readPreparedArmhfRuntime } from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
@@ -142,7 +143,7 @@ function run(command, args) {
     ? [
         ...(options["emulator-cpu"] ? ["-cpu", options["emulator-cpu"]] : []),
         "-L",
-        path.resolve(options.sysroot),
+        path.resolve(options.rootfs),
         "-E",
         `LD_LIBRARY_PATH=${path.dirname(path.resolve(options.electron))}`,
         path.resolve(options.electron),
@@ -175,7 +176,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-target <id> --native-sha256 <digest> --evidence <path> [--electron <path> --emulator <path> --emulator-cpu <cpu> --sysroot <path>]",
+        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-target <id> --native-sha256 <digest> --evidence <path> [--electron <path> --emulator <path> --emulator-cpu <cpu> --rootfs <path>]",
       );
     }
     const name = flag.slice(2);
@@ -192,11 +193,11 @@ function parseOptions(args) {
   }
   assert.match(parsed["native-sha256"], /^[0-9a-f]{64}$/u);
   if (parsed.emulator) {
-    for (const required of ["electron", "sysroot"]) {
+    for (const required of ["electron", "rootfs"]) {
       assert.ok(parsed[required], `--${required} is required with --emulator`);
     }
   } else {
-    for (const emulatorOnly of ["electron", "emulator-cpu", "sysroot"]) {
+    for (const emulatorOnly of ["electron", "emulator-cpu", "rootfs"]) {
       assert.equal(parsed[emulatorOnly], undefined, `--${emulatorOnly} requires --emulator`);
     }
   }
@@ -225,6 +226,14 @@ function augmentEvidenceWithInstallLock() {
     sha256: sha256(lockPath),
     contents: fs.readFileSync(lockPath, "utf8"),
   };
+  if (options.emulator) {
+    evidence.execution = {
+      mode: "qemu-user",
+      emulator: path.basename(options.emulator),
+      cpu: options["emulator-cpu"],
+      rootfs: readPreparedArmhfRuntime(options.rootfs, nativeTarget),
+    };
+  }
   writeJson(evidencePath, evidence);
 }
 

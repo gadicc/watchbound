@@ -117,8 +117,11 @@ ARMv7-affecting changes additionally require two deterministic armhf
 cross-builds, exact ELF32/endianness/machine/EABI-hard-float inspection, target
 package allowlists and metadata checks, loader negative cases, and a real
 start/callback/dispose cycle under the pinned ARMv7 Electron/QEMU-user lane.
-Cross-compilation and packaging without that execution lane may be described
-only as cross-build support and must leave the target pending.
+That lane must use the matrix's digest-pinned Ubuntu OCI image, Ubuntu snapshot
+timestamp, and validated full installed-package manifest; a compiler sysroot
+is not runtime evidence. Cross-compilation and packaging without that execution
+lane may be described only as cross-build support and must leave the target
+pending.
 
 The ordinary JavaScript suite also replays fixed seeded operation sequences
 across exclusion replacement, topology mutation, moved-in trees, in-root

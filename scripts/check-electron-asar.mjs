@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPackageWithOptions, statFile } from "@electron/asar";
+import { readPreparedArmhfRuntime } from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -91,7 +92,7 @@ try {
           mode: "qemu-user",
           emulator: path.basename(options.emulator),
           cpu: options["emulator-cpu"],
-          sysroot: options.sysroot,
+          rootfs: readPreparedArmhfRuntime(options.rootfs, target),
         }
       : { mode: "native" },
   };
@@ -107,7 +108,7 @@ function runElectron(executable, args, environment = {}) {
     ? [
         ...(options["emulator-cpu"] ? ["-cpu", options["emulator-cpu"]] : []),
         "-L",
-        path.resolve(options.sysroot),
+        path.resolve(options.rootfs),
         "-E",
         `LD_LIBRARY_PATH=${path.dirname(executable)}`,
         executable,
@@ -133,16 +134,16 @@ function parseOptions(args) {
     const flag = args[index];
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
-      throw new Error("usage: check-electron-asar.mjs --electron <path> --target <id> [--evidence <path>] [--emulator <path> --emulator-cpu <cpu> --sysroot <path>]");
+      throw new Error("usage: check-electron-asar.mjs --electron <path> --target <id> [--evidence <path>] [--emulator <path> --emulator-cpu <cpu> --rootfs <path>]");
     }
     parsed[flag.slice(2)] = value;
   }
   assert.ok(parsed.electron, "--electron is required");
   assert.ok(parsed.target, "--target is required");
   if (parsed.emulator) {
-    assert.ok(parsed.sysroot, "--sysroot is required with --emulator");
+    assert.ok(parsed.rootfs, "--rootfs is required with --emulator");
   } else {
-    assert.equal(parsed.sysroot, undefined, "--sysroot requires --emulator");
+    assert.equal(parsed.rootfs, undefined, "--rootfs requires --emulator");
     assert.equal(parsed["emulator-cpu"], undefined, "--emulator-cpu requires --emulator");
   }
   return parsed;

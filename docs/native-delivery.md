@@ -8,8 +8,8 @@ historical `1.0.1` release retains its one-target contract.
 
 The current source candidate adds an ARMv7 hard-float target package and
 capability schema 9. It remains `target-pending-clean-ci` until the exact
-cross-build, packaging, and QEMU-user Electron lifecycle lanes pass; it is not
-part of release `2.0.0`.
+cross-build, packaging, QEMU-user Electron lifecycle, and system-QEMU
+kernel-floor lanes pass; it is not part of release `2.0.0`.
 
 ## One matrix, three package roles
 
@@ -97,7 +97,8 @@ For each registry native artifact, release qualification requires:
 - callback serialization, cancellation, initial and dynamic whole-policy exclusions,
   reconciliation, root recovery, and joined disposal;
 - checksum-pinned Ubuntu 22.04 kernel-5.15 execution under bounded QEMU as a
-  kernel-floor component, combined with separate native architecture evidence;
+  kernel-floor component; x64/ARM64 combine it with native runner evidence,
+  while ARMv7 is explicitly retained as emulated evidence;
 - release-only, explicitly acknowledged forced-overflow and automatic
   overflow-reconciliation runs for the canonical target artifact;
 - CycloneDX 1.6 SBOM, checksums, release/build metadata, npm/JSR provenance,
@@ -119,9 +120,12 @@ evidence. Its minimal-image CA bootstrap relies on signed APT metadata, then
 clears and re-fetches indexes with normal TLS verification before installing
 the closure. The fixture loads the production packages from ASAR and performs
 a real watch callback and joined disposal. That emulated execution is the
-target's maintained runtime evidence until a native ARMv7 lane is available;
-if it does not run, the matrix must keep the target pending and documentation
-must say only “cross-build supported.”
+target's maintained userspace evidence until a native ARMv7 lane is available.
+A second lane installs the exact snapshot `5.15.0-185-generic-lpae` image and
+modules, verifies the kernel image hash, boots it under `qemu-system-arm`, and
+runs the same production package lifecycle with Electron-as-Node. If either
+execution lane does not run, the matrix must keep the target pending and
+documentation must say only “cross-build supported.”
 
 ## 32-bit implementation audit
 

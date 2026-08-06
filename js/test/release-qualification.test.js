@@ -469,6 +469,20 @@ test("automated rerun review accepts only known QEMU timeouts and complete evide
   assert.equal(review.checks.every((check) => check.passed), true);
 });
 
+test("automated rerun review recognizes an ARMv7 system-QEMU timeout", () => {
+  const input = automatedReviewInput();
+  for (const attempt of [input.attemptOne, input.attemptTwo]) {
+    for (const job of attempt.jobs) {
+      job.name = job.name.replace("linux-arm64-gnu", "linux-arm-gnueabihf");
+    }
+  }
+  input.failedLog = "Error: spawnSync /usr/bin/qemu-system-arm ETIMEDOUT";
+
+  const review = reviewConditionalRerun(input);
+  assert.equal(review.passed, true);
+  assert.equal(review.issues.length, 0);
+});
+
 test("automated rerun review fails closed on semantic logs or incomplete evidence", () => {
   const semantic = automatedReviewInput();
   semantic.failedLog += "\nAssertionError: semantic mismatch\n";

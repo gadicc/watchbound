@@ -83,12 +83,22 @@ const kernel = matrix.targets
     assert.ok(artifactSet, `kernel baseline omits ${target.architecture}`);
     return {
       target: target.id,
-      architecture: target.architecture,
+      architecture: target.buildArchitecture ?? target.architecture,
+      targetArchitecture: target.architecture,
       runner: target.runner,
       binary: target.binary,
       image: baseline.image,
-      kernelRelease: baseline.kernelRelease,
+      kernelRelease: artifactSet.kernelRelease ?? baseline.kernelRelease,
       qemuPackage: artifactSet.qemuPackage,
+      ...(artifactSet.rootfs
+        ? {
+            rootfsImage: target.runtimeRootfs.image,
+            rootfsSnapshot: target.runtimeRootfs.snapshot,
+            binfmtImage: target.runtimeRootfs.binfmtImage,
+            electronArchitecture: target.codexElectron.archiveArchitecture,
+            electronSha256SRI: target.codexElectron.sha256SRI,
+          }
+        : {}),
     };
   });
 const nix = matrix.targets.filter((target) => target.nixSystem).map((target) => ({

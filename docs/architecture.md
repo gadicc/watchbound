@@ -22,9 +22,10 @@ passed exact x64/ARM64 qualification, and is published on npm and JSR.
 
 The current source candidate adds one exact GNU/Linux ARMv7 hard-float target.
 It cross-builds `armv7-unknown-linux-gnueabihf`, packages the ELF32 binding
-separately, and requires a real loader/watch/dispose run through pinned ARMv7
-Electron under QEMU-user before promotion. Public capability schema 9 reports
-the exact ARM ABI and keeps the target pending until that evidence exists.
+separately, and requires real loader/watch/dispose runs through pinned ARMv7
+Electron under QEMU-user and the snapshot-pinned 5.15 generic-LPAE kernel under
+system QEMU before promotion. Public capability schema 9 reports the exact ARM
+ABI and keeps the target pending until both execution results exist.
 
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support

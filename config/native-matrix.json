@@ -47,6 +47,35 @@
           "url": "https://cloud-images.ubuntu.com/releases/server/jammy/release-20260705/unpacked/ubuntu-22.04-server-cloudimg-arm64-initrd-generic",
           "sha256": "5263de2235609c0b035f2e8de978a804e3c0a2c5cd5faa2e117cffe9db76c04e"
         }
+      },
+      "arm": {
+        "qemuSystem": "qemu-system-arm",
+        "qemuPackage": "qemu-system-arm",
+        "machine": "virt",
+        "cpu": "cortex-a15",
+        "console": "ttyAMA0",
+        "kernelRelease": "5.15.0-185-generic-lpae",
+        "rootfs": {
+          "profile": "kernel",
+          "packages": [
+            {
+              "name": "initramfs-tools",
+              "version": "0.140ubuntu13.5"
+            },
+            {
+              "name": "linux-image-5.15.0-185-generic-lpae",
+              "version": "5.15.0-185.195"
+            },
+            {
+              "name": "linux-modules-5.15.0-185-generic-lpae",
+              "version": "5.15.0-185.195"
+            }
+          ],
+          "kernelPath": "/boot/vmlinuz-5.15.0-185-generic-lpae",
+          "kernelSha256": "37c57a9d9e96945889315e2d2dc6f86068e4799e8fd5d6198bf50a4b61d8838d",
+          "initrdPath": "/boot/initrd.img-5.15.0-185-generic-lpae",
+          "requiredInitrdModules": ["virtio_blk"]
+        }
       }
     }
   },

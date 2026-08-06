@@ -717,8 +717,9 @@ Detected WSL and environments with recognized container evidence cannot
 qualify. Network filesystems, Filesystem in Userspace (FUSE), and overlay
 filesystems are unqualified; musl, soft-float/unknown/non-v7 ARM, big-endian
 ARM, and non-Linux platforms are unsupported. The exact ARMv7 hard-float
-target remains pending until its declared runtime lane passes. Existing mount points are traversed; no one-filesystem option or
-runtime descendant-mount reconciliation is implemented. See
+target remains pending until both declared ARM execution lanes pass. Existing
+mount points are traversed; no one-filesystem option or runtime descendant-mount
+reconciliation is implemented. See
 [`support-matrix.md`](support-matrix.md).
 
 A motivating Codex repository preview observed 251,811 Node `fs.watch` calls.

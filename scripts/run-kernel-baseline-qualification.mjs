@@ -11,24 +11,39 @@ import {
 import {
   assertCleanQemuCompletion,
 } from "./kernel-baseline-qualification-helpers.mjs";
+import { readPreparedArmhfKernelRuntime } from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS = 30_000;
-const QEMU_TIMEOUT_MS = 20 * 60 * 1000;
+const KERNEL_ARM_GUEST_WAIT_TIMEOUT_MS = 120_000;
 const qualificationStartedAt = Date.now();
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseOptions(process.argv.slice(2));
 const matrix = loadNativeMatrix(workspaceRoot);
 const target = targetForId(matrix, options.target);
 const guestWaitTimeoutOverrideMs =
-  target.architecture === "arm64"
+  target.architecture === "arm"
+    ? KERNEL_ARM_GUEST_WAIT_TIMEOUT_MS
+    : target.architecture === "arm64"
     ? KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS
     : undefined;
 const baseline = matrix.kernelBaselineQualification;
 const artifactSet = baseline.artifacts[target.architecture];
 assert.ok(artifactSet, `kernel baseline omits ${target.architecture}`);
 assert.equal(options.image, baseline.image, "workflow image differs from the pinned kernel baseline");
+const kernelRelease = artifactSet.kernelRelease ?? baseline.kernelRelease;
+const qemuTimeoutMs = target.architecture === "arm"
+  ? 30 * 60 * 1000
+  : 20 * 60 * 1000;
+const preparedRootfs = options["prepared-rootfs"]
+  ? path.resolve(options["prepared-rootfs"])
+  : null;
+assert.equal(
+  Boolean(preparedRootfs),
+  Boolean(artifactSet.rootfs),
+  `${target.id} prepared-rootfs selection differs from its kernel contract`,
+);
 
 const version = readJson(path.join(workspaceRoot, "package.json")).version;
 const sourceSha = capture("git", ["rev-parse", "HEAD"]).trim();
@@ -53,23 +68,29 @@ for (const filename of Object.values(tarballs)) {
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-kernel-baseline-"));
 let containerId = null;
 try {
-  const rootfs = path.join(temporaryRoot, "rootfs");
+  const rootfs = preparedRootfs ?? path.join(temporaryRoot, "rootfs");
   const exportTar = path.join(temporaryRoot, "rootfs.tar");
   const disk = path.join(temporaryRoot, "rootfs.ext4");
   const kernel = path.join(temporaryRoot, "vmlinuz");
   const initrd = path.join(temporaryRoot, "initrd");
-  fs.mkdirSync(rootfs);
+  let rootfsEvidence = null;
+  if (preparedRootfs) {
+    logPhase("prepared-rootfs-validation-start");
+    rootfsEvidence = readPreparedArmhfKernelRuntime(rootfs, target, baseline);
+    logPhase("prepared-rootfs-validation-complete");
+  } else {
+    fs.mkdirSync(rootfs);
+    logPhase("container-image-pull-start", { image: baseline.image });
+    run("docker", ["pull", baseline.image]);
+    logPhase("container-image-pull-complete");
 
-  logPhase("container-image-pull-start", { image: baseline.image });
-  run("docker", ["pull", baseline.image]);
-  logPhase("container-image-pull-complete");
-
-  logPhase("rootfs-export-start");
-  containerId = capture("docker", ["create", baseline.image]).trim();
-  assert.match(containerId, /^[0-9a-f]{64}$/u, "docker create did not return a container id");
-  run("docker", ["export", "--output", exportTar, containerId]);
-  run("tar", ["--extract", "--file", exportTar, "--directory", rootfs, "--no-same-owner"]);
-  logPhase("rootfs-export-complete");
+    logPhase("rootfs-export-start");
+    containerId = capture("docker", ["create", baseline.image]).trim();
+    assert.match(containerId, /^[0-9a-f]{64}$/u, "docker create did not return a container id");
+    run("docker", ["export", "--output", exportTar, containerId]);
+    run("tar", ["--extract", "--file", exportTar, "--directory", rootfs, "--no-same-owner"]);
+    logPhase("rootfs-export-complete");
+  }
 
   logPhase("guest-files-assemble-start");
   copyTree(path.resolve(options["node-root"]), path.join(rootfs, "watchbound-node"));
@@ -103,6 +124,7 @@ try {
       tarballs,
       version,
       waitTimeoutMs: guestWaitTimeoutOverrideMs,
+      kernelRelease,
     }),
   );
   logPhase("guest-files-assemble-complete");
@@ -114,8 +136,14 @@ try {
   logPhase("disk-image-build-complete");
 
   logPhase("boot-artifacts-download-start");
-  downloadChecked(artifactSet.kernel, kernel);
-  downloadChecked(artifactSet.initrd, initrd);
+  if (artifactSet.rootfs) {
+    fs.copyFileSync(path.join(rootfs, stripLeadingSlash(artifactSet.rootfs.kernelPath)), kernel);
+    fs.copyFileSync(path.join(rootfs, stripLeadingSlash(artifactSet.rootfs.initrdPath)), initrd);
+    assert.equal(sha256(kernel), artifactSet.rootfs.kernelSha256);
+  } else {
+    downloadChecked(artifactSet.kernel, kernel);
+    downloadChecked(artifactSet.initrd, initrd);
+  }
   logPhase("boot-artifacts-download-complete");
 
   // This lane is correctness-only. Deliberately avoid KVM/nested-virtualization
@@ -124,7 +152,7 @@ try {
   const qemuArgs = [
     "-machine", artifactSet.machine,
     "-accel", "tcg,thread=single",
-    "-cpu", "max",
+    "-cpu", artifactSet.cpu ?? "max",
     "-smp", "1",
     "-m", "1024",
     "-display", "none",
@@ -140,14 +168,14 @@ try {
   ];
   logPhase("qemu-start", {
     system: artifactSet.qemuSystem,
-    timeoutMs: QEMU_TIMEOUT_MS,
+    timeoutMs: qemuTimeoutMs,
     serialDelivery: "buffered-until-exit",
   });
   const qemu = spawnSync(artifactSet.qemuSystem, qemuArgs, {
     cwd: workspaceRoot,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
-    timeout: QEMU_TIMEOUT_MS,
+    timeout: qemuTimeoutMs,
   });
   const serial = `${qemu.stdout ?? ""}${qemu.stderr ?? ""}`;
   process.stdout.write(serial);
@@ -163,7 +191,7 @@ try {
   const smoke = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
   assert.equal(smoke.status, "passed");
   assert.equal(smoke.host.architecture, target.architecture);
-  assert.equal(smoke.host.kernel, baseline.kernelRelease);
+  assert.equal(smoke.host.kernel, kernelRelease);
   assert.equal(smoke.host.glibc, "2.35");
   assert.equal(
     smoke.waitTimeoutMs,
@@ -176,7 +204,9 @@ try {
     kind: "watchbound-kernel-baseline-qualification",
     classification: {
       purpose: "kernel-floor correctness component",
-      architectureEvidence: "not provided by this QEMU lane; require the separate native runner matrix",
+      architectureEvidence: target.architecture === "arm"
+        ? "emulated ARMv7 execution only; no native ARMv7 runner evidence"
+        : "not provided by this QEMU lane; require the separate native runner matrix",
       performance: "non-authoritative",
     },
     source: {
@@ -194,11 +224,16 @@ try {
     baseline: {
       distribution: `${baseline.distribution} ${baseline.version}`,
       kernelSeries: baseline.kernelSeries,
-      kernelRelease: baseline.kernelRelease,
+      kernelRelease,
       glibc: "2.35",
       image: baseline.image,
-      kernel: artifactSet.kernel,
-      initrd: artifactSet.initrd,
+      kernel: artifactSet.rootfs
+        ? { path: artifactSet.rootfs.kernelPath, sha256: sha256(kernel) }
+        : artifactSet.kernel,
+      initrd: artifactSet.rootfs
+        ? { path: artifactSet.rootfs.initrdPath, sha256: sha256(initrd) }
+        : artifactSet.initrd,
+      ...(rootfsEvidence ? { rootfs: rootfsEvidence } : {}),
     },
     host: {
       architecture: os.arch(),
@@ -240,6 +275,7 @@ function guestEnvironment({
   tarballs: selectedTarballs,
   version: selectedVersion,
   waitTimeoutMs,
+  kernelRelease: selectedKernelRelease,
 }) {
   const variables = {
     WATCHBOUND_TARGET_ID: selectedTarget.id,
@@ -253,8 +289,11 @@ function guestEnvironment({
     WATCHBOUND_LOADER_TARBALL: selectedTarballs.loader,
     WATCHBOUND_WRAPPER_TARBALL: selectedTarballs.wrapper,
     WATCHBOUND_EVIDENCE: "/tmp/watchbound-kernel-baseline-smoke.json",
-    WATCHBOUND_KERNEL_RELEASE: selectedBaseline.kernelRelease,
+    WATCHBOUND_KERNEL_RELEASE: selectedKernelRelease,
   };
+  if (selectedTarget.architecture === "arm") {
+    variables.ELECTRON_RUN_AS_NODE = "1";
+  }
   if (waitTimeoutMs !== undefined) {
     variables.WATCHBOUND_WAIT_TIMEOUT_MS = String(waitTimeoutMs);
   }
@@ -290,6 +329,10 @@ function parseOptions(args) {
     assert.ok(parsed[required], `--${required} is required`);
   }
   return parsed;
+}
+
+function stripLeadingSlash(value) {
+  return value.replace(/^\//u, "");
 }
 
 function run(command, args) {

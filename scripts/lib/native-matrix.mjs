@@ -39,6 +39,26 @@ export function validateNativeMatrix(matrix) {
       assert.match(artifact.sha256, /^[0-9a-f]{64}$/u);
     }
   }
+  const armKernel = kernelBaseline.artifacts.arm;
+  assert.equal(armKernel.qemuSystem, "qemu-system-arm");
+  assert.equal(armKernel.qemuPackage, "qemu-system-arm");
+  assert.equal(armKernel.machine, "virt");
+  assert.equal(armKernel.cpu, "cortex-a15");
+  assert.equal(armKernel.console, "ttyAMA0");
+  assert.match(armKernel.kernelRelease, /^5\.15\.0-[1-9][0-9]*-generic-lpae$/u);
+  assert.equal(armKernel.rootfs.profile, "kernel");
+  assert.deepEqual(
+    armKernel.rootfs.packages.map(({ name }) => name),
+    [...armKernel.rootfs.packages.map(({ name }) => name)].sort(),
+  );
+  for (const artifactPackage of armKernel.rootfs.packages) {
+    assert.match(artifactPackage.name, /^[a-z0-9][a-z0-9+.-]+$/u);
+    assert.ok(artifactPackage.version.length > 0);
+  }
+  assert.equal(armKernel.rootfs.kernelPath, `/boot/vmlinuz-${armKernel.kernelRelease}`);
+  assert.match(armKernel.rootfs.kernelSha256, /^[0-9a-f]{64}$/u);
+  assert.equal(armKernel.rootfs.initrdPath, `/boot/initrd.img-${armKernel.kernelRelease}`);
+  assert.deepEqual(armKernel.rootfs.requiredInitrdModules, ["virtio_blk"]);
   assert.ok(Array.isArray(matrix.targets) && matrix.targets.length > 0);
   assert.equal(
     new Set(matrix.targets.map(({ id }) => id)).size,

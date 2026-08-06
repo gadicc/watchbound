@@ -31,7 +31,8 @@ requires little-endian ARM version 7, the hard-float EABI, and glibc; all other
 ## Proposed 2.1.0 ARMv7 handoff
 
 After the exact status-bearing revision passes both deterministic cross-builds,
-package validation, and the QEMU-user Electron start/callback/dispose lane, the
+package validation, the QEMU-user Electron start/callback/dispose lane, and the
+same lifecycle on the pinned 5.15 generic-LPAE kernel under system QEMU, the
 proposed next release is `2.1.0`. Do not enable or pin the ARMv7 route before
 that release exists and its npm/JSR registry smokes pass.
 
@@ -140,8 +141,8 @@ not substitute `latest` or synthesize integrity from a local build.
 6. Enable x64 only on exact green Ubuntu 22.04/24.04, Debian 12, Fedora 42,
    Arch, openSUSE, Electron, and release-artifact evidence. Enable ARM64 only
    after its applicable native lanes are green. Enable ARMv7 only after the
-   exact release's cross-build/package and QEMU-user Electron lifecycle plus
-   registry smokes are green. Derivative families remain compatibility claims,
+   exact release's cross-build/package, QEMU-user Electron lifecycle,
+   system-QEMU kernel-floor lifecycle, and registry smokes are green. Derivative families remain compatibility claims,
    not separately qualified lanes.
 7. Keep soft-float, unknown/big-endian/non-v7 ARM, musl, non-Linux, and
    unqualified families disabled.

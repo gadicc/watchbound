@@ -13,6 +13,13 @@ const matrix = loadNativeMatrix(workspaceRoot);
 const target = targetForId(matrix, options.target);
 assert.equal(target.runtimeQualification, "qemu-user-electron");
 assert.ok(target.runtimeRootfs, `${target.id} has no runtime rootfs contract`);
+const profile = options.profile ?? "runtime";
+assert.ok(profile === "runtime" || profile === "kernel", "--profile must be runtime or kernel");
+const kernelArtifact = matrix.kernelBaselineQualification.artifacts[target.architecture];
+const profilePackages = profile === "kernel" ? kernelArtifact?.rootfs?.packages : [];
+if (profile === "kernel") {
+  assert.equal(kernelArtifact?.rootfs?.profile, "kernel");
+}
 
 const outputRoot = path.resolve(options.output);
 const evidencePath = path.resolve(options.evidence);
@@ -126,7 +133,22 @@ try {
     "--yes",
     "--no-install-recommends",
     ...target.runtimeRootfs.packages,
+    ...profilePackages.map(({ name, version }) => `${name}=${version}`),
   ]);
+  if (profile === "kernel") {
+    runInContainer(["update-initramfs", "-u", "-k", kernelArtifact.kernelRelease]);
+    const initrdListing = captureInContainer([
+      "lsinitramfs",
+      kernelArtifact.rootfs.initrdPath,
+    ]);
+    for (const moduleName of kernelArtifact.rootfs.requiredInitrdModules) {
+      assert.match(
+        initrdListing,
+        new RegExp(`(?:^|/)${moduleName}\\.ko(?:\\.(?:xz|zst))?$`, "mu"),
+        `kernel initrd omits required module ${moduleName}`,
+      );
+    }
+  }
 
   architecture = captureInContainer(["dpkg", "--print-architecture"]);
   packageManifest = captureInContainer([
@@ -173,6 +195,17 @@ const installedNames = new Set(packageManifest.map((line) =>
 for (const packageName of target.runtimeRootfs.packages) {
   assert.ok(installedNames.has(packageName), `runtime rootfs omits ${packageName}`);
 }
+const installedVersions = new Map(packageManifest.map((line) => {
+  const [name, version] = line.split("\t");
+  return [name.replace(/:armhf$/u, ""), version];
+}));
+for (const artifactPackage of profilePackages) {
+  assert.equal(
+    installedVersions.get(artifactPackage.name),
+    artifactPackage.version,
+    `kernel rootfs has the wrong ${artifactPackage.name} version`,
+  );
+}
 const packageManifestText = `${packageManifest.join("\n")}\n`;
 const packageDatabase = path.join(outputRoot, "var/lib/dpkg/status");
 assert.match(
@@ -180,12 +213,16 @@ assert.match(
   new RegExp(`^deb http://snapshot\\.ubuntu\\.com/ubuntu/${target.runtimeRootfs.snapshot} jammy`, "mu"),
 );
 assert.doesNotMatch(sourceList, /ports\.ubuntu\.com/u);
+const preparedKernel = profile === "kernel"
+  ? prepareKernelEvidence(outputRoot, kernelArtifact)
+  : null;
 
 const evidence = {
   schemaVersion: 1,
   kind: "watchbound-armhf-runtime-rootfs",
   target: target.id,
   status: "prepared",
+  profile,
   platform: target.runtimeRootfs.platform,
   image: target.runtimeRootfs.image,
   binfmtImage: target.runtimeRootfs.binfmtImage,
@@ -197,16 +234,34 @@ const evidence = {
   },
   architecture,
   requestedPackages: target.runtimeRootfs.packages,
+  profilePackages,
   certificateBootstrap: "signed-snapshot-metadata-before-tls-peer-verification",
   installedPackages: packageManifest,
   installedPackageManifestSha256: sha256(Buffer.from(packageManifestText)),
   packageDatabaseSha256: sha256(fs.readFileSync(packageDatabase)),
+  ...(preparedKernel ? { kernel: preparedKernel } : {}),
 };
 writeJson(path.join(outputRoot, "watchbound-armhf-runtime.json"), evidence);
 writeJson(evidencePath, evidence);
 process.stdout.write(
-  `Prepared pinned ${target.id} rootfs with ${packageManifest.length} packages\n`,
+  `Prepared pinned ${target.id} ${profile} rootfs with ${packageManifest.length} packages\n`,
 );
+
+function prepareKernelEvidence(rootfs, artifact) {
+  const kernelPath = path.join(rootfs, artifact.rootfs.kernelPath.replace(/^\//u, ""));
+  const initrdPath = path.join(rootfs, artifact.rootfs.initrdPath.replace(/^\//u, ""));
+  assert.ok(fs.statSync(kernelPath).isFile(), "kernel rootfs omitted its kernel image");
+  assert.ok(fs.statSync(initrdPath).isFile(), "kernel rootfs omitted its initrd");
+  assert.equal(sha256(fs.readFileSync(kernelPath)), artifact.rootfs.kernelSha256);
+  return {
+    release: artifact.kernelRelease,
+    path: artifact.rootfs.kernelPath,
+    sha256: artifact.rootfs.kernelSha256,
+    initrdPath: artifact.rootfs.initrdPath,
+    initrdSha256: sha256(fs.readFileSync(initrdPath)),
+    requiredInitrdModules: artifact.rootfs.requiredInitrdModules,
+  };
+}
 
 function runInContainer(command) {
   run("docker", ["exec", containerId, ...command]);

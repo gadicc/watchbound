@@ -595,7 +595,7 @@ jobs:
       needs.aggregate.result == 'success' &&
       needs.plan.outputs.qualify == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
@@ -619,7 +619,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            "${{ matrix.qemuPackage }}" e2fsprogs
+            "${{ matrix.qemuPackage }}" e2fsprogs unzip
       - run: |
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
@@ -628,6 +628,17 @@ jobs:
         with:
           name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
+      - if: matrix.targetArchitecture == 'arm'
+        name: Configure pinned ARM container emulation
+        run: docker run --privileged --rm "${{ matrix.binfmtImage }}" --install arm
+      - if: matrix.targetArchitecture == 'arm'
+        name: Prepare the pinned ARMHF kernel rootfs
+        run: |
+          node scripts/prepare-armhf-runtime.mjs \
+            --target "${{ matrix.target }}" \
+            --profile kernel \
+            --output "$RUNNER_TEMP/watchbound-armhf-kernel-rootfs-${{ matrix.target }}" \
+            --evidence "$RUNNER_TEMP/watchbound-armhf-kernel-rootfs-${{ matrix.target }}.json"
       - name: Exercise the canonical package on a real pinned 5.15 kernel
         shell: bash
         run: |
@@ -635,12 +646,33 @@ jobs:
           cp "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" node/
           WATCHBOUND_NATIVE_ARTIFACTS_DIR="$RUNNER_TEMP/approved-matrix" pnpm package:prepare
           node scripts/pack-prepared-packages.mjs --target "${{ matrix.target }}"
-          node_root="$(dirname "$(dirname "$(command -v node)")")"
+          extra_args=()
+          if [[ "${{ matrix.targetArchitecture }}" == "arm" ]]; then
+            archive="$RUNNER_TEMP/kernel-electron-armv7.zip"
+            curl --fail --location --retry 3 --output "$archive" \
+              "https://github.com/electron/electron/releases/download/v42.3.0/electron-v42.3.0-linux-${{ matrix.electronArchitecture }}.zip"
+            expected_hex="$(printf '%s' '${{ matrix.electronSha256SRI }}' | sed 's/^sha256-//' | base64 -d | od -An -vtx1 | tr -d ' \n')"
+            printf '%s  %s\n' "$expected_hex" "$archive" | sha256sum --check --strict
+            node_root="$RUNNER_TEMP/kernel-electron-node-armv7"
+            mkdir -p "$node_root/bin"
+            unzip -q "$archive" -d "$node_root"
+            ln -s ../electron "$node_root/bin/node"
+            host_node_root="$(dirname "$(dirname "$(command -v node)")")"
+            mkdir -p "$node_root/lib/node_modules"
+            cp -a "$host_node_root/lib/node_modules/npm" "$node_root/lib/node_modules/npm"
+            extra_args+=(
+              --prepared-rootfs
+              "$RUNNER_TEMP/watchbound-armhf-kernel-rootfs-${{ matrix.target }}"
+            )
+          else
+            node_root="$(dirname "$(dirname "$(command -v node)")")"
+          fi
           node scripts/run-kernel-baseline-qualification.mjs \
             --target "${{ matrix.target }}" \
             --image "${{ matrix.image }}" \
             --node-root "$node_root" \
-            --evidence "$RUNNER_TEMP/release-kernel-${{ matrix.target }}.json"
+            --evidence "$RUNNER_TEMP/release-kernel-${{ matrix.target }}.json" \
+            "${extra_args[@]}"
           node scripts/verify-release-candidate.mjs \
             --source-sha "${{ needs.plan.outputs.source-sha }}" \
             --version "${{ needs.plan.outputs.version }}"
@@ -648,7 +680,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: watchbound-release-kernel-${{ matrix.target }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/release-kernel-${{ matrix.target }}.json
+          path: |
+            ${{ runner.temp }}/watchbound-armhf-kernel-rootfs-${{ matrix.target }}.json
+            ${{ runner.temp }}/release-kernel-${{ matrix.target }}.json
           if-no-files-found: warn
           retention-days: 90
 

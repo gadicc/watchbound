@@ -11,8 +11,8 @@ release is published.
 
 The current source candidate retains binding API 5 and adds exact ARMv7
 hard-float package selection. Public capability schema 9 carries ARM ABI facts;
-the new target remains pending until its cross-build/package and QEMU-user
-Electron runtime lanes pass.
+the new target remains pending until its cross-build/package, QEMU-user
+Electron runtime, and system-QEMU kernel-floor lanes pass.
 
 ## Choice
 
@@ -320,7 +320,7 @@ surface when disposal joins it.
 
 - qualify the exact release commit on native x64/ARM64, pinned distro,
   Electron ASAR, Nix, and supervised overflow lanes, plus the ARMv7 QEMU-user
-  Electron lifecycle lane;
+  Electron and system-QEMU kernel-floor lifecycle lanes;
 - build each registry artifact on two isolated clean Ubuntu 22.04 builders
   (native for x64/ARM64 and GNU armhf cross for ARMv7) and compare it byte for
   byte before publication;

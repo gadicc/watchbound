@@ -16,8 +16,8 @@ remain at `0.0.0-development`.
 
 1. Push the implementation revision to a pull request without publishing. Its
    ordinary CI must produce the ARM ELF, validate the target package, reject
-   incompatible ARM/libc fixtures, and retain a green QEMU-user Electron
-   lifecycle artifact for that exact revision.
+   incompatible ARM/libc fixtures, and retain green QEMU-user Electron and
+   system-QEMU 5.15 lifecycle artifacts for that exact revision.
 2. After reviewing the retained ELF/package/runtime evidence, change only the
    ARM target status from `target-pending-clean-ci` to `supported` in a
    follow-up status-bearing revision and require the complete CI matrix to pass
@@ -59,8 +59,8 @@ version and verifies the exact generated candidate before every mutation.
 The plugin refuses preparation unless every matrix target is checked in as
 `supported`. The ARMv7 target is intentionally pending in the initial change,
 so this revision cannot publish. Promote it only in a follow-up status-bearing
-revision after the exact CI cross-build/package and QEMU-user runtime lanes are
-green. Publication remains independently restricted to an approved
+revision after the exact CI cross-build/package, QEMU-user runtime, and
+system-QEMU kernel-floor lanes are green. Publication remains independently restricted to an approved
 semantic-release push on `main`; qualification or credentials alone never
 authorize it.
 
@@ -86,8 +86,10 @@ For each x64, ARM64, and ARMv7 hard-float registry target, the release workflow:
    retained installed-package manifest;
 7. boots the checksum-pinned Canonical Ubuntu 22.04 kernel 5.15 under bounded
    QEMU and reruns the offline package, loader, real-delivery, exclusion-policy,
-   recovery, and joined-disposal smoke on x64 and ARM64; this is kernel-floor
-   evidence only and composes with, rather than replaces, native runner evidence;
+   recovery, and joined-disposal smoke on x64, ARM64, and ARMv7; ARMv7 uses the
+   exact snapshot `5.15.0-185-generic-lpae` package and Electron-as-Node under
+   `qemu-system-arm`. This is kernel-floor evidence and does not turn emulated
+   ARMv7 into native-runner evidence;
 8. runs the I/O-heavy forced-overflow and automatic overflow-reconciliation
    scenarios against the canonical artifact on native GitHub-hosted Ubuntu
    24.04 x64 and ARM64 runners as correctness-only evidence; ARMv7 has no
@@ -102,12 +104,13 @@ checksums, build metadata, CycloneDX 1.6 SBOM, and reproducibility evidence.
 No mismatch or missing target has a waiver path.
 
 Cross-compilation alone cannot satisfy a target. Container lanes provide
-distro userspace evidence but share the runner kernel. The system-QEMU lane
-establishes only the real pinned kernel floor for x64/ARM64. ARMv7's declared
-qualification basis is instead the combination of reproducible cross-build,
-strict package/ELF evidence, and a real production-loader watch lifecycle in
-the pinned QEMU-user Electron runtime. If that execution lane cannot run, the
-target stays pending and release is blocked.
+distro userspace evidence but share the runner kernel. The system-QEMU lanes
+establish the real pinned kernel floor for all three targets. ARMv7's declared
+qualification basis combines reproducible cross-build, strict package/ELF
+evidence, a production-loader watch lifecycle in the pinned QEMU-user Electron
+runtime, and the same lifecycle on the real 5.15 generic-LPAE kernel under
+system QEMU. If either ARM execution lane cannot run, the target stays pending
+and release is blocked.
 
 ## Supervised hosted overflow qualification
 
@@ -198,8 +201,8 @@ version where appropriate.
 
 - Ensure the exact status-bearing commit has complete green x64/ARM64 source,
   reproducibility, distro, Electron, Nix, pinned kernel-floor, and supervised
-  overflow evidence, plus ARMv7 cross-build, package, QEMU-user Electron
-  lifecycle, and negative-ABI evidence.
+  overflow evidence, plus ARMv7 cross-build, package, QEMU-user Electron,
+  system-QEMU kernel-floor lifecycle, and negative-ABI evidence.
 - Record runner/job URLs, artifact hashes, maximum GLIBC versions, host kernel
   facts, and caveats in a non-release evidence update.
 - Complete both adversarial packaging/release reviews.

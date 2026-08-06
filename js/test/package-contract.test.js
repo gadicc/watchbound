@@ -239,6 +239,33 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
       assert.match(artifact.sha256, /^[0-9a-f]{64}$/u);
     }
   }
+  assert.deepEqual(matrix.kernelBaselineQualification.artifacts.arm, {
+    qemuSystem: "qemu-system-arm",
+    qemuPackage: "qemu-system-arm",
+    machine: "virt",
+    cpu: "cortex-a15",
+    console: "ttyAMA0",
+    kernelRelease: "5.15.0-185-generic-lpae",
+    rootfs: {
+      profile: "kernel",
+      packages: [
+        { name: "initramfs-tools", version: "0.140ubuntu13.5" },
+        {
+          name: "linux-image-5.15.0-185-generic-lpae",
+          version: "5.15.0-185.195",
+        },
+        {
+          name: "linux-modules-5.15.0-185-generic-lpae",
+          version: "5.15.0-185.195",
+        },
+      ],
+      kernelPath: "/boot/vmlinuz-5.15.0-185-generic-lpae",
+      kernelSha256:
+        "37c57a9d9e96945889315e2d2dc6f86068e4799e8fd5d6198bf50a4b61d8838d",
+      initrdPath: "/boot/initrd.img-5.15.0-185-generic-lpae",
+      requiredInitrdModules: ["virtio_blk"],
+    },
+  });
   assert.deepEqual(
     matrix.targets.map((target) => ({
       id: target.id,
@@ -597,6 +624,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /glibc 2\.35/u);
   assert.match(release, /check-electron-asar\.mjs/u);
   assert.match(release, /run-kernel-baseline-qualification\.mjs/u);
+  assert.match(release, /--profile kernel/u);
+  assert.match(release, /--prepared-rootfs/u);
+  assert.match(release, /cp -a "\$host_node_root\/lib\/node_modules\/npm"/u);
   assert.match(release, /needs\.release-kernel-baseline\.result == 'success'/u);
   assert.match(release, /overflow-reconciliation,automatic-overflow-reconciliation/u);
   assert.match(release, /^    runs-on: \$\{\{ matrix\.overflowRunner \}\}$/mu);
@@ -631,6 +661,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(ci, /check-electron-asar\.mjs/u);
   assert.match(ci, /run-distro-qualification\.mjs/u);
   assert.match(ci, /run-kernel-baseline-qualification\.mjs/u);
+  assert.match(ci, /--profile kernel/u);
+  assert.match(ci, /--prepared-rootfs/u);
+  assert.match(ci, /cp -a "\$host_node_root\/lib\/node_modules\/npm"/u);
   assert.match(ci, /nix flake check --no-update-lock-file/u);
   assert.doesNotMatch(ci, /^\s*- uses: [^\s]+@v\d+(?:\.\d+)*\s*$/mu);
 
@@ -651,6 +684,9 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(plugin, /assertReleaseTargetsQualified/u);
   assert.match(plugin, /registry integrity mismatch/u);
   assert.match(plugin, /publication-ledger\.json/u);
+  assert.match(kernelBaseline, /readPreparedArmhfKernelRuntime/u);
+  assert.match(kernelBaseline, /ELECTRON_RUN_AS_NODE/u);
+  assert.match(kernelBaseline, /spawnSync\(artifactSet\.qemuSystem/u);
   assert.match(plugin, /async function npmPackageState/u);
   assert.match(plugin, /\["view", specifier, "--json"\]/u);
   assert.match(plugin, /preflightNpmNamespaces\(packages\)/u);

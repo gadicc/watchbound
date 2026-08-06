@@ -10,8 +10,9 @@ The current source candidate adds GNU/Linux ARMv7 hard-float delivery and
 capability schema 9. The proposed next version is `2.1.0`: this is an additive
 platform and public capability-schema feature on top of published `2.0.0`, not
 a patch. The target remains `target-pending-clean-ci` until the exact ARMv7
-cross-build/package and QEMU-user Electron lifecycle jobs are green. No text in
-this document authorizes publication, tagging, or consumer integration.
+cross-build/package, QEMU-user Electron lifecycle, and system-QEMU kernel-floor
+jobs are green. No text in this document authorizes publication, tagging, or
+consumer integration.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved
@@ -54,10 +55,11 @@ publication must not imply a broader compatibility promise.
 
 For ARMv7, the maintained contract is intentionally exact: GNU/Linux glibc,
 little-endian ARMv7-A, hard-float EABI, kernel 5.15 or newer, and the existing
-Node `>=24.15.0 <25` range. The reference execution host is Electron 42.3.0
-with embedded Node 24.15.0 under QEMU-user because upstream Node does not ship
-a Linux ARMv7 archive for that version. Consumer-managed Node builds may be
-compatible only when the loader can prove the same ARM ABI. Soft-float, musl,
+Node `>=24.15.0 <25` range. The reference userspace execution host is Electron
+42.3.0 with embedded Node 24.15.0 under QEMU-user because upstream Node does not
+ship a Linux ARMv7 archive for that version. A separate system-QEMU lane boots
+the pinned 5.15 generic-LPAE kernel and repeats the lifecycle. Consumer-managed
+Node builds may be compatible only when the loader can prove the same ARM ABI. Soft-float, musl,
 unknown ARM ABI, and other 32-bit ARM variants are outside support.
 
 The exact-commit verification and documentation gates supporting recognition
@@ -119,9 +121,10 @@ package allowlists and metadata checks, loader negative cases, and a real
 start/callback/dispose cycle under the pinned ARMv7 Electron/QEMU-user lane.
 That lane must use the matrix's digest-pinned Ubuntu OCI image, Ubuntu snapshot
 timestamp, and validated full installed-package manifest; a compiler sysroot
-is not runtime evidence. Cross-compilation and packaging without that execution
-lane may be described only as cross-build support and must leave the target
-pending.
+is not runtime evidence. The package must separately complete the same
+lifecycle under the exact snapshot-pinned ARMHF 5.15 generic-LPAE kernel in
+`qemu-system-arm`. Cross-compilation and packaging without both execution lanes
+may be described only as cross-build support and must leave the target pending.
 
 The ordinary JavaScript suite also replays fixed seeded operation sequences
 across exclusion replacement, topology mutation, moved-in trees, in-root

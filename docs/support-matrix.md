@@ -7,8 +7,9 @@ was the first published multi-target release.
 
 The current source candidate adds GNU/Linux ARMv7 hard-float delivery under
 target id `linux-arm-gnueabihf`. Its status is deliberately
-`target-pending-clean-ci`: cross-build, package, loader, and QEMU-user runtime
-jobs are defined, but no exact-revision ARMv7 execution result exists yet.
+`target-pending-clean-ci`: cross-build, package, loader, QEMU-user runtime, and
+system-QEMU kernel-floor jobs are defined, but no exact-revision ARMv7
+execution result exists yet.
 Until that job passes and a status-bearing follow-up revision is itself green,
 the target is buildable but not qualified or published.
 
@@ -42,12 +43,14 @@ post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 
 | Target | Package | Build contract | Runtime contract | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `armv7-unknown-linux-gnueabihf`; ELF32, little-endian, `EM_ARM=40`, EABI5 hard-float flags; Ubuntu 22.04 cross toolchain | ARMv7-A hard-float little-endian glibc, kernel 5.15+, Electron 42.3.0 / embedded Node 24.15.0 or a compatible consumer-managed Node 24 build | Cross-build implemented; exact QEMU-user Electron package/load/watch/dispose evidence pending |
+| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `armv7-unknown-linux-gnueabihf`; ELF32, little-endian, `EM_ARM=40`, EABI5 hard-float flags; Ubuntu 22.04 cross toolchain | ARMv7-A hard-float little-endian glibc, kernel 5.15+, Electron 42.3.0 / embedded Node 24.15.0 or a compatible consumer-managed Node 24 build | Cross-build implemented; exact QEMU-user Electron and system-QEMU 5.15 package/load/watch/dispose evidence pending |
 
 The glibc release ceiling remains 2.35, and artifact inspection must prove the
 actual maximum `GLIBC_*` symbol no newer than that ceiling. ARMv7 uses the same
-kernel floor as the published targets, but this revision does not add a
-separate pinned ARMv7 kernel-boot lane. Its QEMU-user lane constructs an
+kernel floor as the published targets. Its dedicated system-QEMU component
+boots Canonical's snapshot-pinned `5.15.0-185-generic-lpae` kernel and initrd,
+then runs the production package lifecycle with Electron-as-Node. Its separate
+QEMU-user lane constructs an
 isolated Ubuntu 22.04 armhf rootfs from the digest-pinned official OCI image,
 rewrites APT to the checked-in Ubuntu snapshot timestamp, records the complete
 installed-package manifest, and executes the official Electron ARMv7 archive
@@ -86,13 +89,15 @@ independently reproduced release artifacts require no symbol newer than
 | openSUSE Tumbleweed pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Representative current advertised openSUSE RPM lane |
 | locked Nix closure | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Source-built Nix package and exact Electron closure |
 | Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `4dbb0dc` | Passed at `4dbb0dc` | QEMU-user lane defined; pending exact CI | Exact Codex host-runtime boundary |
-| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Kernel floor only; native runners separately prove architecture |
+| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | ARMv7 system-QEMU lane defined; pending exact CI | Real kernel floor; ARMv7 remains emulated and has no native runner evidence |
 
 The images, official kernel/initrd hashes, and Nix inputs are pinned in
 `config/native-matrix.json` and `flake.lock`. A container changes userspace,
 not the host kernel. The kernel component therefore boots the real pinned
 5.15 kernel under QEMU and labels that result as kernel-floor evidence only;
-native x64/ARM64 runners remain mandatory target evidence.
+native x64/ARM64 runners remain mandatory target evidence. ARMv7 boots the
+exact generic-LPAE kernel under `qemu-system-arm`; that is real kernel/runtime
+execution but still emulated target evidence, not a claim of native ARMv7 CI.
 
 ## Advertised, recognized, and qualified are different
 
@@ -156,7 +161,9 @@ cross-builds must byte-match, the generated npm package must pass its exact
 allowlist and metadata checks, and the canonical artifact must execute the
 production loader plus a real start/callback/dispose lifecycle under pinned
 Electron 42.3.0 through `qemu-arm` in the snapshot-locked armhf rootfs.
-Publication and registry verification are gated on that lane. If it is
+The same package must also pass its start/callback/dispose lifecycle under the
+snapshot-pinned ARMHF 5.15 generic-LPAE kernel in `qemu-system-arm`.
+Publication and registry verification are gated on both lanes. If either is
 unavailable or red, the target remains `target-pending-clean-ci`;
 cross-compilation alone never promotes it.
 

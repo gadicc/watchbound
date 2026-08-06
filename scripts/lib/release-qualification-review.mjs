@@ -1,12 +1,13 @@
 const KERNEL_JOB_PATTERNS = [
-  /^Release kernel 5\.15 \((linux-(?:x64|arm64)-gnu), QEMU component\)$/u,
-  /^Qualify exact release source \/ Kernel 5\.15 \((linux-(?:x64|arm64)-gnu), QEMU component\)$/u,
+  /^Release kernel 5\.15 \((linux-(?:x64|arm64)-gnu|linux-arm-gnueabihf), QEMU component\)$/u,
+  /^Qualify exact release source \/ Kernel 5\.15 \((linux-(?:x64|arm64)-gnu|linux-arm-gnueabihf), QEMU component\)$/u,
 ];
 const KERNEL_STEP_NAMES = new Set([
   "Exercise the canonical package on a real pinned 5.15 kernel",
   "Exercise the exact package on a real pinned 5.15 kernel",
 ]);
 const TARGETS = ["linux-x64-gnu", "linux-arm64-gnu"];
+const KERNEL_TARGETS = [...TARGETS, "linux-arm-gnueabihf"];
 const SEMANTIC_FAILURE_PATTERNS = [
   /AssertionError/u,
   /ERR_ASSERTION/u,
@@ -49,7 +50,7 @@ export function reviewConditionalRerun({
   check(
     "original-failures-limited-to-kernel-baseline",
     failedJobs.length > 0 &&
-      failedJobs.length <= TARGETS.length * KERNEL_JOB_PATTERNS.length &&
+      failedJobs.length <= KERNEL_TARGETS.length * KERNEL_JOB_PATTERNS.length &&
       failedTargets.every((target) => target !== null),
     failedJobs.length === 0
       ? "no failed jobs found"
@@ -258,7 +259,9 @@ function validateTargetEvidence({
 function hasTargetTimeoutSignature(log, target) {
   const emulator = target === "linux-x64-gnu"
     ? "qemu-system-x86_64"
-    : "qemu-system-aarch64";
+    : target === "linux-arm64-gnu"
+    ? "qemu-system-aarch64"
+    : "qemu-system-arm";
   return new RegExp(
     `(?:${emulator}[\\s\\S]{0,500}ETIMEDOUT|ETIMEDOUT[\\s\\S]{0,500}${emulator})`,
     "u",

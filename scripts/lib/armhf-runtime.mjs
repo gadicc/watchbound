@@ -3,6 +3,25 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+const ARMHF_APT_SOURCE = "http://ports.ubuntu.com/ubuntu-ports/";
+
+export function armhfSnapshotSourceRewrite(snapshot) {
+  assert.match(snapshot, /^20[0-9]{6}T[0-9]{6}Z$/u, "ARMHF snapshot timestamp");
+  return {
+    source: ARMHF_APT_SOURCE,
+    destination: `http://snapshot.ubuntu.com/ubuntu/${snapshot}`,
+  };
+}
+
+export function assertArmhfSnapshotSources(sourceList, snapshot) {
+  const rewrite = armhfSnapshotSourceRewrite(snapshot);
+  assert.match(
+    sourceList,
+    new RegExp(`^deb ${escapeRegExp(rewrite.destination)}\\s+jammy(?:\\s|$)`, "mu"),
+  );
+  assert.doesNotMatch(sourceList, new RegExp(escapeRegExp(rewrite.source), "u"));
+}
+
 export function readPreparedArmhfRuntime(rootfs, target) {
   const evidence = readBaseEvidence(rootfs, target, "runtime");
   assert.deepEqual(evidence.profilePackages, []);
@@ -78,4 +97,8 @@ function installedVersion(evidence, packageName) {
 
 function sha256File(source) {
   return crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

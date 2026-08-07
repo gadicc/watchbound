@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  armhfSnapshotSourceRewrite,
+  assertArmhfSnapshotSources,
   readPreparedArmhfKernelRuntime,
   readPreparedArmhfRuntime,
 } from "../../scripts/lib/armhf-runtime.mjs";
@@ -13,6 +15,19 @@ import { loadNativeMatrix, targetForId } from "../../scripts/lib/native-matrix.m
 const workspaceRoot = path.resolve(import.meta.dirname, "../..");
 const matrix = loadNativeMatrix(workspaceRoot);
 const target = targetForId(matrix, "linux-arm-gnueabihf");
+
+test("ARMHF snapshot source rewriting preserves the existing suite separator", () => {
+  const snapshot = target.runtimeRootfs.snapshot;
+  const rewrite = armhfSnapshotSourceRewrite(snapshot);
+  const sourceList = "deb http://ports.ubuntu.com/ubuntu-ports/ jammy main restricted\n";
+  const rewritten = sourceList.replaceAll(rewrite.source, rewrite.destination);
+
+  assert.equal(
+    rewritten,
+    `deb http://snapshot.ubuntu.com/ubuntu/${snapshot} jammy main restricted\n`,
+  );
+  assertArmhfSnapshotSources(rewritten, snapshot);
+});
 
 test("prepared ARMHF runtime evidence is bound to its target and package manifest", () => {
   const rootfs = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-armhf-runtime-"));

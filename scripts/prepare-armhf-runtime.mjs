@@ -5,6 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  armhfSnapshotSourceRewrite,
+  assertArmhfSnapshotSources,
+} from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,6 +17,7 @@ const matrix = loadNativeMatrix(workspaceRoot);
 const target = targetForId(matrix, options.target);
 assert.equal(target.runtimeQualification, "qemu-user-electron");
 assert.ok(target.runtimeRootfs, `${target.id} has no runtime rootfs contract`);
+const snapshotSourceRewrite = armhfSnapshotSourceRewrite(target.runtimeRootfs.snapshot);
 const profile = options.profile ?? "runtime";
 assert.ok(profile === "runtime" || profile === "kernel", "--profile must be runtime or kernel");
 const kernelArtifact = matrix.kernelBaselineQualification.artifacts[target.architecture];
@@ -89,7 +94,7 @@ try {
     containerId,
     "sed",
     "--in-place",
-    `s#http://ports.ubuntu.com/ubuntu-ports/#http://snapshot.ubuntu.com/ubuntu/${target.runtimeRootfs.snapshot} #g`,
+    `s#${snapshotSourceRewrite.source}#${snapshotSourceRewrite.destination}#g`,
     "/etc/apt/sources.list",
   ]);
   fs.writeFileSync(policyPath, "#!/bin/sh\nexit 101\n");
@@ -208,11 +213,7 @@ for (const artifactPackage of profilePackages) {
 }
 const packageManifestText = `${packageManifest.join("\n")}\n`;
 const packageDatabase = path.join(outputRoot, "var/lib/dpkg/status");
-assert.match(
-  sourceList,
-  new RegExp(`^deb http://snapshot\\.ubuntu\\.com/ubuntu/${target.runtimeRootfs.snapshot} jammy`, "mu"),
-);
-assert.doesNotMatch(sourceList, /ports\.ubuntu\.com/u);
+assertArmhfSnapshotSources(sourceList, target.runtimeRootfs.snapshot);
 const preparedKernel = profile === "kernel"
   ? prepareKernelEvidence(outputRoot, kernelArtifact)
   : null;

@@ -773,6 +773,10 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   assert.match(
     kernelBaseline,
+    /Math\.max\([\s\S]*?KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS,[\s\S]*?KERNEL_ARM_GUEST_WAIT_TIMEOUT_MS,[\s\S]*?\) <= MAX_INSTALLED_SMOKE_WAIT_TIMEOUT_MS/u,
+  );
+  assert.match(
+    kernelBaseline,
     /variables\.WATCHBOUND_WAIT_TIMEOUT_MS = String\(waitTimeoutMs\)/u,
   );
   assert.match(kernelBaseline, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed/u);

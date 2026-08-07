@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+  MAX_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
 } from "./installed-package-smoke-helpers.mjs";
 import {
   assertCleanQemuCompletion,
@@ -18,6 +19,13 @@ import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS = 30_000;
 const KERNEL_ARM_GUEST_WAIT_TIMEOUT_MS = 120_000;
+assert.ok(
+  Math.max(
+    KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS,
+    KERNEL_ARM_GUEST_WAIT_TIMEOUT_MS,
+  ) <= MAX_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+  "kernel guest wait timeout exceeds the installed-smoke maximum",
+);
 const qualificationStartedAt = Date.now();
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseOptions(process.argv.slice(2));

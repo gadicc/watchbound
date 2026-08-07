@@ -55,6 +55,7 @@ test("installed smoke keeps its short default and accepts a bounded override", (
     DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
   );
   assert.equal(parseInstalledSmokeWaitTimeoutMs("30000"), 30_000);
+  assert.equal(parseInstalledSmokeWaitTimeoutMs("120000"), 120_000);
 });
 
 test("installed smoke rejects malformed or excessive wait overrides", () => {
@@ -64,12 +65,12 @@ test("installed smoke rejects malformed or excessive wait overrides", () => {
     "4.5",
     " 4000",
     "4000ms",
-    "60001",
+    "120001",
     "9007199254740992",
   ]) {
     assert.throws(
       () => parseInstalledSmokeWaitTimeoutMs(value),
-      /integer from 1 through 60000/u,
+      /integer from 1 through 120000/u,
     );
   }
 });

@@ -10,6 +10,7 @@ import {
 } from "./installed-package-smoke-helpers.mjs";
 import {
   assertCleanQemuCompletion,
+  copyTreePreservingSymlinks,
 } from "./kernel-baseline-qualification-helpers.mjs";
 import { readPreparedArmhfKernelRuntime } from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
@@ -93,7 +94,10 @@ try {
   }
 
   logPhase("guest-files-assemble-start");
-  copyTree(path.resolve(options["node-root"]), path.join(rootfs, "watchbound-node"));
+  copyTreePreservingSymlinks(
+    path.resolve(options["node-root"]),
+    path.join(rootfs, "watchbound-node"),
+  );
   copyFiles(
     Object.values(tarballs).map((filename) => path.join(tarballRoot, filename)),
     path.join(rootfs, "packages"),
@@ -303,11 +307,6 @@ function guestEnvironment({
 function downloadChecked(artifact, destination) {
   run("curl", ["--fail", "--location", "--retry", "3", "--output", destination, artifact.url]);
   assert.equal(sha256(destination), artifact.sha256, `checksum mismatch for ${artifact.url}`);
-}
-
-function copyTree(source, destination) {
-  assert.ok(fs.statSync(source).isDirectory(), `missing directory ${source}`);
-  fs.cpSync(source, destination, { recursive: true });
 }
 
 function copyFiles(sources, destination) {

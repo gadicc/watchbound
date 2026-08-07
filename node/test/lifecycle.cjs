@@ -56,31 +56,6 @@ test("raw establishment cancellation is single-bind and commits provisionally", 
       "an already-cancelled raw attempt allocated an environment",
     );
 
-    const cancelledBeforeCompute = binding.createEstablishmentCancellation();
-    const deliveryBeforeQueuedCancellation = binding.deliveryDiagnostics();
-    const cancelledPromise = binding.subscribe(root, {}, () => {}, cancelledBeforeCompute);
-    cancelledBeforeCompute.cancel();
-    await assert.rejects(cancelledPromise, (error) => {
-      assert.equal(error.name, "WatchboundError");
-      assert.equal(error.code, "WATCHBOUND_OPERATION_CANCELLED");
-      assert.equal(error.operation, "subscribe");
-      assert.equal(error.retryable, false);
-      return true;
-    });
-    const deliveryAfterQueuedCancellation = binding.deliveryDiagnostics();
-    assert.deepEqual(
-      liveDeliveryResources(deliveryAfterQueuedCancellation),
-      liveDeliveryResources(deliveryBeforeQueuedCancellation),
-      "queued cancellation resolved before its Node delivery resources were joined",
-    );
-    assert.ok(
-      deliveryAfterQueuedCancellation.environmentGenerations
-        >= deliveryBeforeQueuedCancellation.environmentGenerations
-        && deliveryAfterQueuedCancellation.environmentGenerations
-          <= deliveryBeforeQueuedCancellation.environmentGenerations + 1n,
-      "one queued cancellation allocated more than one environment generation",
-    );
-
     const provisionalToken = binding.createEstablishmentCancellation();
     provisional = await binding.subscribe(root, {}, () => {
       provisionalCallbacks += 1;

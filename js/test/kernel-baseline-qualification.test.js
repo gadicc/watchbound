@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   assertCleanQemuCompletion,
+  copyTreePreservingSymlinks,
 } from "../../scripts/kernel-baseline-qualification-helpers.mjs";
 
 const workspaceRoot = path.resolve(
@@ -53,6 +55,24 @@ test("kernel baseline preserves QEMU spawn failures", () => {
       }),
     (error) => error === failure,
   );
+});
+
+test("kernel guest assembly preserves relative Node runtime symlinks", () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-kernel-copy-"));
+  try {
+    const source = path.join(fixtureRoot, "source");
+    const destination = path.join(fixtureRoot, "destination");
+    fs.mkdirSync(path.join(source, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(source, "electron"), "runtime");
+    fs.symlinkSync("../electron", path.join(source, "bin/node"));
+
+    copyTreePreservingSymlinks(source, destination);
+
+    assert.equal(fs.readlinkSync(path.join(destination, "bin/node")), "../electron");
+    assert.equal(fs.readFileSync(path.join(destination, "electron"), "utf8"), "runtime");
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test("kernel baseline reports host and guest phase boundaries", () => {

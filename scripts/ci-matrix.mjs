@@ -51,7 +51,7 @@ const runtime = matrix.targets
     target: target.id,
     architecture: target.buildArchitecture,
     targetArchitecture: target.architecture,
-    runner: target.runner,
+    runner: target.runtimeRunner,
     binary: target.binary,
     electronArchitecture: target.codexElectron.archiveArchitecture,
     electronSha256SRI: target.codexElectron.sha256SRI,
@@ -123,7 +123,7 @@ const registryEmulated = matrix.targets
     target: target.id,
     architecture: target.buildArchitecture,
     targetArchitecture: target.architecture,
-    runner: target.runner,
+    runner: target.runtimeRunner,
     binary: target.binary,
     electronArchitecture: target.codexElectron.archiveArchitecture,
     electronSha256SRI: target.codexElectron.sha256SRI,
@@ -134,7 +134,7 @@ const registryEmulated = matrix.targets
     rootfsSnapshot: target.runtimeRootfs.snapshot,
   })));
 
-const outputs = {
+export const outputs = {
   source,
   cross,
   runtime,
@@ -146,13 +146,13 @@ const outputs = {
   registry,
   registryEmulated,
 };
-if (options["github-output"]) {
+if (import.meta.main && options["github-output"]) {
   const destination = path.resolve(options["github-output"]);
   fs.appendFileSync(
     destination,
     `${Object.entries(outputs).map(([name, value]) => `${name}=${JSON.stringify(value)}`).join("\n")}\n`,
   );
-} else {
+} else if (import.meta.main) {
   process.stdout.write(`${JSON.stringify(outputs, null, 2)}\n`);
 }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "../../scripts/install-jsr-native.mjs";
+import { outputs as ciMatrixOutputs } from "../../scripts/ci-matrix.mjs";
 import {
   INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
   readOptionalEvidence,
@@ -312,6 +313,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
   assert.equal(armv7.binary, "watchbound.linux-arm-gnueabihf.node");
   assert.equal(armv7.runtimeEmulator, "/usr/bin/qemu-arm");
   assert.equal(armv7.runtimeCpu, "cortex-a15");
+  assert.equal(armv7.runtimeRunner, "ubuntu-24.04");
   assert.deepEqual(armv7.runtimeRootfs, {
     platform: "linux/arm/v7",
     image:
@@ -373,6 +375,21 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
     matrix.intentionallyUnsupported.map(({ target }) => target),
     ["linux-arm-soft-float", "linux-musl", "non-linux"],
   );
+});
+
+test("ARMv7 user-mode emulation uses the modern runner without moving build or kernel evidence", () => {
+  const runtime = ciMatrixOutputs.runtime.find(({ target }) => target === "linux-arm-gnueabihf");
+  const cross = ciMatrixOutputs.cross.find(({ target }) => target === "linux-arm-gnueabihf");
+  const kernel = ciMatrixOutputs.kernel.find(({ target }) => target === "linux-arm-gnueabihf");
+  const registry = ciMatrixOutputs.registryEmulated.filter(
+    ({ target }) => target === "linux-arm-gnueabihf",
+  );
+
+  assert.equal(runtime.runner, "ubuntu-24.04");
+  assert.ok(registry.length > 0);
+  assert.ok(registry.every(({ runner }) => runner === "ubuntu-24.04"));
+  assert.equal(cross.runner, "ubuntu-22.04");
+  assert.equal(kernel.runner, "ubuntu-22.04");
 });
 
 test("ARMv7 artifact validation fails closed on filename, ELF identity, triple, and version", () => {

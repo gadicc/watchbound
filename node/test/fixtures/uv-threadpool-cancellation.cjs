@@ -22,6 +22,7 @@ async function main() {
     await waitFor(() => blocker.started, "the sole libuv worker never entered the blocker");
 
     const token = binding.createEstablishmentCancellation();
+    const diagnosticsBefore = binding.deliveryDiagnostics();
     let settled = false;
     const subscriptionPromise = binding.subscribe(root, {}, () => {}, token);
     subscriptionPromise.then(
@@ -68,11 +69,20 @@ async function main() {
     });
     await waitFor(() => {
       const diagnostics = binding.deliveryDiagnostics();
-      return diagnostics.dispatcherThreads === 0
-        && diagnostics.registrations === 0
-        && diagnostics.outstandingCallbacks === 0
-        && diagnostics.activeThreadsafeFunctions === 0;
+      return diagnostics.dispatcherEnvironments === diagnosticsBefore.dispatcherEnvironments
+        && diagnostics.dispatcherThreads === diagnosticsBefore.dispatcherThreads
+        && diagnostics.registrations === diagnosticsBefore.registrations
+        && diagnostics.outstandingCallbacks === diagnosticsBefore.outstandingCallbacks
+        && diagnostics.cleanupCoordinatorThreads === diagnosticsBefore.cleanupCoordinatorThreads
+        && diagnostics.cleanupRequests === diagnosticsBefore.cleanupRequests
+        && diagnostics.activeThreadsafeFunctions === diagnosticsBefore.activeThreadsafeFunctions;
     }, "queued cancellation did not restore the Node delivery baseline");
+    const diagnosticsAfter = binding.deliveryDiagnostics();
+    assert.ok(
+      diagnosticsAfter.environmentGenerations >= diagnosticsBefore.environmentGenerations
+        && diagnosticsAfter.environmentGenerations <= diagnosticsBefore.environmentGenerations + 1n,
+      "one queued cancellation allocated more than one environment generation",
+    );
   } finally {
     blocker.release();
     await blocked.catch(() => {});

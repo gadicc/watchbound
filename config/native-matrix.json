@@ -172,6 +172,7 @@
       "linker": "arm-linux-gnueabihf-gcc",
       "linkerBinary": "arm-linux-gnueabihf-ld",
       "runtimeQualification": "qemu-user-electron",
+      "runtimeRunner": "ubuntu-24.04",
       "runtimeEmulator": "/usr/bin/qemu-arm",
       "runtimeCpu": "cortex-a15",
       "runtimeRootfs": {

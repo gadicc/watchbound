@@ -95,6 +95,7 @@ export function validateNativeMatrix(matrix) {
       assert.equal(target.linker, "arm-linux-gnueabihf-gcc");
       assert.equal(target.linkerBinary, "arm-linux-gnueabihf-ld");
       assert.equal(target.runtimeQualification, "qemu-user-electron");
+      assert.equal(target.runtimeRunner, "ubuntu-24.04");
       assert.equal(target.runtimeEmulator, "/usr/bin/qemu-arm");
       assert.equal(target.runtimeCpu, "cortex-a15");
       assert.equal(target.runtimeRootfs.platform, "linux/arm/v7");
@@ -116,6 +117,7 @@ export function validateNativeMatrix(matrix) {
     } else {
       assert.equal(target.armAbi, undefined);
       assert.equal(target.buildMode, undefined);
+      assert.equal(target.runtimeRunner, undefined);
       assert.equal(
         target.overflowRunner,
         target.architecture === "x64" ? "ubuntu-24.04" : "ubuntu-24.04-arm",

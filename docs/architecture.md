@@ -22,10 +22,11 @@ passed exact x64/ARM64 qualification, and is published on npm and JSR.
 
 The current source candidate adds one exact GNU/Linux ARMv7 hard-float target.
 It cross-builds `armv7-unknown-linux-gnueabihf`, packages the ELF32 binding
-separately, and requires real loader/watch/dispose runs through pinned ARMv7
+separately, and passed real loader/watch/dispose runs through pinned ARMv7
 Electron under QEMU-user and the snapshot-pinned 5.15 generic-LPAE kernel under
-system QEMU before promotion. Public capability schema 9 reports the exact ARM
-ABI and keeps the target pending until both execution results exist.
+system QEMU at implementation revision `1c9b4e3`. Public capability schema 9
+reports the exact ARM ABI. The source target is supported but unpublished, and
+its execution evidence does not claim native ARMv7 hardware or performance.
 
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support
@@ -861,8 +862,8 @@ platform range, and packaging are sufficient. Parcel's Linux inotify
 conformance gaps do not imply that Watchbound is a general replacement for its
 other backends or product surface.
 
-The current source matrix in `docs/support-matrix.md` covers supported
-x64 and ARM64 GNU/Linux targets, plus a pending exact ARMv7 hard-float target,
+The current source matrix in `docs/support-matrix.md` covers supported x64,
+ARM64, and exact ARMv7 hard-float GNU/Linux targets,
 with a kernel 5.15/glibc 2.35 baseline and Node
 `>=24.15.0 <25`. Detected WSL and environments with recognized container
 evidence cannot qualify. Network filesystems, Filesystem in Userspace (FUSE),

@@ -14,15 +14,15 @@ remain at `0.0.0-development`.
 
 ## ARMv7 2.1.0 release plan
 
-1. Push the implementation revision to a pull request without publishing. Its
-   ordinary CI must produce the ARM ELF, validate the target package, reject
-   incompatible ARM/libc fixtures, and retain green QEMU-user Electron and
-   system-QEMU 5.15 lifecycle artifacts for that exact revision.
-2. After reviewing the retained ELF/package/runtime evidence, change only the
-   ARM target status from `target-pending-clean-ci` to `supported` in a
-   follow-up status-bearing revision and require the complete CI matrix to pass
-   again. Record its run URL, addon SHA-256, maximum `GLIBC_*`, and lifecycle
-   evidence in the support record.
+1. Implementation revision `1c9b4e3` completed the 24-job CI matrix, including
+   deterministic ARMHF cross-build/package, incompatible ARM/libc negatives,
+   QEMU-user Electron lifecycle, and the separately retained and pinned
+   system-QEMU 5.15 lifecycle artifacts. The reviewed identities are recorded
+   in `qualification-evidence-2026-08-07-armv7.md`.
+2. The follow-up status-bearing revision changes the ARM target from
+   `target-pending-clean-ci` to `supported`. Its complete CI matrix must pass
+   again before promotion is final; retain that run URL with the release
+   review rather than weakening the exact-revision gate.
 3. With separate explicit authorization, bootstrap the new scoped npm package
    name and configure its trusted publisher as described below. This is not a
    Watchbound release and must not contain a usable binding.
@@ -57,12 +57,12 @@ plugin requires semantic-release's version to equal the retained release-plan
 version and verifies the exact generated candidate before every mutation.
 
 The plugin refuses preparation unless every matrix target is checked in as
-`supported`. The ARMv7 target is intentionally pending in the initial change,
-so this revision cannot publish. Promote it only in a follow-up status-bearing
-revision after the exact CI cross-build/package, QEMU-user runtime, and
-system-QEMU kernel-floor lanes are green. Publication remains independently restricted to an approved
-semantic-release push on `main`; qualification or credentials alone never
-authorize it.
+`supported`. The ARMv7 target is supported in the follow-up source matrix only
+after exact cross-build/package, QEMU-user runtime, and system-QEMU kernel-floor
+evidence completed. This does not bypass the exact status-bearing CI,
+namespace-bootstrap, explicit release-authorization, or publication gates.
+Publication remains independently restricted to an approved semantic-release
+push on `main`; qualification or credentials alone never authorize it.
 
 ## Exact target pipeline
 

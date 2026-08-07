@@ -6,10 +6,11 @@ It keeps the package roles and binary filenames introduced in `1.1.0` while
 advancing the native contract to binding API 5 and capability schema 8. The
 historical `1.0.1` release retains its one-target contract.
 
-The current source candidate adds an ARMv7 hard-float target package and
-capability schema 9. It remains `target-pending-clean-ci` until the exact
-cross-build, packaging, QEMU-user Electron lifecycle, and system-QEMU
-kernel-floor lanes pass; it is not part of release `2.0.0`.
+The current source candidate adds a source-supported ARMv7 hard-float target
+package and capability schema 9. Its exact cross-build, packaging, QEMU-user
+Electron lifecycle, and system-QEMU kernel-floor lanes passed at implementation
+revision `1c9b4e3`; it is not part of release `2.0.0`, has no usable published
+artifact, and has no native-hardware or performance qualification claim.
 
 ## One matrix, three package roles
 

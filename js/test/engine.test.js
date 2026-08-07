@@ -133,7 +133,7 @@ test("capability schema v9 exposes physical bytes-only and exact ARM ABI deliver
       {
         id: "linux-arm-gnueabihf",
         architecture: "arm",
-        status: "target-pending-clean-ci",
+        status: "supported",
       },
     ],
   );

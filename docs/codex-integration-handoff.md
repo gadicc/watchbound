@@ -24,9 +24,10 @@ versions, Node-API, triple, and release profile. Capability schema 8 retains
 `build.packagedTarget`, per-target qualification, and current-runtime matching;
 it also declares exclusion feature and option facts.
 
-The ARMv7 row describes the source candidate, not a published artifact. It
-requires little-endian ARM version 7, the hard-float EABI, and glibc; all other
-32-bit ARM variants fail closed. Capability schema 9 reports those ABI facts.
+The ARMv7 row describes a source-supported candidate, not a published artifact.
+It requires little-endian ARM version 7, the hard-float EABI, and glibc; all
+other 32-bit ARM variants fail closed. Capability schema 9 reports those ABI
+facts. Its qualification is QEMU-backed rather than native-hardware evidence.
 
 ## Proposed 2.1.0 ARMv7 handoff
 

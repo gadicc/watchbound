@@ -5,13 +5,22 @@ whose statuses are `supported` in the checked-in source matrix. The historical
 `1.0.1` release remains limited to its Ubuntu 24.04 x64 contract, and `1.1.0`
 was the first published multi-target release.
 
-The current source candidate adds GNU/Linux ARMv7 hard-float delivery under
-target id `linux-arm-gnueabihf`. Its status is deliberately
-`target-pending-clean-ci`: cross-build, package, loader, QEMU-user runtime, and
-system-QEMU kernel-floor jobs are defined, but no exact-revision ARMv7
-execution result exists yet.
-Until that job passes and a status-bearing follow-up revision is itself green,
-the target is buildable but not qualified or published.
+The current source matrix also supports GNU/Linux ARMv7 hard-float delivery
+under target id `linux-arm-gnueabihf`. It is not part of release `2.0.0` and no
+usable ARMv7 package has been published. Its narrower qualification basis is
+deterministic cross-build/package evidence plus production loader and real
+watch lifecycles under QEMU-user Electron and a booted ARMHF kernel 5.15.
+That execution evidence is emulated and makes no native-hardware or performance
+claim.
+
+Implementation revision `1c9b4e33458f20e0aa2a29a4bd29b18901495139`
+passed the complete 24-job
+[CI run 31166593887](https://github.com/gadicc/watchbound/actions/runs/31166593887),
+including the ARMv7 cross-build/package, QEMU-user Electron, and system-QEMU
+kernel-floor lanes. Exact artifacts and caveats are recorded in
+[`qualification-evidence-2026-08-07-armv7.md`](qualification-evidence-2026-08-07-armv7.md).
+The follow-up status-bearing revision must itself pass the complete matrix;
+publication remains a separate explicitly authorized gate.
 
 Source commit `4dbb0dc1c445de1d00e09d66f252d3d51f713cf2` completed both guarded
 release-qualification scenarios. The
@@ -39,11 +48,11 @@ post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 | Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `2.0.0` |
 | Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `2.0.0` |
 
-## Source-candidate ARMv7 contract
+## Supported source ARMv7 contract
 
 | Target | Package | Build contract | Runtime contract | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `armv7-unknown-linux-gnueabihf`; ELF32, little-endian, `EM_ARM=40`, EABI5 hard-float flags; Ubuntu 22.04 cross toolchain | ARMv7-A hard-float little-endian glibc, kernel 5.15+, Electron 42.3.0 / embedded Node 24.15.0 or a compatible consumer-managed Node 24 build | Cross-build implemented; exact QEMU-user Electron and system-QEMU 5.15 package/load/watch/dispose evidence pending |
+| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | `armv7-unknown-linux-gnueabihf`; ELF32, little-endian, `EM_ARM=40`, EABI5 hard-float flags; Ubuntu 22.04 cross toolchain | ARMv7-A hard-float little-endian glibc, kernel 5.15+, Electron 42.3.0 / embedded Node 24.15.0 or a compatible consumer-managed Node 24 build | Source-supported; exact QEMU-user Electron and system-QEMU 5.15 package/load/watch/dispose passed at `1c9b4e3`; unpublished |
 
 The glibc release ceiling remains 2.35, and artifact inspection must prove the
 actual maximum `GLIBC_*` symbol no newer than that ceiling. ARMv7 uses the same
@@ -81,15 +90,15 @@ independently reproduced release artifacts require no symbol newer than
 
 | Lane | x64 | ARM64 | ARMv7 hard-float | Evidence meaning |
 | --- | --- | --- | --- | --- |
-| Ubuntu 22.04 pinned / baseline builder | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Cross-build defined; pending exact CI | Release ABI and oldest distro userspace lane |
+| Ubuntu 22.04 pinned / baseline builder | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Deterministic cross-build/package passed at `1c9b4e3` | Release ABI and oldest distro userspace lane |
 | Ubuntu 24.04 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Codex advertised Debian-family lane |
 | Debian 12 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Codex advertised Debian-family lane |
 | Fedora 42 pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Codex advertised RPM lane |
 | Arch `base-devel` pinned | Passed at `4dbb0dc` | Not in Codex lane | Not configured | Codex advertised pacman lane |
 | openSUSE Tumbleweed pinned | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Representative current advertised openSUSE RPM lane |
 | locked Nix closure | Passed at `4dbb0dc` | Passed at `4dbb0dc` | Not configured | Source-built Nix package and exact Electron closure |
-| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `4dbb0dc` | Passed at `4dbb0dc` | QEMU-user lane defined; pending exact CI | Exact Codex host-runtime boundary |
-| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | ARMv7 system-QEMU lane defined; pending exact CI | Real kernel floor; ARMv7 remains emulated and has no native runner evidence |
+| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `4dbb0dc` | Passed at `4dbb0dc` | QEMU-user lifecycle passed at `1c9b4e3` | Exact Codex host-runtime boundary |
+| Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `4dbb0dc` | Passed at `4dbb0dc` | ARMv7 system-QEMU lifecycle passed at `1c9b4e3` | Real kernel floor; ARMv7 remains emulated and has no native runner evidence |
 
 The images, official kernel/initrd hashes, and Nix inputs are pinned in
 `config/native-matrix.json` and `flake.lock`. A container changes userspace,
@@ -163,9 +172,11 @@ production loader plus a real start/callback/dispose lifecycle under pinned
 Electron 42.3.0 through `qemu-arm` in the snapshot-locked armhf rootfs.
 The same package must also pass its start/callback/dispose lifecycle under the
 snapshot-pinned ARMHF 5.15 generic-LPAE kernel in `qemu-system-arm`.
-Publication and registry verification are gated on both lanes. If either is
-unavailable or red, the target remains `target-pending-clean-ci`;
-cross-compilation alone never promotes it.
+Run 31166593887 satisfied both execution lanes for implementation revision
+`1c9b4e3`. The target is therefore `supported` in the source matrix, subject to
+the invariant that this follow-up status-bearing revision must also be green.
+Future ARMv7-affecting changes fail closed if either lane is unavailable or
+red; cross-compilation alone never preserves support.
 
 The forced-overflow item is correctness-only and can be satisfied by the
 guarded Release workflow dispatch on native GitHub-hosted Ubuntu 24.04 x64 and

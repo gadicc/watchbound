@@ -41,16 +41,19 @@ supported x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35
 baseline and Node `>=24.15.0 <25`; exact native, distro, Electron, Nix,
 reproducibility, kernel-floor, separately supervised overflow, and registry
 smoke evidence backs those declarations. The exact ARMv7 hard-float source
-target is separately pending its cross-build/package and QEMU-user evidence.
+target is also supported after deterministic cross-build/package, QEMU-user
+Electron, and system-QEMU kernel-floor lifecycles passed; it remains unpublished
+and has no native-hardware or performance evidence.
 
 An environment with recognized container evidence cannot qualify. Treat
 `container-unknown` as unknown evidence, never as a negative container result;
 `not-detected` covers only the designated probes and is not exhaustive.
 Detected WSL and network, FUSE, or overlay roots cannot qualify. Musl,
 soft-float/unknown/non-v7 ARM, big-endian ARM, and non-Linux hosts are
-unsupported. Exact GNU/Linux ARMv7 hard-float remains pending until its
-declared QEMU-user runtime evidence passes. Distro recognition, successful loading,
-and runtime facts never widen the selected package's exact target status.
+unsupported. Exact GNU/Linux ARMv7 hard-float retains both declared emulated
+execution lanes as continuing support gates. Distro recognition, successful
+loading, and runtime facts never widen the selected package's exact target
+status.
 
 ## Preserve the semantic model
 

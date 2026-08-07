@@ -61,8 +61,9 @@ one exact GNU/Linux ARMv7 hard-float target rather than treating all
 The new source path cross-compiles `armv7-unknown-linux-gnueabihf`, packages
 `@gadicc/watchbound-node-linux-arm-gnueabihf`, and executes the official
 Electron 42.3.0 `linux-armv7l` archive through QEMU-user. This supplements but
-does not rewrite the historical 2026-07-26 audit table. The target remains
-pending until both that userspace lifecycle and the snapshot-pinned 5.15
-generic-LPAE system-QEMU lifecycle pass; musl, soft-float, unknown ARM ABI,
-big-endian ARM, and non-v7 ARM remain unsupported. No codex-desktop-linux files
-are changed here.
+does not rewrite the historical 2026-07-26 audit table. Both that userspace
+lifecycle and the snapshot-pinned 5.15 generic-LPAE system-QEMU lifecycle
+passed at implementation revision `1c9b4e3`, so the exact source target is now
+supported. It remains unpublished and emulated-only; musl, soft-float, unknown
+ARM ABI, big-endian ARM, and non-v7 ARM remain unsupported. No
+codex-desktop-linux files are changed here.

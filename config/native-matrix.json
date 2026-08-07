@@ -214,7 +214,7 @@
         "archiveArchitecture": "armv7l",
         "sha256SRI": "sha256-XRXmAtl41Tdy7AxYr07wLRulFNw9Z1L/55wK0hgEw4w="
       },
-      "qualification": "target-pending-clean-ci",
+      "qualification": "supported",
       "elf": {
         "class": 1,
         "endianness": 1,

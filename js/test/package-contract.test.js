@@ -297,7 +297,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
         id: "linux-arm-gnueabihf",
         architecture: "arm",
         package: "@gadicc/watchbound-node-linux-arm-gnueabihf",
-        qualification: "target-pending-clean-ci",
+        qualification: "supported",
         runner: "ubuntu-22.04",
         overflowRunner: null,
       },

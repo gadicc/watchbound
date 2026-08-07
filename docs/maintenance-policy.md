@@ -6,13 +6,14 @@ schema 8 and binding API 5 while retaining the multi-target delivery introduced
 in `1.1.0`. Future releases and consumer production readiness remain separately
 gated.
 
-The current source candidate adds GNU/Linux ARMv7 hard-float delivery and
-capability schema 9. The proposed next version is `2.1.0`: this is an additive
-platform and public capability-schema feature on top of published `2.0.0`, not
-a patch. The target remains `target-pending-clean-ci` until the exact ARMv7
-cross-build/package, QEMU-user Electron lifecycle, and system-QEMU kernel-floor
-jobs are green. No text in this document authorizes publication, tagging, or
-consumer integration.
+The current source candidate adds supported GNU/Linux ARMv7 hard-float delivery
+and capability schema 9. The proposed next version is `2.1.0`: this is an
+additive platform and public capability-schema feature on top of published
+`2.0.0`, not a patch. Exact deterministic cross-build/package, QEMU-user
+Electron lifecycle, and system-QEMU kernel-floor evidence passed for
+implementation revision `1c9b4e3`; the status-bearing follow-up revision must
+also pass the full matrix. No text in this document authorizes publication,
+tagging, or consumer integration.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved

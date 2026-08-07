@@ -277,6 +277,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
       package: target.package,
       qualification: target.qualification,
       runner: target.runner,
+      kernelRunner: target.kernelRunner,
       overflowRunner: target.overflowRunner,
     })),
     [
@@ -286,6 +287,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
         package: "@gadicc/watchbound-node-linux-x64-gnu",
         qualification: "supported",
         runner: "ubuntu-22.04",
+        kernelRunner: "ubuntu-24.04",
         overflowRunner: "ubuntu-24.04",
       },
       {
@@ -294,6 +296,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
         package: "@gadicc/watchbound-node-linux-arm64-gnu",
         qualification: "supported",
         runner: "ubuntu-22.04-arm",
+        kernelRunner: "ubuntu-24.04-arm",
         overflowRunner: "ubuntu-24.04-arm",
       },
       {
@@ -302,6 +305,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
         package: "@gadicc/watchbound-node-linux-arm-gnueabihf",
         qualification: "supported",
         runner: "ubuntu-22.04",
+        kernelRunner: "ubuntu-24.04",
         overflowRunner: null,
       },
     ],
@@ -380,7 +384,7 @@ test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float de
   );
 });
 
-test("ARMv7 user-mode emulation uses the modern runner without moving build or kernel evidence", () => {
+test("system-QEMU uses modern hosts without moving release builders", () => {
   const runtime = ciMatrixOutputs.runtime.find(({ target }) => target === "linux-arm-gnueabihf");
   const cross = ciMatrixOutputs.cross.find(({ target }) => target === "linux-arm-gnueabihf");
   const kernel = ciMatrixOutputs.kernel.find(({ target }) => target === "linux-arm-gnueabihf");
@@ -392,7 +396,15 @@ test("ARMv7 user-mode emulation uses the modern runner without moving build or k
   assert.ok(registry.length > 0);
   assert.ok(registry.every(({ runner }) => runner === "ubuntu-24.04"));
   assert.equal(cross.runner, "ubuntu-22.04");
-  assert.equal(kernel.runner, "ubuntu-22.04");
+  assert.equal(kernel.runner, "ubuntu-24.04");
+  assert.deepEqual(
+    ciMatrixOutputs.kernel.map(({ target, runner }) => ({ target, runner })),
+    [
+      { target: "linux-x64-gnu", runner: "ubuntu-24.04" },
+      { target: "linux-arm64-gnu", runner: "ubuntu-24.04-arm" },
+      { target: "linux-arm-gnueabihf", runner: "ubuntu-24.04" },
+    ],
+  );
 });
 
 test("ARMv7 artifact validation fails closed on filename, ELF identity, triple, and version", () => {
@@ -799,6 +811,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   assert.match(ciMatrix, /matrix\.qualificationLanes/u);
   assert.match(ciMatrix, /matrix\.kernelBaselineQualification/u);
+  assert.match(ciMatrix, /runner: target\.kernelRunner/u);
   assert.match(ciMatrix, /\["builder-a", "builder-b"\]/u);
   assert.match(ciMatrix, /runner: target\.runner/u);
   assert.match(overflowPreflight, /watchbound-overflow-qualification-preflight/u);

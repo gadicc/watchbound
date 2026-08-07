@@ -424,6 +424,7 @@ async function checkRealDeliveryAndSerialization(engine) {
   let active = 0;
   let maximumActive = 0;
   try {
+    logPhase("real-delivery-subscribe-start");
     subscription = await engine.subscribe(
       root,
       async () => {
@@ -431,7 +432,10 @@ async function checkRealDeliveryAndSerialization(engine) {
         maximumActive = Math.max(maximumActive, active);
         entered += 1;
         if (entered === 1) {
+          logPhase("real-delivery-first-callback-enter");
           await firstRelease.promise;
+        } else if (entered === 2) {
+          logPhase("real-delivery-second-callback-enter");
         }
         active -= 1;
       },
@@ -440,23 +444,32 @@ async function checkRealDeliveryAndSerialization(engine) {
         outputQueueCapacity: 4,
       },
     );
+    logPhase("real-delivery-subscribe-complete");
     assert.equal(subscription.initialCoverage.state, "complete");
+    logPhase("real-delivery-first-write");
     fs.writeFileSync(path.join(root, "first.txt"), "first");
+    logPhase("real-delivery-first-callback-wait-start");
     await waitFor(
       () => entered >= 1,
       "the first serialized callback did not enter",
     );
+    logPhase("real-delivery-first-callback-wait-complete");
+    logPhase("real-delivery-second-write");
     fs.writeFileSync(path.join(root, "second.txt"), "second");
     await delay(75);
     assert.equal(entered, 1, "a later callback overlapped a pending callback");
     firstRelease.resolve();
+    logPhase("real-delivery-second-callback-wait-start");
     await waitFor(() => entered >= 2, "the serialized callback did not resume");
+    logPhase("real-delivery-second-callback-wait-complete");
     assert.equal(maximumActive, 1);
   } finally {
+    logPhase("real-delivery-disposal-start");
     await releaseCallbackGateAndJoinDisposal(
       () => firstRelease.resolve(),
       subscription,
     );
+    logPhase("real-delivery-disposal-complete");
     fs.rmSync(root, { recursive: true, force: true });
   }
 }

@@ -22,6 +22,8 @@ import { verifyReleaseCandidate } from "./lib/release-version.mjs";
 
 const KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS = 30_000;
 const KERNEL_ARM_GUEST_WAIT_TIMEOUT_MS = 120_000;
+const KERNEL_NATIVE_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS = 3 * 60 * 1000;
+const KERNEL_ARM_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS = 10 * 60 * 1000;
 assert.ok(
   Math.max(
     KERNEL_ARM64_GUEST_WAIT_TIMEOUT_MS,
@@ -48,6 +50,10 @@ const kernelRelease = artifactSet.kernelRelease ?? baseline.kernelRelease;
 const qemuTimeoutMs = target.architecture === "arm"
   ? 30 * 60 * 1000
   : 20 * 60 * 1000;
+const installedSmokeProcessTimeoutMs = target.architecture === "arm"
+  ? KERNEL_ARM_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS
+  : KERNEL_NATIVE_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS;
+assert.ok(installedSmokeProcessTimeoutMs < qemuTimeoutMs);
 const preparedRootfs = options["prepared-rootfs"]
   ? path.resolve(options["prepared-rootfs"])
   : null;
@@ -117,6 +123,8 @@ try {
     [
       path.join(workspaceRoot, "scripts/check-installed-package.mjs"),
       path.join(workspaceRoot, "scripts/installed-package-smoke-helpers.mjs"),
+      path.join(workspaceRoot, "scripts/kernel-baseline-qualification-helpers.mjs"),
+      path.join(workspaceRoot, "scripts/supervise-installed-package-smoke.mjs"),
     ],
     path.join(rootfs, "work/scripts"),
   );
@@ -139,6 +147,7 @@ try {
       tarballs,
       version,
       waitTimeoutMs: guestWaitTimeoutOverrideMs,
+      processTimeoutMs: installedSmokeProcessTimeoutMs,
       kernelRelease,
     }),
   );
@@ -164,6 +173,7 @@ try {
   // This lane is correctness-only. TCG avoids KVM/nested-virtualization
   // variance; the explicit single vCPU is the shared-runner resource bound.
   const execution = qemuExecutionPolicy(target);
+  const qemuVersion = firstLine(capture(artifactSet.qemuSystem, ["--version"]));
   const qemuArgs = [
     "-machine", artifactSet.machine,
     "-accel", execution.acceleratorArgument,
@@ -185,6 +195,7 @@ try {
     system: artifactSet.qemuSystem,
     timeoutMs: qemuTimeoutMs,
     serialDelivery: "live-with-bounded-capture",
+    qemuVersion,
   });
   const qemu = await runBoundedProcess(artifactSet.qemuSystem, qemuArgs, {
     cwd: workspaceRoot,
@@ -241,6 +252,7 @@ try {
       kernelSeries: baseline.kernelSeries,
       kernelRelease,
       glibc: "2.35",
+      installedSmokeProcessTimeoutMs,
       image: baseline.image,
       kernel: artifactSet.rootfs
         ? { path: artifactSet.rootfs.kernelPath, sha256: sha256(kernel) }
@@ -253,7 +265,7 @@ try {
     host: {
       architecture: os.arch(),
       kernel: os.release(),
-      qemu: firstLine(capture(artifactSet.qemuSystem, ["--version"])),
+      qemu: qemuVersion,
       acceleration: execution.acceleration,
     },
     guest: smoke,
@@ -290,6 +302,7 @@ function guestEnvironment({
   tarballs: selectedTarballs,
   version: selectedVersion,
   waitTimeoutMs,
+  processTimeoutMs,
   kernelRelease: selectedKernelRelease,
 }) {
   const variables = {
@@ -305,6 +318,7 @@ function guestEnvironment({
     WATCHBOUND_WRAPPER_TARBALL: selectedTarballs.wrapper,
     WATCHBOUND_EVIDENCE: "/tmp/watchbound-kernel-baseline-smoke.json",
     WATCHBOUND_KERNEL_RELEASE: selectedKernelRelease,
+    WATCHBOUND_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS: String(processTimeoutMs),
   };
   if (selectedTarget.architecture === "arm") {
     variables.ELECTRON_RUN_AS_NODE = "1";

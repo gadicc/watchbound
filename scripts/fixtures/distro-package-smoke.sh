@@ -44,13 +44,25 @@ phase package-install-start
 phase package-install-complete
 
 phase installed-smoke-start
-"$node" /work/scripts/check-installed-package.mjs \
-  --project "$project" \
-  --wrapper watchbound \
-  --version "$WATCHBOUND_VERSION" \
-  --native-target "$WATCHBOUND_TARGET_ID" \
-  --native-sha256 "$WATCHBOUND_NATIVE_SHA256" \
-  --route "distro:$WATCHBOUND_LANE" \
-  --evidence "$WATCHBOUND_EVIDENCE" \
+installed_smoke=(
+  "$node" /work/scripts/check-installed-package.mjs
+  --project "$project"
+  --wrapper watchbound
+  --version "$WATCHBOUND_VERSION"
+  --native-target "$WATCHBOUND_TARGET_ID"
+  --native-sha256 "$WATCHBOUND_NATIVE_SHA256"
+  --route "distro:$WATCHBOUND_LANE"
+  --evidence "$WATCHBOUND_EVIDENCE"
   "${wait_timeout_args[@]}"
+)
+if [[ -n "${WATCHBOUND_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS:-}" ]]; then
+  phase installed-smoke-supervisor-start
+  "$node" /work/scripts/supervise-installed-package-smoke.mjs \
+    --timeout-ms "$WATCHBOUND_INSTALLED_SMOKE_PROCESS_TIMEOUT_MS" \
+    --route "distro:$WATCHBOUND_LANE" \
+    -- "${installed_smoke[@]}"
+  phase installed-smoke-supervisor-complete
+else
+  "${installed_smoke[@]}"
+fi
 phase installed-smoke-complete

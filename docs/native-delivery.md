@@ -109,7 +109,9 @@ Cross-compilation can demonstrate that source compiles. It cannot qualify a
 target. ARM64 execution uses a native ARM64 runner. Container distro lanes use
 the matching native host. The separate system-QEMU lane proves only that the
 exact package semantics run on the pinned 5.15 kernel; it never substitutes
-for the native x64/ARM64 target lanes.
+for the native x64/ARM64 target lanes. Its explicit Ubuntu 24.04
+`kernelRunner` supplies maintained emulator tooling only; the checksum-pinned
+Ubuntu 22.04 rootfs, glibc, kernel, and package smoke remain the evidence.
 
 Builder-side metadata validation follows the same evidence boundary. A native
 builder loads the addon through the production loader and verifies its actual

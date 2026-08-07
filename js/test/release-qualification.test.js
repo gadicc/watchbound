@@ -505,6 +505,17 @@ test("automated rerun review fails closed on semantic logs or incomplete evidenc
     ),
   );
 
+  const processDeadline = automatedReviewInput();
+  processDeadline.failedLog +=
+    '\nWATCHBOUND_INSTALLED_SMOKE_PROCESS_DEADLINE={"timeoutMs":180000}\n';
+  const processDeadlineReview = reviewConditionalRerun(processDeadline);
+  assert.equal(processDeadlineReview.passed, false);
+  assert.ok(
+    processDeadlineReview.issues.some((issue) =>
+      issue.startsWith("original-logs-have-no-semantic-failure-signature:")
+    ),
+  );
+
   const incomplete = automatedReviewInput();
   incomplete.evidence.pop();
   const incompleteReview = reviewConditionalRerun(incomplete);

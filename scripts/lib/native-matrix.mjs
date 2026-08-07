@@ -84,6 +84,11 @@ export function validateNativeMatrix(matrix) {
       /^(?:x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|armv7-unknown-linux-gnueabihf)$/u,
     );
     assert.equal(target.libc, "glibc");
+    assert.equal(
+      target.kernelRunner,
+      target.architecture === "arm64" ? "ubuntu-24.04-arm" : "ubuntu-24.04",
+      `${target.id} system-QEMU host runner`,
+    );
     if (target.architecture === "arm") {
       assert.deepEqual(target.armAbi, {
         version: 7,

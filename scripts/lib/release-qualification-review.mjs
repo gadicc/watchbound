@@ -11,6 +11,7 @@ const KERNEL_TARGETS = [...TARGETS, "linux-arm-gnueabihf"];
 const SEMANTIC_FAILURE_PATTERNS = [
   /AssertionError/u,
   /ERR_ASSERTION/u,
+  /WATCHBOUND_INSTALLED_SMOKE_PROCESS_DEADLINE=/u,
   /WATCHBOUND_INSTALLED_SMOKE_SEMANTIC_DEADLINE=/u,
   /WATCHBOUND_KERNEL_BASELINE_STATUS=failed/u,
   /(?:conformance|semantic)[^\n]{0,120}(?:failed|nonconforming)/iu,

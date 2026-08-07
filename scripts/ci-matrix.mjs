@@ -85,7 +85,7 @@ const kernel = matrix.targets
       target: target.id,
       architecture: target.buildArchitecture ?? target.architecture,
       targetArchitecture: target.architecture,
-      runner: target.runner,
+      runner: target.kernelRunner,
       binary: target.binary,
       image: baseline.image,
       kernelRelease: artifactSet.kernelRelease ?? baseline.kernelRelease,

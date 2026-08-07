@@ -99,6 +99,7 @@
       "binary": "watchbound.linux-x64-gnu.node",
       "package": "@gadicc/watchbound-node-linux-x64-gnu",
       "runner": "ubuntu-22.04",
+      "kernelRunner": "ubuntu-24.04",
       "overflowRunner": "ubuntu-24.04",
       "nixSystem": "x86_64-linux",
       "codexElectron": {
@@ -130,6 +131,7 @@
       "binary": "watchbound.linux-arm64-gnu.node",
       "package": "@gadicc/watchbound-node-linux-arm64-gnu",
       "runner": "ubuntu-22.04-arm",
+      "kernelRunner": "ubuntu-24.04-arm",
       "overflowRunner": "ubuntu-24.04-arm",
       "nixSystem": "aarch64-linux",
       "codexElectron": {
@@ -165,6 +167,7 @@
       "binary": "watchbound.linux-arm-gnueabihf.node",
       "package": "@gadicc/watchbound-node-linux-arm-gnueabihf",
       "runner": "ubuntu-22.04",
+      "kernelRunner": "ubuntu-24.04",
       "overflowRunner": null,
       "nixSystem": null,
       "buildMode": "cross",

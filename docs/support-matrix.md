@@ -107,6 +107,9 @@ not the host kernel. The kernel component therefore boots the real pinned
 native x64/ARM64 runners remain mandatory target evidence. ARMv7 boots the
 exact generic-LPAE kernel under `qemu-system-arm`; that is real kernel/runtime
 execution but still emulated target evidence, not a claim of native ARMv7 CI.
+System-QEMU itself runs on explicit Ubuntu 24.04 host runners so emulator
+maintenance can advance independently of the Ubuntu 22.04/glibc 2.35 guest
+and release-builder floor.
 
 ## Advertised, recognized, and qualified are different
 

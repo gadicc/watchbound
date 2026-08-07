@@ -49,6 +49,11 @@ pnpm check
   `0.0.0-development`. Semantic-release is the only published-version
   authority; release jobs apply its planned version as a deterministic,
   uncommitted transform of the exact source SHA.
+- Keep Ubuntu 22.04/glibc 2.35 as the release builder and guest compatibility
+  floor. System-QEMU runs on the target's explicit Ubuntu 24.04
+  `kernelRunner`; that Actions host is emulator tooling, not support evidence.
+  Do not couple a QEMU host update to the pinned Ubuntu 22.04 userspace or
+  kernel-5.15 guest contract.
 - Do not follow directory symlinks or weaken explicit watch/resource limits.
 - Keep output cardinality and native-to-JavaScript delivery bounded. On loss or
   pressure, prefer a root invalidation and explicit uncertainty over detailed

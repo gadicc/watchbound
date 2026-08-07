@@ -15,7 +15,7 @@ export function assertCleanQemuCompletion(result) {
 
 export function assertNoQemuSemanticFailure(serial) {
   const marker = serial.match(
-    /^(?:WATCHBOUND_INSTALLED_SMOKE_SEMANTIC_DEADLINE=.*|WATCHBOUND_KERNEL_BASELINE_STATUS=failed)\r?$/mu,
+    /^(?:WATCHBOUND_INSTALLED_SMOKE_(?:PROCESS|SEMANTIC)_DEADLINE=.*|WATCHBOUND_KERNEL_BASELINE_STATUS=failed)\r?$/mu,
   )?.[0];
   if (marker !== undefined) {
     throw new Error(`QEMU guest reported a semantic failure: ${marker}`);

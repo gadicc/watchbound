@@ -711,8 +711,8 @@ model is acceptable.
 
 The candidate target matrix supports x64, ARM64, and exact ARMv7 hard-float
 GNU/Linux, kernel 5.15 and glibc at most 2.35, with Node
-`>=24.15.0 <25`. ARMv7 remains unpublished and its declared execution evidence
-is emulated rather than native-hardware evidence.
+`>=24.15.0 <25`. ARMv7 has no published usable binding yet, and its declared
+execution evidence is emulated rather than native-hardware evidence.
 Node-API compatibility or successful loading does not widen that matrix.
 Detected WSL and environments with recognized container evidence cannot
 qualify. Network filesystems, Filesystem in Userspace (FUSE), and overlay

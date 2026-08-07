@@ -25,8 +25,9 @@ It cross-builds `armv7-unknown-linux-gnueabihf`, packages the ELF32 binding
 separately, and passed real loader/watch/dispose runs through pinned ARMv7
 Electron under QEMU-user and the snapshot-pinned 5.15 generic-LPAE kernel under
 system QEMU at implementation revision `1c9b4e3`. Public capability schema 9
-reports the exact ARM ABI. The source target is supported but unpublished, and
-its execution evidence does not claim native ARMv7 hardware or performance.
+reports the exact ARM ABI. The source target is supported but has no published
+usable binding, and its execution evidence does not claim native ARMv7 hardware
+or performance.
 
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support

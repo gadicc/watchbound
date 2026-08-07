@@ -13,7 +13,7 @@ The current source candidate retains binding API 5 and adds exact ARMv7
 hard-float package selection. Public capability schema 9 carries ARM ABI facts;
 the source matrix supports the new target after its cross-build/package,
 QEMU-user Electron runtime, and system-QEMU kernel-floor lanes passed at
-implementation revision `1c9b4e3`. The target remains unpublished.
+implementation revision `1c9b4e3`. No usable target binding is published yet.
 
 ## Choice
 

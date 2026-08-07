@@ -42,8 +42,8 @@ baseline and Node `>=24.15.0 <25`; exact native, distro, Electron, Nix,
 reproducibility, kernel-floor, separately supervised overflow, and registry
 smoke evidence backs those declarations. The exact ARMv7 hard-float source
 target is also supported after deterministic cross-build/package, QEMU-user
-Electron, and system-QEMU kernel-floor lifecycles passed; it remains unpublished
-and has no native-hardware or performance evidence.
+Electron, and system-QEMU kernel-floor lifecycles passed; it has no published
+usable binding and no native-hardware or performance evidence.
 
 An environment with recognized container evidence cannot qualify. Treat
 `container-unknown` as unknown evidence, never as a negative container result;

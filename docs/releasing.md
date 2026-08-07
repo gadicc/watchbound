@@ -23,9 +23,10 @@ remain at `0.0.0-development`.
    `target-pending-clean-ci` to `supported`. Its complete CI matrix must pass
    again before promotion is final; retain that run URL with the release
    review rather than weakening the exact-revision gate.
-3. With separate explicit authorization, bootstrap the new scoped npm package
-   name and configure its trusted publisher as described below. This is not a
-   Watchbound release and must not contain a usable binding.
+3. Completed 2026-08-07 with separate explicit authorization: the new scoped
+   npm name contains only deprecated inert `0.0.0-bootstrap.0`, and its trusted
+   publisher is repository `gadicc/watchbound`, workflow `release.yml`. This was
+   not a Watchbound release and contains no usable binding.
 4. Merge the exact green, supported revision through the normal release-worthy
    Conventional Commit path. Semantic-release should propose `2.1.0`; verify
    that result before allowing the main-push workflow to publish.
@@ -161,12 +162,21 @@ The x64 and ARM64 npm target names were bootstrapped with the inert
 `latest` tag; both bootstrap versions are deprecated and also carry the
 `bootstrap` tag. Do not depend on them.
 
-Before an ARMv7 release is authorized, bootstrap
-`@gadicc/watchbound-node-linux-arm-gnueabihf` with the same inert
-`0.0.0-bootstrap.0` process, deprecate it, move `latest` away as the established
-procedure requires, and configure the exact repository/workflow trusted
-publisher. This is a separate registry mutation requiring explicit maintainer
-authorization; this source change does not perform it.
+The ARMv7 name `@gadicc/watchbound-node-linux-arm-gnueabihf` was bootstrapped
+with explicit maintainer authorization on 2026-08-07. Its only version is inert
+`0.0.0-bootstrap.0`; it contains only `package.json` and `README.md`, is
+deprecated with the required text, and has the `bootstrap` tag. npm assigns and
+will not remove `latest` while that bootstrap is the only version. The first
+authorized stable publication must move `latest` to the new immutable release,
+as happened for x64 and ARM64.
+
+The bootstrap tarball has npm shasum
+`c55b4956f7cd52805bc141ea3aa35092ee0e1778` and integrity
+`sha512-1QGAFl9SRGVQBh9aLz3bR5ix3aOdjAlxTxInsUiwUmuCePEYyWrDBdfdVzoQsYwfLYEXX0IKkaCkeN2HGZhFAw==`.
+Trusted publisher configuration `74d2180f-c46d-488e-9407-bbd1c312e01d`
+authorizes publish from repository `gadicc/watchbound` and workflow
+`release.yml`. The stable release and its usable binding remain separately
+gated and unauthorized.
 
 Semantic release now checks every package namespace before its first registry
 mutation. Every native target must expose the exact inert

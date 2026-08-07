@@ -494,6 +494,17 @@ test("automated rerun review fails closed on semantic logs or incomplete evidenc
     ),
   );
 
+  const semanticDeadline = automatedReviewInput();
+  semanticDeadline.failedLog +=
+    '\nWATCHBOUND_INSTALLED_SMOKE_SEMANTIC_DEADLINE={"message":"callback did not enter"}\n';
+  const semanticDeadlineReview = reviewConditionalRerun(semanticDeadline);
+  assert.equal(semanticDeadlineReview.passed, false);
+  assert.ok(
+    semanticDeadlineReview.issues.some((issue) =>
+      issue.startsWith("original-logs-have-no-semantic-failure-signature:")
+    ),
+  );
+
   const incomplete = automatedReviewInput();
   incomplete.evidence.pop();
   const incompleteReview = reviewConditionalRerun(incomplete);

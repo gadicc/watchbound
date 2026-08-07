@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
 export const DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS = 4_000;
@@ -22,6 +23,40 @@ export function parseInstalledSmokeWaitTimeoutMs(value) {
   return timeoutMs;
 }
 
+export async function waitForInstalledSmokeCondition(
+  predicate,
+  message,
+  {
+    timeoutMs = DEFAULT_INSTALLED_SMOKE_WAIT_TIMEOUT_MS,
+    retryDelayMs = 10,
+    now = Date.now,
+    sleep = delay,
+    onDeadline = () => {},
+  } = {},
+) {
+  const deadline = now() + timeoutMs;
+  while (!predicate() && now() < deadline) await sleep(retryDelayMs);
+  if (predicate()) return;
+
+  // Report the semantic deadline synchronously. Cleanup may itself need to
+  // join a stuck native operation, so an outer process timeout must not erase
+  // the fact that the package smoke had already failed semantically.
+  onDeadline(message, timeoutMs);
+  assert.fail(message);
+}
+
+export async function releaseCallbackGateAndJoinDisposal(
+  release,
+  subscription,
+) {
+  // Harness callbacks may deliberately wait on a deferred gate. Release that
+  // gate before disposal, then await the real disposal barrier. Never race or
+  // detach disposal: its settlement proves callback admission and cleanup are
+  // joined before the smoke can finish.
+  release();
+  await subscription?.dispose();
+}
+
 export async function recoverStableReplacement(
   subscription,
   {
@@ -29,16 +64,20 @@ export async function recoverStableReplacement(
     retryDelayMs = 10,
     now = Date.now,
     sleep = delay,
+    deadlineSleep = delay,
+    onDeadline = () => {},
   } = {},
 ) {
   const deadline = now() + timeoutMs;
   const deadlineController = new AbortController();
-  const deadlineReached = delay(
+  const deadlineMessage = `root recovery did not settle within ${timeoutMs}ms`;
+  const deadlineError = new Error(deadlineMessage);
+  const deadlineReached = deadlineSleep(
     timeoutMs,
     undefined,
     { signal: deadlineController.signal },
   ).then(() => {
-    throw new Error(`root recovery did not settle within ${timeoutMs}ms`);
+    throw deadlineError;
   });
   try {
     while (true) {
@@ -50,9 +89,15 @@ export async function recoverStableReplacement(
       ]);
       if (
         recovery.attachment !== "not-attached" ||
-        recovery.reason !== "identity-unstable" ||
-        now() >= deadline
+        recovery.reason !== "identity-unstable"
       ) {
+        return recovery;
+      }
+      if (now() >= deadline) {
+        onDeadline(
+          `root recovery remained identity-unstable for ${timeoutMs}ms`,
+          timeoutMs,
+        );
         return recovery;
       }
       await Promise.race([
@@ -60,6 +105,9 @@ export async function recoverStableReplacement(
         deadlineReached,
       ]);
     }
+  } catch (error) {
+    if (error === deadlineError) onDeadline(deadlineMessage, timeoutMs);
+    throw error;
   } finally {
     deadlineController.abort();
   }

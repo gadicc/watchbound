@@ -9,7 +9,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import exclusionSmokeHelpers from "./fixtures/exclusion-smoke-helpers.cjs";
 import {
   parseInstalledSmokeWaitTimeoutMs,
+  releaseCallbackGateAndJoinDisposal,
   recoverStableReplacement,
+  waitForInstalledSmokeCondition,
 } from "./installed-package-smoke-helpers.mjs";
 
 const { hasInvalidatedPathAtOrBelow } = exclusionSmokeHelpers;
@@ -367,6 +369,7 @@ async function checkExclusionsRecoveryAndReconciliation(engine) {
     );
     const recovery = await recoverStableReplacement(subscription, {
       timeoutMs: waitTimeoutMs,
+      onDeadline: reportSemanticDeadline,
     });
     assert.equal(
       recovery.attachment,
@@ -415,7 +418,6 @@ async function checkRealDeliveryAndSerialization(engine) {
   const root = fs.mkdtempSync(
     path.join(os.tmpdir(), "watchbound-installed-serialization-"),
   );
-  const firstEntered = deferred();
   const firstRelease = deferred();
   let subscription;
   let entered = 0;
@@ -429,7 +431,6 @@ async function checkRealDeliveryAndSerialization(engine) {
         maximumActive = Math.max(maximumActive, active);
         entered += 1;
         if (entered === 1) {
-          firstEntered.resolve();
           await firstRelease.promise;
         }
         active -= 1;
@@ -441,7 +442,10 @@ async function checkRealDeliveryAndSerialization(engine) {
     );
     assert.equal(subscription.initialCoverage.state, "complete");
     fs.writeFileSync(path.join(root, "first.txt"), "first");
-    await firstEntered.promise;
+    await waitFor(
+      () => entered >= 1,
+      "the first serialized callback did not enter",
+    );
     fs.writeFileSync(path.join(root, "second.txt"), "second");
     await delay(75);
     assert.equal(entered, 1, "a later callback overlapped a pending callback");
@@ -449,8 +453,10 @@ async function checkRealDeliveryAndSerialization(engine) {
     await waitFor(() => entered >= 2, "the serialized callback did not resume");
     assert.equal(maximumActive, 1);
   } finally {
-    firstRelease.resolve();
-    await subscription?.dispose();
+    await releaseCallbackGateAndJoinDisposal(
+      () => firstRelease.resolve(),
+      subscription,
+    );
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -459,7 +465,6 @@ async function checkContextAbortAndJoinedDisposal(engine) {
   const root = fs.mkdtempSync(
     path.join(os.tmpdir(), "watchbound-installed-disposal-"),
   );
-  const entered = deferred();
   const completionRelease = deferred();
   let callbackCompleted = false;
   let callbackContext;
@@ -469,7 +474,6 @@ async function checkContextAbortAndJoinedDisposal(engine) {
       root,
       async (_batch, context) => {
         callbackContext = context;
-        entered.resolve();
         if (!context.signal.aborted) {
           await new Promise((resolve) => {
             context.signal.addEventListener("abort", resolve, { once: true });
@@ -481,7 +485,10 @@ async function checkContextAbortAndJoinedDisposal(engine) {
       { batchWindowMs: 5 },
     );
     fs.writeFileSync(path.join(root, "changed.txt"), "change");
-    await entered.promise;
+    await waitFor(
+      () => callbackContext !== undefined,
+      "the joined-disposal callback did not enter",
+    );
     let disposalResolved = false;
     const disposal = subscription.dispose().then(() => {
       disposalResolved = true;
@@ -498,8 +505,10 @@ async function checkContextAbortAndJoinedDisposal(engine) {
     assert.equal(callbackCompleted, true);
     assert.equal(subscription.stats().disposed, true);
   } finally {
-    completionRelease.resolve();
-    await subscription?.dispose();
+    await releaseCallbackGateAndJoinDisposal(
+      () => completionRelease.resolve(),
+      subscription,
+    );
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -568,9 +577,21 @@ function processResources() {
 }
 
 async function waitFor(predicate, message) {
-  const deadline = Date.now() + waitTimeoutMs;
-  while (!predicate() && Date.now() < deadline) await delay(10);
-  assert.ok(predicate(), message);
+  await waitForInstalledSmokeCondition(predicate, message, {
+    timeoutMs: waitTimeoutMs,
+    onDeadline: reportSemanticDeadline,
+  });
+}
+
+function reportSemanticDeadline(message, timeoutMs) {
+  process.stderr.write(
+    `WATCHBOUND_INSTALLED_SMOKE_SEMANTIC_DEADLINE=${JSON.stringify({
+      elapsedMs: Date.now() - smokeStartedAt,
+      route: options.route,
+      timeoutMs,
+      message,
+    })}\n`,
+  );
 }
 
 function deferred() {

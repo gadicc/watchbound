@@ -111,6 +111,15 @@ the matching native host. The separate system-QEMU lane proves only that the
 exact package semantics run on the pinned 5.15 kernel; it never substitutes
 for the native x64/ARM64 target lanes.
 
+Builder-side metadata validation follows the same evidence boundary. A native
+builder loads the addon through the production loader and verifies its actual
+binding metadata. A cross builder cannot execute its addon, so it additionally
+requires the expected target and version byte strings as a conservative early
+sanity gate after exact ELF validation. Compilers are not required to retain
+those strings contiguously, and their presence is not treated as runtime
+metadata proof; the exact canonical ARMv7 digest must still pass the mandatory
+Electron/QEMU production-loader lane before it contributes qualification.
+
 ARMv7's initial lane is explicitly different: Ubuntu 22.04 x64 builders use
 `arm-linux-gnueabihf-gcc` for `armv7-unknown-linux-gnueabihf`, then the
 canonical ELF is loaded by the official Electron 42.3.0 `linux-armv7l` archive

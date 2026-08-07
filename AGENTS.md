@@ -56,6 +56,32 @@ pnpm check
 - Disposal must be idempotent and must prevent a callback from starting after
   the disposal promise resolves.
 
+## Release qualification invariants
+
+- Validate runnable native artifacts through the production loader and its
+  `bindingMetadata()` contract. Do not reintroduce raw version or target-string
+  scans for runnable artifacts: optimizing compilers may encode short strings
+  without contiguous bytes even when runtime metadata is correct.
+- The raw target/version scan for a non-runnable cross build is a deliberate,
+  compiler-sensitive early sanity gate, not authoritative metadata evidence.
+  Do not generalize it or silently remove it. The authoritative ARMv7 proof is
+  the production loader executing the exact canonical artifact digest under
+  QEMU; see `docs/native-delivery.md`.
+- Keep system-QEMU output live but bounded, and always join emulator termination
+  before deleting its disk or writing success evidence. Preserve emulator-adjacent
+  `ETIMEDOUT` diagnostics because the supervised rerun reviewer distinguishes
+  infrastructure timeouts from semantic failures.
+- The kernel-floor guest remains `-smp 1`. ARM64 alone uses explicit MTTCG as a
+  controlled scheduler mitigation for recurring hosted-runner stalls; it is not
+  a proven speedup or permission to add vCPUs, broaden MTTCG to new host/guest
+  pairs, or claim the flake fixed without repeated retained CI evidence.
+- Installed-smoke observation deadlines are semantic failures. Emit their
+  semantic marker before cleanup and never allow one through the QEMU-timeout
+  rerun waiver. Release callback gates before cleanup, but keep disposal truly
+  joined; a `Promise.race()` deadline must never treat subscribe rollback,
+  disposal, exclusion replacement, reconciliation, or recovery as complete or
+  bypass their eventual joined cleanup.
+
 ## JSR documentation and score
 
 Treat the current complete JSR score factors as release invariants, not as an

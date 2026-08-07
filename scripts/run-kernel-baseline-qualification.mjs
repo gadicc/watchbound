@@ -11,7 +11,10 @@ import {
 } from "./installed-package-smoke-helpers.mjs";
 import {
   assertCleanQemuCompletion,
+  assertNoQemuSemanticFailure,
   copyTreePreservingSymlinks,
+  qemuExecutionPolicy,
+  runBoundedProcess,
 } from "./kernel-baseline-qualification-helpers.mjs";
 import { readPreparedArmhfKernelRuntime } from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
@@ -158,14 +161,14 @@ try {
   }
   logPhase("boot-artifacts-download-complete");
 
-  // This lane is correctness-only. Deliberately avoid KVM/nested-virtualization
-  // variance and keep resource use bounded on shared hosted runners.
-  const acceleration = "tcg-single-threaded";
+  // This lane is correctness-only. TCG avoids KVM/nested-virtualization
+  // variance; the explicit single vCPU is the shared-runner resource bound.
+  const execution = qemuExecutionPolicy(target);
   const qemuArgs = [
     "-machine", artifactSet.machine,
-    "-accel", "tcg,thread=single",
+    "-accel", execution.acceleratorArgument,
     "-cpu", artifactSet.cpu ?? "max",
-    "-smp", "1",
+    "-smp", String(execution.vcpus),
     "-m", "1024",
     "-display", "none",
     "-monitor", "none",
@@ -181,21 +184,21 @@ try {
   logPhase("qemu-start", {
     system: artifactSet.qemuSystem,
     timeoutMs: qemuTimeoutMs,
-    serialDelivery: "buffered-until-exit",
+    serialDelivery: "live-with-bounded-capture",
   });
-  const qemu = spawnSync(artifactSet.qemuSystem, qemuArgs, {
+  const qemu = await runBoundedProcess(artifactSet.qemuSystem, qemuArgs, {
     cwd: workspaceRoot,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: qemuTimeoutMs,
+    timeoutMs: qemuTimeoutMs,
   });
   const serial = `${qemu.stdout ?? ""}${qemu.stderr ?? ""}`;
-  process.stdout.write(serial);
   logPhase("qemu-complete", {
     status: qemu.status,
     signal: qemu.signal,
     errorCode: qemu.error?.code ?? null,
   });
+  // Captured guest semantics take precedence over a simultaneous host timeout;
+  // the supervised rerun policy must never waive a known semantic failure.
+  assertNoQemuSemanticFailure(serial);
   assertCleanQemuCompletion(qemu);
   assert.match(serial, /WATCHBOUND_KERNEL_BASELINE_STATUS=passed\r?$/mu);
   const encoded = serial.match(/^WATCHBOUND_KERNEL_BASELINE_EVIDENCE=([A-Za-z0-9+/=]+)\r?$/mu)?.[1];
@@ -251,7 +254,7 @@ try {
       architecture: os.arch(),
       kernel: os.release(),
       qemu: firstLine(capture(artifactSet.qemuSystem, ["--version"])),
-      acceleration,
+      acceleration: execution.acceleration,
     },
     guest: smoke,
   };

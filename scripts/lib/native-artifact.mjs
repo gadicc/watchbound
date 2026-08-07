@@ -28,7 +28,7 @@ function readElfFlags(contents, elfClass, endianness) {
     : contents.readUInt32BE(offset);
 }
 
-export function validateNativeArtifact(source, target, { version } = {}) {
+export function validateNativeArtifactElf(source, target) {
   assert.equal(path.basename(source), target.binary, `${target.id} artifact filename`);
   const contents = fs.readFileSync(source);
   assert.ok(contents.length > 0 && contents.length <= 8 * 1024 * 1024);
@@ -38,6 +38,16 @@ export function validateNativeArtifact(source, target, { version } = {}) {
     machine: target.elf.machine,
     flags: target.elf.flags,
   });
+  return { contents, bytes: contents.length };
+}
+
+// Raw strings are a conservative fallback only for a cross-built addon that
+// cannot be loaded on its builder. Optimizers need not retain these strings as
+// contiguous bytes, so runnable native addons must use validateNativeArtifactElf
+// and let the production loader validate bindingMetadata() instead.
+export function validateNativeArtifact(source, target, { version } = {}) {
+  const artifact = validateNativeArtifactElf(source, target);
+  const { contents } = artifact;
   assert.equal(
     contents.includes(Buffer.from(target.rustTarget)),
     true,
@@ -50,5 +60,5 @@ export function validateNativeArtifact(source, target, { version } = {}) {
       `${target.id} artifact omits its embedded package version`,
     );
   }
-  return { contents, bytes: contents.length };
+  return artifact;
 }

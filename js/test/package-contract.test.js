@@ -10,7 +10,10 @@ import {
   INDEPENDENT_NATIVE_MATRIX_EVIDENCE,
   readOptionalEvidence,
 } from "../../scripts/lib/native-build-evidence.mjs";
-import { validateNativeArtifact } from "../../scripts/lib/native-artifact.mjs";
+import {
+  validateNativeArtifact,
+  validateNativeArtifactElf,
+} from "../../scripts/lib/native-artifact.mjs";
 import {
   jsrPackageExists,
   waitForJsrPackage,
@@ -437,6 +440,51 @@ test("ARMv7 artifact validation fails closed on filename, ELF identity, triple, 
   }
 });
 
+test("runnable native ELF validation does not depend on raw metadata substrings", () => {
+  const target = readJson("config/native-matrix.json").targets.find(
+    ({ id }) => id === "linux-x64-gnu",
+  );
+  assert.ok(target);
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-native-elf-"));
+  const artifact = path.join(fixtureRoot, target.binary);
+  const contents = Buffer.alloc(256);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(contents);
+  contents[4] = target.elf.class;
+  contents[5] = target.elf.endianness;
+  contents.writeUInt16LE(target.elf.machine, 18);
+  contents.writeUInt32LE(target.elf.flags, 48);
+  try {
+    fs.writeFileSync(artifact, contents);
+    assert.equal(validateNativeArtifactElf(artifact, target).bytes, contents.length);
+    assert.throws(
+      () => validateNativeArtifact(artifact, target, { version: "9.8.7" }),
+      /target triple/u,
+    );
+
+    Buffer.from(target.rustTarget).copy(contents, 64);
+    fs.writeFileSync(artifact, contents);
+    assert.throws(
+      () => validateNativeArtifact(artifact, target, { version: "9.8.7" }),
+      /package version/u,
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+
+  const buildNode = fs.readFileSync(
+    path.join(workspaceRoot, "scripts/build-node.mjs"),
+    "utf8",
+  );
+  assert.match(
+    buildNode,
+    /if \(nativeRuntime\) \{[\s\S]{0,500}validateNativeArtifactElf\(nativePath, target\);/u,
+  );
+  assert.match(
+    buildNode,
+    /\} else \{[\s\S]{0,300}validateNativeArtifact\(nativePath, target, \{ version: rootVersion \}\);/u,
+  );
+});
+
 test("manual qualification is read-only while semantic release stays push-only", () => {
   const release = fs.readFileSync(
     path.join(workspaceRoot, ".github/workflows/release.yml"),
@@ -711,7 +759,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(plugin, /publication-ledger\.json/u);
   assert.match(kernelBaseline, /readPreparedArmhfKernelRuntime/u);
   assert.match(kernelBaseline, /ELECTRON_RUN_AS_NODE/u);
-  assert.match(kernelBaseline, /spawnSync\(artifactSet\.qemuSystem/u);
+  assert.match(kernelBaseline, /runBoundedProcess\(artifactSet\.qemuSystem/u);
   assert.match(plugin, /async function npmPackageState/u);
   assert.match(plugin, /\["view", specifier, "--json"\]/u);
   assert.match(plugin, /preflightNpmNamespaces\(packages\)/u);

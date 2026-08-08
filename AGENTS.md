@@ -72,6 +72,10 @@ pnpm check
   Do not generalize it or silently remove it. The authoritative ARMv7 proof is
   the production loader executing the exact canonical artifact digest under
   QEMU; see `docs/native-delivery.md`.
+- Discover installed registry targets through module resolution from the native
+  loader. Do not inspect only the project-root `node_modules`: npm may flatten
+  transitive optional targets there, while pnpm's strict layout deliberately
+  keeps them inside the loader's dependency graph.
 - Keep system-QEMU output live but bounded, and always join emulator termination
   before deleting its disk or writing success evidence. Preserve emulator-adjacent
   `ETIMEDOUT` diagnostics because the supervised rerun reviewer distinguishes

@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { readPreparedArmhfRuntime } from "./lib/armhf-runtime.mjs";
 import { loadNativeMatrix, targetForId } from "./lib/native-matrix.mjs";
+import { resolveInstalledNativeTargetIds } from "./lib/registry-native-targets.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -46,14 +47,12 @@ try {
     ]);
   }
   if (options.emulator) {
-    const installedTargets = matrix.targets
-      .filter((target) => fs.existsSync(path.join(
-        projectRoot,
-        "node_modules",
-        ...target.package.split("/"),
-        "package.json",
-      )))
-      .map(({ id }) => id);
+    const installedTargets = resolveInstalledNativeTargetIds({
+      projectRoot,
+      wrapperPackage:
+        options.route === "npm" ? "watchbound" : "@gadicc/watchbound",
+      targets: matrix.targets,
+    });
     assert.deepEqual(
       installedTargets,
       [nativeTarget.id],

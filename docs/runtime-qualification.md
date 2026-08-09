@@ -62,18 +62,34 @@ Environment detection uses the Linux release/version strings and a deliberately
 closed set of conventional container evidence. A `not-detected` container state
 requires both `/.dockerenv` and `/run/.containerenv` to be confirmed absent,
 `/run/systemd/container` to be confirmed absent, and both `/proc/1/cgroup` and
-`/proc/self/mountinfo` to be readable and free of Docker, Podman, Kubernetes,
-containerd, LXC, systemd-nspawn, or systemd machine-slice evidence. A present
-systemd container marker or nonempty `container` environment hint is positive
-evidence. Positive evidence wins even if another probe failed; otherwise any
-permission error, probe failure, or missing required proc source reports
-unknown.
+`/proc/self/mountinfo` to be readable and size bounded. Cgroup v1, v2, and
+hybrid records are parsed independently, and only recognized container-runtime
+components in their cgroup paths are positive evidence; controller and
+named-hierarchy fields are not searched. Mountinfo parsing requires exactly one
+structurally valid record whose mount point is `/`, ignores subordinate mounts,
+and treats stacked root records as ambiguous.
+
+A present systemd container marker, nonempty `container` environment hint, or
+recognized path in a valid cgroup record is positive evidence. Positive evidence
+wins even if another independent probe failed. An overlay or fuse-overlay root,
+or a recognized container-runtime component in the root mount's filesystem
+fields, is ambiguous rather than definitive because legitimate hosts can use the
+same filesystem types and names. Ambiguous root evidence, malformed or oversized
+proc data, permission errors, probe failures, and missing required proc sources
+report unknown.
 
 This negative state means only that all designated probes completed without
 recognized evidence. It is not a general proof that every possible container
 runtime is absent. Expanding the qualified environment claim requires adding
 the relevant evidence source and deterministic tests; an unreadable source is
 never filtered out to manufacture a negative conclusion.
+
+Required proc reads are capped at 64 KiB for cgroup data and 16 MiB for
+mountinfo. The limits bound synchronous allocation and parsing; exceeding either
+limit reports unknown. A marker-less container with a private cgroup namespace
+and a neutral bind, ext, or Btrfs root can be observationally indistinguishable
+from a host or chroot through these probes, so that residual limitation is not
+claimed as general container absence.
 
 Filesystem classification is deliberately allowlisted. A new local filesystem
 does not inherit qualification because it is neither network nor FUSE; it

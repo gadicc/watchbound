@@ -237,7 +237,9 @@ target selection and exact-commit target status. Full qualification requires
 and physical filesystem classification without starting the watcher. Unknown
 evidence never qualifies. Container `not-detected` requires every designated
 marker, cgroup, and mountinfo probe to complete; incomplete probes return
-`container-unknown`. See
+`container-unknown`. Required proc sources must also fit their documented size
+limits and pass structural validation; ambiguous overlay-family or runtime-named
+root mounts remain unknown. See
 [`runtime-qualification.md`](runtime-qualification.md).
 
 Positive JavaScript options crossing the native boundary share bounds 1 through

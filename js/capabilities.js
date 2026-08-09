@@ -535,11 +535,195 @@ function detectContainer() {
       probeMarkerFile("/run/.containerenv"),
     ],
     systemdContainer: probeOptionalTextFile("/run/systemd/container"),
-    cgroup: probeRequiredTextFile("/proc/1/cgroup"),
-    mountinfo: probeRequiredTextFile("/proc/self/mountinfo"),
+    cgroup: probeRequiredTextFile("/proc/1/cgroup", CGROUP_PROBE_MAX_BYTES),
+    mountinfo: probeRequiredTextFile(
+      "/proc/self/mountinfo",
+      MOUNTINFO_PROBE_MAX_BYTES,
+    ),
     environmentContainer:
       typeof process.env.container === "string" ? process.env.container : null,
   });
+}
+
+const CGROUP_PROBE_MAX_BYTES = 64 * 1024;
+const MOUNTINFO_PROBE_MAX_BYTES = 16 * 1024 * 1024;
+const PROC_READ_CHUNK_BYTES = 64 * 1024;
+const CONTAINER_PATH_INDICATOR =
+  /(?:^|[/:.@_-])(?:docker|podman|libpod|kubepods|containerd|systemd-nspawn|machine\.slice|lxc)(?=$|[/:.@_-])/iu;
+const AMBIGUOUS_CONTAINER_ROOT_FILESYSTEMS = new Set([
+  "overlay",
+  "fuse.overlayfs",
+  "fuse-overlayfs",
+  "fuse.fuse-overlayfs",
+]);
+const CGROUP_CONTROLLER_PATTERN = /^(?:name=)?[0-9A-Za-z_.-]+$/u;
+const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)$/u;
+const DEVICE_PATTERN = /^(?:0|[1-9]\d*):(?:0|[1-9]\d*)$/u;
+const MOUNT_OPTIONS_PATTERN = /^(?:ro|rw)(?:,[^,]+)*$/u;
+const MOUNTINFO_OPTIONAL_FIELD_PATTERN = /^[^:]+(?::[^:]+)?$/u;
+const MOUNTINFO_ESCAPE_BYTES = new Set(["011", "012", "040", "043", "134"]);
+
+function classifyCgroupProbe(probe) {
+  if (probe.availability !== "present" || typeof probe.content !== "string") {
+    return null;
+  }
+  const paths = parseCgroupPaths(probe.content);
+  if (paths === null) return null;
+  return paths.some((pathValue) => CONTAINER_PATH_INDICATOR.test(pathValue));
+}
+
+function parseCgroupPaths(content) {
+  if (
+    Buffer.byteLength(content, "utf8") > CGROUP_PROBE_MAX_BYTES ||
+    content.includes("\0") ||
+    !content.endsWith("\n")
+  ) {
+    return null;
+  }
+  const body = content.slice(0, -1);
+  if (body.length === 0) return null;
+  const paths = [];
+  const hierarchyIds = new Set();
+  for (const line of body.split("\n")) {
+    const firstSeparator = line.indexOf(":");
+    const secondSeparator = line.indexOf(":", firstSeparator + 1);
+    if (firstSeparator <= 0 || secondSeparator < firstSeparator + 1) return null;
+    const hierarchyId = line.slice(0, firstSeparator);
+    const controllers = line.slice(firstSeparator + 1, secondSeparator);
+    const pathValue = line.slice(secondSeparator + 1);
+    if (
+      !DECIMAL_PATTERN.test(hierarchyId) ||
+      hierarchyIds.has(hierarchyId) ||
+      !pathValue.startsWith("/")
+    ) {
+      return null;
+    }
+    hierarchyIds.add(hierarchyId);
+    if (hierarchyId === "0") {
+      if (controllers.length !== 0) return null;
+    } else if (!validCgroupControllers(controllers)) {
+      return null;
+    }
+    paths.push(pathValue);
+  }
+  return paths;
+}
+
+function validCgroupControllers(controllers) {
+  if (controllers.length === 0) return false;
+  const tokens = controllers.split(",");
+  return tokens.every((token) => CGROUP_CONTROLLER_PATTERN.test(token)) &&
+    new Set(tokens).size === tokens.length;
+}
+
+function parseRootMount(content) {
+  if (
+    typeof content !== "string" ||
+    Buffer.byteLength(content, "utf8") > MOUNTINFO_PROBE_MAX_BYTES ||
+    content.includes("\0") ||
+    !content.endsWith("\n")
+  ) {
+    return null;
+  }
+  let rootMount = null;
+  let lineStart = 0;
+  while (lineStart < content.length) {
+    const lineEnd = content.indexOf("\n", lineStart);
+    const line = content.slice(lineStart, lineEnd);
+    lineStart = lineEnd + 1;
+    if (line.length === 0) return null;
+    if (mountinfoFieldAt(line, 4) !== "/") continue;
+    const candidate = parseRootMountLine(line);
+    if (candidate === null || rootMount !== null) return null;
+    rootMount = candidate;
+  }
+  return rootMount;
+}
+
+function mountinfoFieldAt(line, targetIndex) {
+  let fieldStart = 0;
+  for (let index = 0; index <= targetIndex; index += 1) {
+    const fieldEnd = line.indexOf(" ", fieldStart);
+    if (fieldEnd <= fieldStart) return null;
+    if (index === targetIndex) return line.slice(fieldStart, fieldEnd);
+    fieldStart = fieldEnd + 1;
+  }
+  return null;
+}
+
+function parseRootMountLine(line) {
+  const fields = line.split(" ");
+  const separator = fields.indexOf("-", 6);
+  if (
+    separator < 6 ||
+    fields.length !== separator + 4 ||
+    fields.some((field) => field.length === 0) ||
+    !DECIMAL_PATTERN.test(fields[0] ?? "") ||
+    !DECIMAL_PATTERN.test(fields[1] ?? "") ||
+    !DEVICE_PATTERN.test(fields[2] ?? "") ||
+    fields[4] !== "/"
+  ) {
+    return null;
+  }
+  const root = decodeMountinfoField(fields[3]);
+  const mountOptions = decodeMountinfoField(fields[5]);
+  const filesystemType = decodeMountinfoField(fields[separator + 1]);
+  const mountSource = decodeMountinfoField(fields[separator + 2]);
+  const superOptions = decodeMountinfoField(fields[separator + 3]);
+  if (
+    root === null ||
+    !root.startsWith("/") ||
+    mountOptions === null ||
+    !MOUNT_OPTIONS_PATTERN.test(mountOptions) ||
+    filesystemType === null ||
+    mountSource === null ||
+    superOptions === null ||
+    !MOUNT_OPTIONS_PATTERN.test(superOptions) ||
+    fields.slice(6, separator).some((field) => {
+      const decoded = decodeMountinfoField(field);
+      return decoded === null || !MOUNTINFO_OPTIONAL_FIELD_PATTERN.test(decoded);
+    })
+  ) {
+    return null;
+  }
+  return { root, filesystemType, mountSource, superOptions };
+}
+
+function decodeMountinfoField(value) {
+  if (typeof value !== "string" || value.length === 0 || /[ \t\n\0]/u.test(value)) {
+    return null;
+  }
+  let decoded = "";
+  let segmentStart = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "\\") continue;
+    const escapedByte = value.slice(index + 1, index + 4);
+    if (!MOUNTINFO_ESCAPE_BYTES.has(escapedByte)) return null;
+    decoded += value.slice(segmentStart, index);
+    decoded += String.fromCharCode(Number.parseInt(escapedByte, 8));
+    index += 3;
+    segmentStart = index + 1;
+  }
+  return decoded + value.slice(segmentStart);
+}
+
+function classifyMountinfoProbe(probe) {
+  if (probe.availability !== "present") return null;
+  const rootMount = parseRootMount(probe.content);
+  if (rootMount === null) return null;
+  if (
+    AMBIGUOUS_CONTAINER_ROOT_FILESYSTEMS.has(
+      rootMount.filesystemType.toLowerCase(),
+    )
+  ) {
+    return null;
+  }
+  return [
+    rootMount.root,
+    rootMount.filesystemType,
+    rootMount.mountSource,
+    rootMount.superOptions,
+  ].some((field) => CONTAINER_PATH_INDICATOR.test(field)) ? null : false;
 }
 
 export function classifyContainerEvidence(evidence) {
@@ -554,17 +738,9 @@ export function classifyContainerEvidence(evidence) {
     return true;
   }
 
-  const requiredText = [evidence.cgroup, evidence.mountinfo];
-  const indicators = requiredText
-    .filter((probe) => probe.availability === "present")
-    .map((probe) => probe.content)
-    .join("\n");
-  if (
-    /(?:docker|podman|kubepods|containerd|systemd-nspawn|machine\.slice|(?:^|[/:.-])lxc(?:[/:.-]|$))/imu
-      .test(indicators)
-  ) {
-    return true;
-  }
+  const cgroup = classifyCgroupProbe(evidence.cgroup);
+  const mountinfo = classifyMountinfoProbe(evidence.mountinfo);
+  if (cgroup === true || mountinfo === true) return true;
 
   const optionalProbesComplete = evidence.markerFiles.every((probe) =>
     probe.availability === "present" || probe.availability === "missing"
@@ -572,9 +748,7 @@ export function classifyContainerEvidence(evidence) {
     evidence.systemdContainer.availability === "present" ||
     evidence.systemdContainer.availability === "missing"
   );
-  const requiredProbesComplete = requiredText.every(
-    (probe) => probe.availability === "present",
-  );
+  const requiredProbesComplete = cgroup === false && mountinfo === false;
   return optionalProbesComplete && requiredProbesComplete ? false : null;
 }
 
@@ -601,9 +775,37 @@ function probeOptionalTextFile(file) {
   }
 }
 
-function probeRequiredTextFile(file) {
+function probeRequiredTextFile(file, maximumBytes) {
   try {
-    return { availability: "present", content: fs.readFileSync(file, "utf8") };
+    const descriptor = fs.openSync(file, "r");
+    try {
+      const chunks = [];
+      let length = 0;
+      while (length <= maximumBytes) {
+        const chunk = Buffer.allocUnsafe(
+          Math.min(PROC_READ_CHUNK_BYTES, maximumBytes + 1 - length),
+        );
+        const bytesRead = fs.readSync(
+          descriptor,
+          chunk,
+          0,
+          chunk.length,
+          null,
+        );
+        if (bytesRead === 0) break;
+        length += bytesRead;
+        if (length > maximumBytes) {
+          return { availability: "unavailable", content: null };
+        }
+        chunks.push(chunk.subarray(0, bytesRead));
+      }
+      return {
+        availability: "present",
+        content: Buffer.concat(chunks, length).toString("utf8"),
+      };
+    } finally {
+      fs.closeSync(descriptor);
+    }
   } catch (error) {
     return {
       availability: error?.code === "ENOENT" ? "missing" : "unavailable",

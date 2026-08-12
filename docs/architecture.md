@@ -20,14 +20,14 @@ Release `1.2.0` adds exact recursive directory-name pruning and observed
 excluded boundaries. It advances binding API 4 and public capability schema 5,
 passed exact x64/ARM64 qualification, and is published on npm and JSR.
 
-The current source candidate adds one exact GNU/Linux ARMv7 hard-float target.
-It cross-builds `armv7-unknown-linux-gnueabihf`, packages the ELF32 binding
-separately, and passed real loader/watch/dispose runs through pinned ARMv7
-Electron under QEMU-user and the snapshot-pinned 5.15 generic-LPAE kernel under
-system QEMU at implementation revision `1c9b4e3`. Public capability schema 9
-reports the exact ARM ABI. The source target is supported but has no published
-usable binding, and its execution evidence does not claim native ARMv7 hardware
-or performance.
+Release `2.1.0` added one exact GNU/Linux ARMv7 hard-float target, and `2.1.1`
+is the current corrective release. It cross-builds
+`armv7-unknown-linux-gnueabihf`, packages the ELF32 binding separately, and
+passed real loader/watch/dispose runs through pinned ARMv7 Electron under
+QEMU-user and the snapshot-pinned 5.15 generic-LPAE kernel under system QEMU.
+Public capability schema 9 reports the exact ARM ABI. The final immutable npm
+and JSR Node routes repeated the ARMv7 lifecycle; its execution evidence still
+does not claim native ARMv7 hardware or performance.
 
 The subsequent consumer/API audit originally recommended a maintained
 unpublished package, conditional on named ownership and a narrow support

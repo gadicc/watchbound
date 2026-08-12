@@ -5,6 +5,10 @@ from cross-build-only status to the source matrix's `supported` status. It does
 not record a publication, tag, GitHub release, native-hardware run, or
 performance result.
 
+Release publication subsequently completed. The immutable `2.1.1` identities,
+hashes, and post-publication registry lifecycles are recorded separately in
+[`qualification-evidence-2026-08-09-armv7-release.md`](qualification-evidence-2026-08-09-armv7-release.md).
+
 ## Exact source and CI result
 
 - Source revision:
@@ -85,7 +89,7 @@ The guest loaded the canonical native SHA, received a real filesystem event,
 joined disposal, and returned inotify descriptors, Watchbound threads, and
 native runtime counters to baseline.
 
-## Scope and remaining gate
+## Scope and gate at the time of this record
 
 These two execution lanes qualify the maintained ARMv7 contract defined by
 the source matrix: little-endian ARMv7-A, GNU/Linux glibc, hard-float EABI,
@@ -98,3 +102,6 @@ hardware runner is available, and timings are non-authoritative. Promotion is
 complete only after the follow-up status-bearing revision itself passes the
 full CI matrix. Publication remains separately gated and requires explicit
 maintainer authorization.
+
+Those remaining gates later completed for release `2.1.1`; this historical
+record remains intentionally scoped to the source artifact above.

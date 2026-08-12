@@ -157,10 +157,10 @@ replacement identity.
 Coverage reasons, root attachment/loss/recovery variants, structured error
 codes and operations, retry conditions, automatic-reconciliation states, and
 support status are closed TypeScript unions. `SupportStatus` contains exactly
-`target-pending-clean-ci` and `supported`; the two targets published in release
-`2.0.0` emit the supported value. The unpublished ARMv7 source target now also
-emits `supported` after its exact execution evidence passed. Exhaustive
-narrowing fixtures compile in the ordinary gate.
+`target-pending-clean-ci` and `supported`; all three targets published in
+release `2.1.1` emit the supported value. ARMv7 earned that status only after
+its exact cross-build and two execution lanes passed. Exhaustive narrowing
+fixtures compile in the ordinary gate.
 The formerly published `support.currentRuntime.supported` boolean is removed as
 an intentional breaking change: `targetCompatible` is target-only, and full
 host/root qualification requires `qualifyRoot(root)`. Migration guidance is in

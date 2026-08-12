@@ -1,16 +1,17 @@
 # Native delivery contract
 
-Status: release `2.0.0` publishes the architecture-neutral loader and exact x64
-and ARM64 GNU/Linux target packages supported by the checked-in source matrix.
-It keeps the package roles and binary filenames introduced in `1.1.0` while
-advancing the native contract to binding API 5 and capability schema 8. The
-historical `1.0.1` release retains its one-target contract.
+Status: release `2.1.1` publishes the architecture-neutral loader and exact
+x64, ARM64, and ARMv7 hard-float GNU/Linux target packages supported by the
+checked-in matrix. It retains binding API 5 and advances the public contract to
+capability schema 9. Release `2.1.0` first published ARMv7; `2.1.1` is the
+current corrective release.
 
-The current source candidate adds a source-supported ARMv7 hard-float target
-package and capability schema 9. Its exact cross-build, packaging, QEMU-user
-Electron lifecycle, and system-QEMU kernel-floor lanes passed at implementation
-revision `1c9b4e3`; it is not part of release `2.0.0`, has no usable published
-artifact, and has no native-hardware or performance qualification claim.
+The final ARMv7 artifact passed exact cross-build, packaging, QEMU-user
+Electron, system-QEMU kernel-floor, and post-publication npm and JSR Node
+lifecycles. Those are real package/load/watch/dispose checks under emulation,
+not native-hardware or performance qualification. Exact artifact identities
+are in
+[`qualification-evidence-2026-08-09-armv7-release.md`](qualification-evidence-2026-08-09-armv7-release.md).
 
 ## One matrix, three package roles
 

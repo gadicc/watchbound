@@ -1,44 +1,40 @@
 # Release and registry runbook
 
-Status: `2.0.0` is the current published release; `1.1.0` remains the
-historical first multi-target release. Semantic-release selected and
-materialized each version while the checked-in source remained at
-`0.0.0-development`. This runbook continues to govern future releases; the
-repository configuration is not blanket permission to publish.
+Status: `2.1.1` is the current published release; `1.1.0` remains the
+historical first multi-target release, and `2.1.0` first published ARMv7.
+Semantic-release selected and materialized each version while the checked-in
+source remained at `0.0.0-development`. This runbook continues to govern future
+releases; the repository configuration is not blanket permission to publish.
 
-Release `2.0.0` carries public capability schema 8, raw native capability
-schema 5, and binding API 5. The ARMv7 source candidate advances the public
-schema to 9 while retaining binding API 5. Its proposed semantic version is
-`2.1.0`. Future checked-in package, Cargo, and lockfile placeholders must still
-remain at `0.0.0-development`.
+Release `2.1.1` carries public capability schema 9, raw native capability
+schema 5, and binding API 5. Future checked-in package, Cargo, and lockfile
+placeholders must still remain at `0.0.0-development`.
 
-## ARMv7 2.1.0 release plan
+## ARMv7 2.1.x release record
 
 1. Implementation revision `1c9b4e3` completed the 24-job CI matrix, including
    deterministic ARMHF cross-build/package, incompatible ARM/libc negatives,
    QEMU-user Electron lifecycle, and the separately retained and pinned
    system-QEMU 5.15 lifecycle artifacts. The reviewed identities are recorded
    in `qualification-evidence-2026-08-07-armv7.md`.
-2. The follow-up status-bearing revision changes the ARM target from
-   `target-pending-clean-ci` to `supported`. Its complete CI matrix must pass
-   again before promotion is final; retain that run URL with the release
-   review rather than weakening the exact-revision gate.
+2. The follow-up status-bearing revision changed the ARM target from
+   `target-pending-clean-ci` to `supported` and passed the complete CI matrix.
 3. Completed 2026-08-07 with separate explicit authorization: the new scoped
    npm name contains only deprecated inert `0.0.0-bootstrap.0`, and its trusted
    publisher is repository `gadicc/watchbound`, workflow `release.yml`. This was
    not a Watchbound release and contains no usable binding.
-4. Merge the exact green, supported revision through the normal release-worthy
-   Conventional Commit path. Semantic-release should propose `2.1.0`; verify
-   that result before allowing the main-push workflow to publish.
-5. Require all prepublication gates and all six target-by-registry
-   post-publication routes, including ARMv7 npm and JSR under QEMU-user. If any
-   immutable route fails, stop and use the incident process rather than
-   retagging or replacing it.
-6. Give codex-desktop-linux only the final tag/source SHA, registry
-   `dist.integrity` and shasum values, tarball SHA-256 values, per-native-addon
-   SHA-256 values, exact filenames/triples, and schema/API versions recorded by
-   that release. Do not pin a development artifact or modify the consumer in
-   this repository.
+4. Release `2.1.0` first published the ARMv7 route. Corrective release `2.1.1`
+   hardened installed-target discovery and runtime container evidence without
+   widening the support contract.
+5. Exact revision `096c53174ba6ea6a2e2a065f01423deab09c9de4` passed every
+   prepublication gate and all six target-by-registry post-publication routes,
+   including ARMv7 npm and JSR Node under QEMU-user, in
+   [release run 31325826358](https://github.com/gadicc/watchbound/actions/runs/31325826358).
+6. The final tag, package and native hashes, schemas, and retained job URLs are
+   recorded in
+   [`qualification-evidence-2026-08-09-armv7-release.md`](qualification-evidence-2026-08-09-armv7-release.md).
+   codex-desktop-linux should pin `2.1.1`, not a development artifact or the
+   superseded `2.1.0` release. The consumer remains outside this repository.
 
 ## Fail-closed release boundary
 
@@ -138,9 +134,9 @@ acknowledgement, interpretation, and retention policy.
 After every gate, the custom semantic-release plugin checks immutable registry
 state and publishes missing packages in this order:
 
-1. `@gadicc/watchbound-node-linux-x64-gnu`;
-2. `@gadicc/watchbound-node-linux-arm64-gnu`;
-3. `@gadicc/watchbound-node-linux-arm-gnueabihf`;
+1. `@gadicc/watchbound-node-linux-arm-gnueabihf`;
+2. `@gadicc/watchbound-node-linux-x64-gnu`;
+3. `@gadicc/watchbound-node-linux-arm64-gnu`;
 4. architecture-neutral `@gadicc/watchbound-node`;
 5. `watchbound`;
 6. JSR `@gadicc/watchbound`.
@@ -163,20 +159,20 @@ The x64 and ARM64 npm target names were bootstrapped with the inert
 `bootstrap` tag. Do not depend on them.
 
 The ARMv7 name `@gadicc/watchbound-node-linux-arm-gnueabihf` was bootstrapped
-with explicit maintainer authorization on 2026-08-07. Its only version is inert
-`0.0.0-bootstrap.0`; it contains only `package.json` and `README.md`, is
-deprecated with the required text, and has the `bootstrap` tag. npm assigns and
-will not remove `latest` while that bootstrap is the only version. The first
-authorized stable publication must move `latest` to the new immutable release,
-as happened for x64 and ARM64.
+with explicit maintainer authorization on 2026-08-07. Its inert
+`0.0.0-bootstrap.0` contains only `package.json` and `README.md`, is deprecated
+with the required text, and retains the `bootstrap` tag. Stable releases
+`2.1.0` and `2.1.1` were subsequently published through the trusted workflow;
+`latest` now resolves to `2.1.1`.
 
 The bootstrap tarball has npm shasum
 `c55b4956f7cd52805bc141ea3aa35092ee0e1778` and integrity
 `sha512-1QGAFl9SRGVQBh9aLz3bR5ix3aOdjAlxTxInsUiwUmuCePEYyWrDBdfdVzoQsYwfLYEXX0IKkaCkeN2HGZhFAw==`.
 Trusted publisher configuration `74d2180f-c46d-488e-9407-bbd1c312e01d`
 authorizes publish from repository `gadicc/watchbound` and workflow
-`release.yml`. The stable release and its usable binding remain separately
-gated and unauthorized.
+`release.yml`. That configuration published and verified the stable ARMv7
+binding; it does not authorize any future release independently of the normal
+main-push and exact-candidate gates.
 
 Semantic release now checks every package namespace before its first registry
 mutation. Every native target must expose the exact inert

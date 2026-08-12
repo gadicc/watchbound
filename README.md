@@ -86,11 +86,11 @@ The release-qualification badge at the top reports the live `main` workflow. For
 | --- | --- | --- | --- |
 | GNU/Linux x64 | `@gadicc/watchbound-node-linux-x64-gnu` | Node `>=24.15.0 <25`, kernel 5.15+, glibc 2.35+ | [✅ Supported](docs/support-matrix.md#published-target-contract) |
 | GNU/Linux ARM64 | `@gadicc/watchbound-node-linux-arm64-gnu` | Node `>=24.15.0 <25`, kernel 5.15+, glibc 2.35+ | [✅ Supported](docs/support-matrix.md#published-target-contract) |
-| GNU/Linux ARMv7 hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | ARMv7-A, hard-float EABI, little-endian glibc; Electron 42.3.0 / Node 24.15.0; kernel 5.15+ | [✅ Source-supported; release pending](docs/support-matrix.md#supported-source-armv7-contract) |
+| GNU/Linux ARMv7 hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | ARMv7-A, hard-float EABI, little-endian glibc; Electron 42.3.0 / Node 24.15.0; kernel 5.15+ | [✅ Supported](docs/support-matrix.md#published-target-contract) |
 
 CI also exercises pinned Ubuntu, Debian, Fedora, Arch x64, openSUSE, Nix, kernel 5.15, Electron, an ARMv7 QEMU-user Electron lifecycle lane, and a real ARMHF 5.15 kernel under system QEMU. The [full support and qualification matrix](docs/support-matrix.md) records the exact lane, architecture, artifact, and promotion evidence.
 
-The supported native targets published today remain GNU/Linux x64 and ARM64. The checked-in source matrix now also supports exact little-endian ARMv7 hard-float glibc delivery after deterministic cross-build/package checks and real watch lifecycles under both pinned QEMU-user Electron and a booted ARMHF kernel 5.15. That source qualification has no published usable ARMv7 binding yet; the npm namespace contains only a deprecated inert bootstrap. Upstream Node 24.15.0 does not publish an official Linux ARMv7 binary, so ARMv7 runtime qualification uses the pinned Electron 42.3.0 ARMv7 runtime. The loader accepts exact ARM build variables when present; Electron and compatible consumer-managed runtimes without those variables must instead prove an ARMv7-or-newer Linux machine plus an ELF32 ARM EABI5 hard-float running executable. Environments with recognized container evidence cannot qualify. Soft-float, unknown ARM ABI, big-endian ARM, musl, and non-Linux platforms fail closed. ARMv7 execution evidence is emulated and makes no native-hardware or performance claim.
+Release `2.1.1` publishes all three supported GNU/Linux targets, including exact little-endian ARMv7 hard-float glibc delivery. The ARMv7 artifact passed deterministic cross-build/package checks and real watch lifecycles under both pinned QEMU-user Electron and a booted ARMHF kernel 5.15, followed by npm and JSR Node post-publication lifecycles. Upstream Node 24.15.0 does not publish an official Linux ARMv7 binary, so ARMv7 runtime qualification uses the pinned Electron 42.3.0 ARMv7 runtime. The loader accepts exact ARM build variables when present; Electron and compatible consumer-managed runtimes without those variables must instead prove an ARMv7-or-newer Linux machine plus an ELF32 ARM EABI5 hard-float running executable. Environments with recognized container evidence cannot qualify. Soft-float, unknown ARM ABI, big-endian ARM, musl, and non-Linux platforms fail closed. ARMv7 execution evidence is emulated and makes no native-hardware or performance claim. See the [immutable `2.1.1` release evidence](docs/qualification-evidence-2026-08-09-armv7-release.md).
 
 Loading a compatible native package does not qualify the host or root. Call `qualifyRoot(root)` and require `state === "qualified"`; the [runtime qualification contract](docs/runtime-qualification.md) explains every accepted and rejected state.
 
@@ -119,7 +119,7 @@ Parcel remains the better default when its public contract is sufficient. It is 
 
 | Need | Watchbound | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
-| Platforms | Qualified GNU/Linux x64 and ARM64; source-qualified ARMv7 hard-float pending release | Broad cross-platform prebuild coverage |
+| Platforms | Qualified GNU/Linux x64, ARM64, and exact ARMv7 hard-float | Broad cross-platform prebuild coverage |
 | Event model | Conservative invalidated paths | Coalesced `create`, `update`, and `delete` events |
 | Coverage and loss | Explicit complete, partial, and uncertain states | No public coverage state |
 | Limits and pressure | Public watch limits, bounded queues, and accounting | No public active-watch or backpressure state |

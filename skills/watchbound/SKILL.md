@@ -40,10 +40,10 @@ hard-coded release number. The checked-in source matrix declares
 supported x64 and ARM64 GNU/Linux targets with a kernel 5.15/glibc 2.35
 baseline and Node `>=24.15.0 <25`; exact native, distro, Electron, Nix,
 reproducibility, kernel-floor, separately supervised overflow, and registry
-smoke evidence backs those declarations. The exact ARMv7 hard-float source
-target is also supported after deterministic cross-build/package, QEMU-user
-Electron, and system-QEMU kernel-floor lifecycles passed; it has no published
-usable binding and no native-hardware or performance evidence.
+smoke evidence backs those declarations. Release `2.1.1` also publishes the
+exact ARMv7 hard-float target after deterministic cross-build/package,
+QEMU-user Electron, system-QEMU kernel-floor, and immutable registry
+lifecycles passed. It has no native-hardware or performance evidence.
 
 An environment with recognized container evidence cannot qualify. Treat
 `container-unknown` as unknown evidence, never as a negative container result;

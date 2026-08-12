@@ -1,19 +1,18 @@
 # Maintenance and release policy
 
-Status: release `2.0.0` is published and passed exact x64/ARM64 qualification
-plus npm and JSR Node-route registry smokes. Its public contract uses capability
-schema 8 and binding API 5 while retaining the multi-target delivery introduced
-in `1.1.0`. Future releases and consumer production readiness remain separately
-gated.
+Status: release `2.1.1` is published and passed exact x64, ARM64, and GNU/Linux
+ARMv7 hard-float qualification plus every npm and JSR Node-route registry
+smoke. Its public contract uses capability schema 9 and binding API 5. Release
+`2.1.0` first added the ARMv7 target; `2.1.1` is the current corrective release
+and the version consumers should pin. Future releases and consumer production
+readiness remain separately gated.
 
-The current source candidate adds supported GNU/Linux ARMv7 hard-float delivery
-and capability schema 9. The proposed next version is `2.1.0`: this is an
-additive platform and public capability-schema feature on top of published
-`2.0.0`, not a patch. Exact deterministic cross-build/package, QEMU-user
-Electron lifecycle, and system-QEMU kernel-floor evidence passed for
-implementation revision `1c9b4e3`; the status-bearing follow-up revision must
-also pass the full matrix. No text in this document authorizes publication,
-tagging, or consumer integration.
+The ARMv7 contract is backed by deterministic cross-build/package,
+QEMU-user Electron, system-QEMU kernel-floor, and immutable registry lifecycle
+evidence. Exact release identities and the emulated-execution caveat are in
+[`qualification-evidence-2026-08-09-armv7-release.md`](qualification-evidence-2026-08-09-armv7-release.md).
+No text in this document authorizes a future publication, tag, or consumer
+change.
 
 The earlier maintained-unpublished policy did not authorize publication,
 artifact upload, or consumer integration. The maintainer separately approved
@@ -51,6 +50,11 @@ excluded boundaries. Its checked-in source packages remain
 `0.0.0-development`; semantic-release materialized the published version only
 after the authorized release-worthy push to `main` passed every distribution
 gate.
+Release `2.0.0` adds runtime and root qualification. Release `2.1.0` adds the
+exact ARMv7 hard-float target and capability schema 9; corrective release
+`2.1.1` hardens installed-target discovery and container evidence without
+widening the ARM support promise. All three native targets passed the final
+release and post-publication routes at `096c531`.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
 

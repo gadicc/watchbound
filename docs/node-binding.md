@@ -1,19 +1,14 @@
 # Node binding decision
 
-Status: selected for controlled source builds and the one-target public
-bootstrap. The historical `0.1.0` baseline and the bootstrap implementation
-baseline have narrow-target evidence. The `1.0.0` binding API 3 async callback
-source qualified, and the corrected `1.0.1` package restored the JSR route.
-Release `1.1.0` retained generation-zero exclusions and added exact x64/ARM64
-package selection. Release `1.2.0` advances to binding API 4 for whole-policy
-exclusion replacement; both targets completed exact qualification and the
-release is published.
+Status: selected for controlled source builds and exact target-native public
+packages. The historical `0.1.0` baseline and one-target bootstrap preceded
+binding API 3 in `1.0.x`, the x64/ARM64 package matrix in `1.1.0`, and
+whole-policy exclusion replacement in `1.2.0`.
 
-The current source candidate retains binding API 5 and adds exact ARMv7
-hard-float package selection. Public capability schema 9 carries ARM ABI facts;
-the source matrix supports the new target after its cross-build/package,
-QEMU-user Electron runtime, and system-QEMU kernel-floor lanes passed at
-implementation revision `1c9b4e3`. No usable target binding is published yet.
+Release `2.1.1` retains binding API 5 and publishes exact ARMv7 hard-float
+package selection. Public capability schema 9 carries ARM ABI facts. The final
+artifact passed cross-build/package, QEMU-user Electron,
+system-QEMU kernel-floor, and immutable npm and JSR Node registry lifecycles.
 
 ## Choice
 
@@ -118,9 +113,9 @@ JSON-serializable. Under `schemaVersion: 9`, its stable sections are `versions`,
 Observed platform, architecture, kernel, libc, Node, and Node-API values in
 `runtime` identify the current process only. They are not a support decision.
 The source metadata marks x64, ARM64, and exact ARMv7 hard-float `supported`.
-Release `2.0.0` still publishes only x64 and ARM64; the release workflow requires
-all exact artifacts and independent publication guards before ARMv7 can be
-published. Current process facts never broaden the target matrix.
+Release `2.1.1` publishes all three exact artifacts after their independent
+publication guards passed. Current process facts never broaden the target
+matrix.
 `currentRuntime` reports only packaged-target
 compatibility; `qualifyRoot(root)` performs full read-only host/root
 qualification as specified in

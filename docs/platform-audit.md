@@ -64,6 +64,8 @@ Electron 42.3.0 `linux-armv7l` archive through QEMU-user. This supplements but
 does not rewrite the historical 2026-07-26 audit table. Both that userspace
 lifecycle and the snapshot-pinned 5.15 generic-LPAE system-QEMU lifecycle
 passed at implementation revision `1c9b4e3`, so the exact source target is now
-supported. It has no published usable binding and remains emulated-only; musl,
-soft-float, unknown ARM ABI, big-endian ARM, and non-v7 ARM remain unsupported. No
-codex-desktop-linux files are changed here.
+supported. Release `2.1.0` first published the binding, and corrective release
+`2.1.1` passed both immutable npm and JSR Node registry lifecycles. The
+qualification basis remains emulated-only; musl, soft-float, unknown ARM ABI,
+big-endian ARM, and non-v7 ARM remain unsupported. No codex-desktop-linux files
+are changed here.

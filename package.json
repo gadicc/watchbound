@@ -47,10 +47,10 @@
   },
   "devDependencies": {
     "@electron/asar": "4.2.1",
-    "@napi-rs/cli": "3.8.2",
+    "@napi-rs/cli": "3.8.5",
     "@parcel/watcher": "2.5.6",
     "conventional-changelog-conventionalcommits": "10.2.1",
-    "semantic-release": "25.0.8",
+    "semantic-release": "25.0.9",
     "typescript": "7.0.2"
   }
 }

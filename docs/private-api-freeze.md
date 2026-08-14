@@ -198,12 +198,12 @@ enter afterward.
 
 The current source defines controlled x64, ARM64, and exact ARMv7 hard-float
 GNU/Linux source and package targets, a kernel 5.15/glibc 2.35 baseline, Node
-`>=24.15.0 <25`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer, and
+`>=18.15.0`, Node-API 6 or newer as an ABI floor, Rust 1.88 or newer, and
 pnpm 10.33.2 under trusted stable local roots. Each status-bearing target must
 pass its full exact matrix; a target description or successful load is not
 qualification evidence.
 
-Unsupported targets include other Node ranges; musl; soft-float, unknown,
+Unsupported targets include Node below 18.15.0 or process Node-API below 6; musl; soft-float, unknown,
 big-endian, and non-v7 32-bit ARM; other architectures; non-Linux systems; WSL,
 non-ordinary mounts, network/FUSE/overlay filesystems unless separately
 qualified; cross-compilation alone, install-time compiler

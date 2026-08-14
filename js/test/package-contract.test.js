@@ -47,7 +47,7 @@ test("private manifests retain source-build development and architecture-neutral
     assert.equal(manifest.license, "MIT");
     assert.equal(manifest.author, "Gadi Cohen <dragon@wastelands.net>");
     assert.match(manifest.repository.url, /github\.com\/gadicc\/watchbound/u);
-    assert.deepEqual(manifest.engines, { node: ">=24.15.0 <25" });
+    assert.deepEqual(manifest.engines, { node: ">=18.15.0" });
     assert.equal(manifest.scripts?.preinstall, undefined);
     assert.equal(manifest.scripts?.install, undefined);
     assert.equal(manifest.scripts?.postinstall, undefined);
@@ -117,10 +117,23 @@ test("private manifests retain source-build development and architecture-neutral
 test("public guides defer Watchbound release versioning to package and release records", () => {
   const allowedTechnicalVersions = new Set([
     "0.0.0",
+    "2.1.1",
     "2.5.6",
     "10.33.2",
+    "18.15.0",
+    "18.18.2",
+    "18.20.8",
+    "20.20.2",
+    "22.23.2",
+    "24.14.0",
     "24.15.0",
+    "24.18.0",
+    "24.19.0",
+    "25.0.0",
+    "26.7.0",
+    "28.0.0",
     "42.3.0",
+    "43.2.0",
   ]);
   for (const relativePath of [
     "README.md",
@@ -215,7 +228,109 @@ test("release evidence accepts only the canonical independent matrix schema", ()
 test("native matrix is the single source for x64, ARM64, and ARMv7 hard-float delivery", () => {
   const matrix = readJson("config/native-matrix.json");
   assert.equal(matrix.schemaVersion, 1);
-  assert.equal(matrix.nodeRange, ">=24.15.0 <25");
+  assert.equal(matrix.nodeRange, ">=18.15.0");
+  assert.equal(matrix.nodeMinimum, "18.15.0");
+  assert.equal(matrix.nodeApiMinimum, 6);
+  assert.equal(matrix.buildNode, "24.15.0");
+  assert.equal(ciMatrixOutputs.buildNode, matrix.buildNode);
+  assert.deepEqual(
+    matrix.testedRuntimes.node,
+    [
+      ["18.15.0", ["x64", "arm64"], "full-lifecycle", "javascript-minimum"],
+      ["18.20.8", ["x64"], "admission", "latest-node-18"],
+      ["20.20.2", ["x64"], "admission", "latest-node-20"],
+      ["22.23.2", ["x64"], "admission", "latest-node-22"],
+      ["24.14.0", ["x64"], "full-lifecycle", "codex-electron-regression"],
+      ["24.19.0", ["x64"], "admission", "latest-node-24"],
+      ["26.7.0", ["x64", "arm64"], "full-lifecycle", "newest-node"],
+    ].map(([version, architectures, coverage, role]) => ({
+      version,
+      architectures,
+      coverage,
+      role,
+    })),
+  );
+  assert.deepEqual(
+    matrix.testedRuntimes.electron.map(
+      ({ id, electron, node, nodeApi, architecture, coverage }) => ({
+        id,
+        electron,
+        node,
+        nodeApi,
+        architecture,
+        coverage,
+      }),
+    ),
+    [
+      {
+        id: "oldest-supported",
+        electron: "28.0.0",
+        node: "18.18.2",
+        nodeApi: 9,
+        architecture: "x64",
+        coverage: "full-lifecycle",
+      },
+      {
+        id: "current",
+        electron: "43.2.0",
+        node: "24.18.0",
+        nodeApi: 10,
+        architecture: "x64",
+        coverage: "full-lifecycle",
+      },
+    ],
+  );
+  assert.deepEqual(
+    ciMatrixOutputs.nodeRuntime.map(
+      ({ nodeVersion, architecture, coverage }) => ({
+        nodeVersion,
+        architecture,
+        coverage,
+      }),
+    ),
+    [
+      ["18.15.0", "x64", "full-lifecycle"],
+      ["18.15.0", "arm64", "full-lifecycle"],
+      ["18.20.8", "x64", "admission"],
+      ["20.20.2", "x64", "admission"],
+      ["22.23.2", "x64", "admission"],
+      ["24.14.0", "x64", "full-lifecycle"],
+      ["24.19.0", "x64", "admission"],
+      ["26.7.0", "x64", "full-lifecycle"],
+      ["26.7.0", "arm64", "full-lifecycle"],
+    ].map(([nodeVersion, architecture, coverage]) => ({
+      nodeVersion,
+      architecture,
+      coverage,
+    })),
+  );
+  assert.deepEqual(
+    ciMatrixOutputs.electronRuntime.map(
+      ({ runtime, electron, node, nodeApi, target }) => ({
+        runtime,
+        electron,
+        node,
+        nodeApi,
+        target,
+      }),
+    ),
+    [
+      {
+        runtime: "oldest-supported",
+        electron: "28.0.0",
+        node: "18.18.2",
+        nodeApi: 9,
+        target: "linux-x64-gnu",
+      },
+      {
+        runtime: "current",
+        electron: "43.2.0",
+        node: "24.18.0",
+        nodeApi: 10,
+        target: "linux-x64-gnu",
+      },
+    ],
+  );
   assert.deepEqual(matrix.releaseBaseline, {
     distribution: "ubuntu",
     version: "22.04",
@@ -600,6 +715,21 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /actions\/download-artifact@/u);
   assert.match(release, /select-release-plan\.mjs/u);
   assert.match(release, /candidate_version: \$\{\{ needs\.plan\.outputs\.version \}\}/u);
+  assert.match(
+    release,
+    /^      build-node: \$\{\{ steps\.matrix\.outputs\.buildNode \}\}$/mu,
+  );
+  assert.equal(
+    release.match(
+      /^          node-version: \$\{\{ needs\.plan\.outputs\.build-node \}\}$/gmu,
+    )?.length,
+    9,
+  );
+  assert.equal(
+    release.match(/^          node-version: 24\.15\.0$/gmu)?.length,
+    3,
+    "only the pre-matrix release bootstrap jobs may repeat the build Node pin",
+  );
   assert.match(release, /\.github\/actions\/materialize-release-candidate/u);
   assert.match(release, /verify-release-candidate\.mjs/u);
   assert.match(
@@ -739,6 +869,15 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.source\)/u);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.qualification\)/u);
   assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.kernel\)/u);
+  assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.node-runtime\)/u);
+  assert.match(ci, /fromJSON\(needs\.matrix\.outputs\.electron-runtime\)/u);
+  assert.match(ci, /^  node-runtime-compatibility:$/mu);
+  assert.match(ci, /^  electron-runtime-compatibility:$/mu);
+  assert.match(ci, /check-node-runtime\.mjs/u);
+  assert.match(ci, /--runtime "\$\{\{ matrix\.runtime \}\}"/u);
+  assert.match(ci, /--native-sha256 "\$WATCHBOUND_RETAINED_NATIVE_SHA256"/u);
+  assert.match(ci, /--native-sha256 "\$retained_native_sha256"/u);
+  assert.match(ci, /watchbound-ci-native-\$\{\{ matrix\.target \}\}/u);
   assert.match(ci, /check-electron-asar\.mjs/u);
   assert.match(ci, /run-distro-qualification\.mjs/u);
   assert.match(ci, /run-kernel-baseline-qualification\.mjs/u);
@@ -814,6 +953,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(ciMatrix, /runner: target\.kernelRunner/u);
   assert.match(ciMatrix, /\["builder-a", "builder-b"\]/u);
   assert.match(ciMatrix, /runner: target\.runner/u);
+  assert.match(ciMatrix, /typeof value === "string" \? value : JSON\.stringify\(value\)/u);
   assert.match(overflowPreflight, /watchbound-overflow-qualification-preflight/u);
   assert.match(overflowPreflight, /independent-reproducibility\.json/u);
   assert.match(overflowPreflight, /max_queued_events/u);
@@ -895,7 +1035,7 @@ test("workflow artifact handoffs survive partial reruns", () => {
     ci.match(
       /^          name: watchbound-ci-native-\$\{\{ matrix\.target \}\}$/gmu,
     )?.length,
-    6,
+    8,
   );
   assert.equal(
     ci.match(/^          overwrite: true$/gmu)?.length,

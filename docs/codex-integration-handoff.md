@@ -1,5 +1,17 @@
 # Codex Desktop Linux handoff
 
+## Signed-runtime follow-up
+
+The source-candidate loader accepts Node 24.14.0 through the general Node
+`>=18.15.0` plus Node-API 6 policy; it no longer equates a tested Node patch
+range with ABI compatibility. Watchbound CI exercises the full lifecycle under
+stock Node 24.14.0 but intentionally cannot exercise OpenAI's signed Electron
+executable. Codex Desktop should retain a consumer-owned test that proves the
+signed executable reports Node 24.14.0 and sufficient Node-API, selects the
+expected immutable Watchbound target digest, completes initial observation and
+create/change/delete delivery, preserves exclusions, joins disposal, and exits
+cleanly. Electron, Node, and Node-API values must be asserted independently.
+
 Status: release `2.1.1` is published. The retained native, distro, Electron,
 Nix, reproducibility, pinned-kernel, and supervised-overflow scenarios are
 green for the applicable target matrix. Post-publication npm and JSR Node-route

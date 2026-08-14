@@ -20,7 +20,7 @@
     "node"
   ],
   "engines": {
-    "node": ">=24.15.0 <25"
+    "node": ">=18.15.0"
   },
   "scripts": {
     "build": "cargo build --workspace",

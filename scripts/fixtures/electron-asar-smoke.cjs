@@ -15,9 +15,12 @@ void main().catch((error) => {
 });
 
 async function main() {
-  assert.equal(process.versions.electron, "42.3.0");
-  assert.equal(process.versions.node, "24.15.0");
-  assert.ok(Number(process.versions.napi) >= 10);
+  const expectedElectron = process.env.WATCHBOUND_EXPECTED_ELECTRON ?? "42.3.0";
+  const expectedNode = process.env.WATCHBOUND_EXPECTED_NODE ?? "24.15.0";
+  const expectedNodeApi = Number(process.env.WATCHBOUND_EXPECTED_NODE_API ?? "10");
+  assert.equal(process.versions.electron, expectedElectron);
+  assert.equal(process.versions.node, expectedNode);
+  assert.equal(Number(process.versions.napi), expectedNodeApi);
   const watchbound = await import("watchbound");
   assert.equal(watchbound.capabilities.schemaVersion, 9);
   assert.equal(
@@ -55,6 +58,18 @@ async function main() {
     await waitFor(
       () => batches.some((batch) => batch.invalidatedPaths.includes(visible)),
       "Electron ASAR callback was not delivered",
+    );
+    const visibleInvalidationsAfterCreate = countPath(batches, visible);
+    fs.appendFileSync(visible, "-changed");
+    await waitFor(
+      () => countPath(batches, visible) > visibleInvalidationsAfterCreate,
+      "Electron ASAR file-change callback was not delivered",
+    );
+    const visibleInvalidationsAfterChange = countPath(batches, visible);
+    fs.rmSync(visible);
+    await waitFor(
+      () => countPath(batches, visible) > visibleInvalidationsAfterChange,
+      "Electron ASAR file-deletion callback was not delivered",
     );
     assert.equal(
       hasInvalidatedPathAtOrBelow(batches, excluded),
@@ -108,4 +123,11 @@ async function waitFor(predicate, message) {
   const deadline = Date.now() + 4_000;
   while (!predicate() && Date.now() < deadline) await delay(10);
   assert.ok(predicate(), message);
+}
+
+function countPath(batches, expected) {
+  return batches.reduce(
+    (count, batch) => count + batch.invalidatedPaths.filter((value) => value === expected).length,
+    0,
+  );
 }

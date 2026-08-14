@@ -106,7 +106,7 @@ test("capability schema v9 exposes physical bytes-only and exact ARM ABI deliver
     },
     architecture: "x64",
     libc: { family: "glibc", version: "2.39" },
-    nodeRange: ">=24.15.0 <25",
+    nodeRange: ">=18.15.0",
     rustMinimum: "1.88",
     packageManager: "pnpm@10.33.2",
     delivery: "controlled-source-build",

@@ -651,8 +651,8 @@ export interface SupportTargetCapability {
   };
   /** Oldest kernel baseline exercised by the qualification matrix. */
   readonly kernelMinimum: "5.15";
-  /** Supported Node runtime range. */
-  readonly nodeRange: ">=24.15.0 <25";
+  /** JavaScript runtime range admitted independently of the native ABI floor. */
+  readonly nodeRange: ">=18.15.0";
   /** Qualification-lane identifiers applicable to this architecture. */
   readonly qualificationLanes: readonly string[];
 }
@@ -798,7 +798,8 @@ export interface Capabilities {
     };
     readonly architecture: "x64";
     readonly libc: { readonly family: "glibc"; readonly version: "2.39" };
-    readonly nodeRange: ">=24.15.0 <25";
+    /** JavaScript runtime range admitted independently of tested runtime evidence. */
+    readonly nodeRange: ">=18.15.0";
     readonly rustMinimum: "1.88";
     readonly packageManager: "pnpm@10.33.2";
     readonly delivery: WatchboundPackageDelivery;

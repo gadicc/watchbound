@@ -711,9 +711,10 @@ historical event queries. Parcel's typed coalesced events and query API remain
 the more useful contract for those needs when its public loss and resource
 model is acceptable.
 
-The published `2.1.1` target matrix supports x64, ARM64, and exact ARMv7
-hard-float GNU/Linux, kernel 5.15 and glibc at most 2.35, with Node
-`>=24.15.0 <25`. ARMv7 has an immutable native package; its declared execution
+The candidate target matrix supports x64, ARM64, and exact ARMv7
+hard-float GNU/Linux, kernel 5.15+, runtime glibc 2.35+, Node `>=18.15.0`, and
+process Node-API 6 or newer. Tested runtime versions are evidence rather than a
+hard allowlist, and no Node upper bound is enforced. ARMv7 has an immutable native package; its declared execution
 evidence is emulated rather than native-hardware evidence.
 Node-API compatibility or successful loading does not widen that matrix.
 Detected WSL and environments with recognized container evidence cannot

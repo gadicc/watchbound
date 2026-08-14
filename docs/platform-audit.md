@@ -1,5 +1,17 @@
 # Codex Desktop Linux platform audit
 
+## 2026-08-14 runtime-policy addendum
+
+Codex Desktop now reports a signed Electron 42.3.0 executable with embedded
+Node 24.14.0. Watchbound does not include that proprietary executable in CI and
+does not infer its Node version from the Electron label. Source and published
+artifact inspection found no Node 24.15-only dependency: the checked-in source
+policy now requires Node `>=18.15.0` and process Node-API 6 or newer, with no
+Node upper bound, while preserving the platform, architecture, ARM ABI, glibc,
+kernel, ELF, digest, metadata, and capability gates. A full stock-Node 24.14.0
+lifecycle is the repository regression; Codex retains the signed-runtime
+integration test.
+
 Audit date: 2026-07-26. Watchbound started at
 `df61736cf325b522f24320f8ecc2064dc9ff8781`. The sibling Codex checkout was
 read-only at tracked commit `ef284ae8dc07917c42b2e6b6435e4820280df989` on
@@ -30,12 +42,13 @@ Codex detection recognizes Debian derivatives `linuxmint`, `pop`,
 `suse`; and Fedora Atomic variants. These are detection/compatibility facts,
 not Watchbound qualification lanes.
 
-## Runtime conclusions
+## 2026-07-26 runtime conclusions (historical)
 
 - The exact inspected Codex binary reports Electron 42.3.0, Node 24.15.0, and
   Node-API 10.
-- Codex's x64 and ARM64 Electron archive pins are carried into the Watchbound
-  matrix. Watchbound keeps Node `>=24.15.0 <25`.
+- Codex's x64 and ARM64 Electron archive pins were carried into the Watchbound
+  matrix. At that audit point Watchbound kept Node `>=24.15.0 <25`; the
+  2026-08-14 addendum above supersedes that runtime admission policy.
 - Ubuntu 22.04 supplies the candidate kernel 5.15/glibc 2.35 baseline. Released
   ELFs must independently prove their maximum `GLIBC_*` requirement.
 - Codex's musl CLI is not evidence that its Electron host runs on musl; no musl

@@ -58,13 +58,14 @@ release and post-publication routes at `096c531`.
 `support-matrix.md` is the claim authority, and buildability or bootstrap
 publication must not imply a broader compatibility promise.
 
-For ARMv7, the maintained contract is intentionally exact: GNU/Linux glibc,
-little-endian ARMv7-A, hard-float EABI, kernel 5.15 or newer, and the existing
-Node `>=24.15.0 <25` range. The reference userspace execution host is Electron
+For ARMv7, the maintained contract is intentionally exact: GNU/Linux glibc
+2.35 or newer, little-endian ARMv7-A, hard-float EABI, kernel 5.15 or newer,
+Node `>=18.15.0`, and Node-API 6 or newer. The reference userspace execution host is Electron
 42.3.0 with embedded Node 24.15.0 under QEMU-user because upstream Node does not
 ship a Linux ARMv7 archive for that version. A separate system-QEMU lane boots
 the pinned 5.15 generic-LPAE kernel and repeats the lifecycle. Consumer-managed
-Node builds may be compatible only when the loader can prove the same ARM ABI. Soft-float, musl,
+Node builds may be compatible only when the loader can prove the same ARM ABI.
+That reference Electron pin is qualification evidence, not a Node allowlist. Soft-float, musl,
 unknown ARM ABI, and other 32-bit ARM variants are outside support.
 
 The exact-commit verification and documentation gates supporting recognition

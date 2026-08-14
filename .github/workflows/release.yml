@@ -159,6 +159,7 @@ jobs:
       kernel: ${{ steps.matrix.outputs.kernel }}
       registry: ${{ steps.matrix.outputs.registry }}
       registry-emulated: ${{ steps.matrix.outputs.registryEmulated }}
+      build-node: ${{ steps.matrix.outputs.buildNode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -237,7 +238,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - name: Install the ARMv7 hard-float cross linker
@@ -278,7 +279,7 @@ jobs:
           fi
           test -f "node/${{ matrix.binary }}"
           test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
-          test "$(node --version)" = v24.15.0
+          test "$(node --version)" = "v${{ needs.plan.outputs.build-node }}"
           test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
           node scripts/verify-release-candidate.mjs \
             --source-sha "${{ needs.plan.outputs.source-sha }}" \
@@ -415,7 +416,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - uses: ./.github/actions/materialize-release-candidate
@@ -497,7 +498,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - uses: ./.github/actions/materialize-release-candidate
@@ -551,7 +552,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - uses: ./.github/actions/materialize-release-candidate
@@ -609,7 +610,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - uses: ./.github/actions/materialize-release-candidate
@@ -709,7 +710,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - uses: ./.github/actions/materialize-release-candidate
@@ -832,7 +833,7 @@ jobs:
           path: ${{ runner.temp }}/approved-matrix
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: x64
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
@@ -907,7 +908,7 @@ jobs:
           path: ${{ runner.temp }}/approved-matrix
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - name: Install and exercise exact immutable registry packages
@@ -958,7 +959,7 @@ jobs:
           path: ${{ runner.temp }}/approved-matrix
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.plan.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - name: Install QEMU user mode

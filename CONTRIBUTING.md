@@ -7,12 +7,12 @@ Watchbound is a Linux-first recursive watcher with a conservative coverage contr
 Development requires:
 
 - Linux
-- Node.js `>=24.15.0 <25`
+- Node.js `>=18.15.0`
 - Rust 1.88 or newer
 - pnpm 10.33.2
 - A C compiler and linker
 
-The supported runtime matrix is narrower than the development toolchain. Read the [support and qualification matrix](docs/support-matrix.md) before changing compatibility claims.
+The reproducible CI build toolchain pins a separate Node version; that pin is not the package runtime floor. Read the [Node and Electron compatibility policy](docs/runtime-compatibility.md) and [support and qualification matrix](docs/support-matrix.md) before changing compatibility claims.
 
 ## Repository layout
 

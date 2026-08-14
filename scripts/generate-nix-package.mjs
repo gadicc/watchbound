@@ -50,7 +50,10 @@ writeJson(path.join(wrapperRoot, "package.json"), {
   types: "./index.d.ts",
   exports: wrapperSource.exports,
   dependencies: { "@gadicc/watchbound-node": version },
-  watchbound: { delivery: "bundled-native-package" },
+  watchbound: {
+    delivery: "bundled-native-package",
+    javascriptNodeMinimum: matrix.nodeMinimum,
+  },
 });
 writeJson(path.join(loaderRoot, "package.json"), {
   name: "@gadicc/watchbound-node",
@@ -59,7 +62,12 @@ writeJson(path.join(loaderRoot, "package.json"), {
   types: "./index.d.ts",
   exports: loaderSource.exports,
   optionalDependencies: Object.fromEntries(matrix.targets.map(({ package: name }) => [name, version])),
-  watchbound: { delivery: "bundled-native-package", nativeMatrixSchema: matrix.schemaVersion },
+  watchbound: {
+    delivery: "bundled-native-package",
+    nativeMatrixSchema: matrix.schemaVersion,
+    javascriptNodeMinimum: matrix.nodeMinimum,
+    nodeApiMinimum: matrix.nodeApiMinimum,
+  },
 });
 writeJson(path.join(targetRoot, "package.json"), {
   name: target.package,
@@ -76,6 +84,7 @@ writeJson(path.join(targetRoot, "package.json"), {
     armAbi: target.armAbi ?? null,
     libc: target.libc,
     binary: target.binary,
+    nodeApiMinimum: matrix.nodeApiMinimum,
     nativeSha256,
   },
 });

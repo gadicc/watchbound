@@ -1,5 +1,15 @@
 # Support and qualification matrix
 
+The checked-in source candidate now separates the JavaScript floor, native
+Node-API ABI floor, and tested runtime evidence. Its current policy is Node
+`>=18.15.0` plus process Node-API 6 or newer, without a Node upper bound. The
+loader still requires a configured Linux target, glibc 2.35+, kernel 5.15+,
+exact artifact integrity and ELF identity, matching binding metadata, and
+compatible capability schemas. See
+[`runtime-compatibility.md`](runtime-compatibility.md). The release records
+below remain immutable evidence for the packages to which they refer; they do
+not by themselves qualify this source candidate.
+
 Status: release `2.1.1` publishes every target whose status is `supported` in
 the checked-in matrix: x64, ARM64, and exact GNU/Linux ARMv7 hard-float. The
 historical `1.1.0` release was the first published multi-target release;
@@ -44,13 +54,21 @@ at most `GLIBC_2.34`; see
 The tagged release commit is `9f207599f828ba8a4d5a3f7c1033745cea7e47ff`;
 post-publication npm and JSR Node-route smokes passed on native x64 and ARM64.
 
-## Published target contract
+## Source-candidate target contract
+
+The rows below describe the checked-in candidate that semantic-release may
+materialize as the next patch. They do not retroactively widen release 2.1.1:
+its published manifests and loader still contain `>=24.15.0 <25`. Inspection
+shows that the unchanged 2.1.1 native addons have the Node-API 6 ABI needed by
+this candidate, but consumers need the next lockstep wrapper/loader/target
+release (or an explicitly owned integration patch) to receive the new
+admission policy.
 
 | Target | Package | Buildable | Release baseline | Qualification |
 | --- | --- | --- | --- | --- |
-| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `2.1.1` |
-| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Linux kernel 5.15, glibc at most 2.35, Node `>=24.15.0 <25` | Published and supported in `2.1.1` |
-| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | Yes; `armv7-unknown-linux-gnueabihf`, ELF32 little-endian `EM_ARM=40`, EABI5 hard-float; Ubuntu 22.04 cross toolchain | ARMv7-A hard-float little-endian glibc, kernel 5.15+, Electron 42.3.0 / embedded Node 24.15.0 or a compatible consumer-managed Node 24 build | Published and supported in `2.1.1`; QEMU-backed execution, not native-hardware evidence |
+| Linux x64 GNU | `@gadicc/watchbound-node-linux-x64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Node `>=18.15.0`, Node-API 6+, Linux kernel 5.15+, runtime glibc 2.35+; release artifacts may require symbols no newer than 2.35 | Published target; source-candidate runtime widening requires its own qualification |
+| Linux ARM64 GNU | `@gadicc/watchbound-node-linux-arm64-gnu` | Yes; exact native/release/Electron/Nix/kernel basis passed | Node `>=18.15.0`, Node-API 6+, Linux kernel 5.15+, runtime glibc 2.35+; release artifacts may require symbols no newer than 2.35 | Published target; source-candidate runtime widening requires its own qualification |
+| Linux ARMv7 GNU hard-float | `@gadicc/watchbound-node-linux-arm-gnueabihf` | Yes; `armv7-unknown-linux-gnueabihf`, ELF32 little-endian `EM_ARM=40`, EABI5 hard-float; Ubuntu 22.04 cross toolchain | Node `>=18.15.0`, Node-API 6+, ARMv7-A hard-float little-endian glibc 2.35+, kernel 5.15+ | Published target; QEMU-backed execution, not native-hardware evidence |
 
 The glibc release ceiling remains 2.35, and artifact inspection must prove the
 actual maximum `GLIBC_*` symbol no newer than that ceiling. ARMv7 uses the same
@@ -67,12 +85,12 @@ a CA bundle, so the lane bootstraps only `ca-certificates` from signed snapshot
 metadata, clears the indexes, and then re-fetches them with ordinary TLS peer
 verification before installing the runtime closure.
 
-Node's official 24.15.0 download set has no Linux ARMv7 archive. This does not
-change Watchbound's Node version contract: an ARMv7 Node host must still be
-`>=24.15.0 <25`, Node-API 6 or newer, ARM version 7, hard-float, and
-little-endian. The maintained execution lane therefore uses Electron's
-official `linux-armv7l` build. A Node version match without those ABI facts is
-not accepted.
+Node's official 24.15.0 download set has no Linux ARMv7 archive. The maintained
+ARMv7 execution lane therefore uses Electron's official `linux-armv7l` build.
+That is one tested runtime, not a Node-version allowlist: any ARMv7 host must
+still satisfy Node `>=18.15.0`, Node-API 6 or newer, ARM version 7, hard-float,
+little-endian, glibc, kernel, metadata, and capability checks. A Node version
+match without those ABI facts is not accepted.
 
 “Buildable” describes implemented build and packaging paths. It is not a
 support claim. `supported` becomes true only when the exact runtime matches a
@@ -84,7 +102,33 @@ The oldest supported distro baseline is Ubuntu 22.04: kernel 5.15 and glibc
 independently reproduced release artifacts require no symbol newer than
 `GLIBC_2.34`.
 
-## Runtime lanes
+## Source-candidate Node and Electron runtime lanes
+
+The Node lanes reuse the exact x64 or ARM64 addon retained by `source-build`;
+they never rebuild per Node version.
+
+| Node | x64 | ARM64 | Coverage role |
+| ---: | --- | --- | --- |
+| 18.15.0 | Full lifecycle | Full lifecycle | Exact JavaScript minimum |
+| 18.20.8 | Admission | — | Latest retained Node 18 patch |
+| 20.20.2 | Admission | — | Latest retained Node 20 patch |
+| 22.23.2 | Admission | — | Latest retained Node 22 patch |
+| 24.14.0 | Full lifecycle | — | Reported Codex signed-runtime regression |
+| 24.19.0 | Admission | — | Latest retained Node 24 patch |
+| 26.7.0 | Full lifecycle | Full lifecycle | Newest intended Node major |
+
+Electron uses the same retained x64 addon and a full ASAR lifecycle. The lane
+asserts Electron, embedded Node, and Node-API separately.
+
+| Electron | Embedded Node | Node-API | Role |
+| ---: | ---: | ---: | --- |
+| 28.0.0 | 18.18.2 | 9 | Oldest supported Electron; first stable Electron ESM/ASAR boundary |
+| 43.2.0 | 24.18.0 | 10 | Current representative Electron |
+
+OpenAI's signed executable is intentionally absent. Codex Desktop retains the
+consumer-specific Node 24.14.0 integration test.
+
+## Immutable published-release runtime lanes
 
 | Lane | x64 | ARM64 | ARMv7 hard-float | Evidence meaning |
 | --- | --- | --- | --- | --- |
@@ -95,7 +139,7 @@ independently reproduced release artifacts require no symbol newer than
 | Arch `base-devel` pinned | Passed at `096c531` | Not in Codex lane | Not configured | Codex advertised pacman lane |
 | openSUSE Tumbleweed pinned | Passed at `096c531` | Passed at `096c531` | Not configured | Representative current advertised openSUSE RPM lane |
 | locked Nix closure | Passed at `096c531` | Passed at `096c531` | Not configured | Source-built Nix package and exact Electron closure |
-| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `096c531` | Passed at `096c531` | QEMU-user lifecycle passed at `096c531` | Exact Codex host-runtime boundary |
+| Electron 42.3.0 / Node 24.15.0 ASAR | Passed at `096c531` | Passed at `096c531` | QEMU-user lifecycle passed at `096c531` | Legacy stock-Electron/Codex-upstream reference; not signed-runtime evidence |
 | Ubuntu 22.04 / kernel 5.15 QEMU component | Passed at `096c531` | Passed at `096c531` | ARMv7 system-QEMU lifecycle passed at `096c531` | Real kernel floor; ARMv7 remains emulated and has no native runner evidence |
 
 The images, official kernel/initrd hashes, and Nix inputs are pinned in

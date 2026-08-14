@@ -4,11 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadNativeMatrix } from "./lib/native-matrix.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const matrix = loadNativeMatrix(workspaceRoot);
 const scratchRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), "watchbound-local-baseline-"),
 );
@@ -114,17 +116,22 @@ function validateReport(source, expectedSuite) {
 }
 
 function assertSupportedNode() {
-  const [major, minor] = process.versions.node
+  const observed = process.versions.node
     .split(".")
     .map((part) => Number(part));
-  assert.equal(
-    major,
-    24,
-    `local baseline requires Node >=24.15.0 <25, found ${process.version}`,
-  );
+  const minimum = matrix.nodeMinimum.split(".").map((part) => Number(part));
+  let comparison = 0;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (observed[index] !== minimum[index]) {
+      comparison = observed[index] - minimum[index];
+      break;
+    }
+  }
   assert.ok(
-    minor >= 15,
-    `local baseline requires Node >=24.15.0 <25, found ${process.version}`,
+    observed.length === minimum.length &&
+      observed.every(Number.isSafeInteger) &&
+      comparison >= 0,
+    `local baseline requires Node ${matrix.nodeRange}, found ${process.version}`,
   );
 }
 

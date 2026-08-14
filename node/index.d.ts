@@ -88,15 +88,37 @@ export interface JsNativeDeliveryMetadata {
   binary: string
   sha256: string
   qualification: "target-pending-clean-ci" | "supported"
+  javascriptNodeMinimum: "18.15.0"
+  nodeRange: ">=18.15.0"
+  nodeApiMinimum: 6
   glibcMaximum: string
   kernelMinimum: string
 }
 
 export interface JsNativeTargetMatrix {
   schemaVersion: 1
-  nodeRange: ">=24.15.0 <25"
-  nodeMinimum: "24.15.0"
+  nodeRange: ">=18.15.0"
+  nodeMinimum: "18.15.0"
   nodeApiMinimum: 6
+  buildNode: "24.15.0"
+  testedRuntimes: {
+    node: Array<{
+      version: string
+      architectures: Array<"x64" | "arm64">
+      coverage: "admission" | "full-lifecycle"
+      role: string
+    }>
+    electron: Array<{
+      id: string
+      electron: string
+      node: string
+      nodeApi: number
+      architecture: "x64"
+      coverage: "full-lifecycle"
+      archiveArchitecture: "x64"
+      archiveSha256: string
+    }>
+  }
   rustMinimum: "1.88"
   packageManager: "pnpm@10.33.2"
   rootThreatModel: "trusted-stable-local-roots"

@@ -9,6 +9,8 @@ This index groups Watchbound's design, contract, qualification, evidence, and ma
 - [Structured errors](error-contract.md): stable `WATCHBOUND_*` codes, operations, and retry conditions
 - [Runtime and root qualification](runtime-qualification.md): target, host, environment, and filesystem evidence
 - [Support matrix](support-matrix.md): supported native targets, tested runtime lanes, and promotion requirements
+- [Node and Electron compatibility](runtime-compatibility.md): JavaScript floor, Node-API ABI floor, loader admission, and tested runtimes
+- [Draft next patch notes](release-notes-next.md): unversioned compatibility-release summary; not publication authorization
 - [Security and path threat model](security-threat-model.md): protected properties and out-of-scope adversaries
 
 ## Evaluate correctness and performance

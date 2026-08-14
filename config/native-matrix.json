@@ -1,8 +1,77 @@
 {
   "schemaVersion": 1,
-  "nodeRange": ">=24.15.0 <25",
-  "nodeMinimum": "24.15.0",
+  "nodeRange": ">=18.15.0",
+  "nodeMinimum": "18.15.0",
   "nodeApiMinimum": 6,
+  "buildNode": "24.15.0",
+  "testedRuntimes": {
+    "node": [
+      {
+        "version": "18.15.0",
+        "architectures": ["x64", "arm64"],
+        "coverage": "full-lifecycle",
+        "role": "javascript-minimum"
+      },
+      {
+        "version": "18.20.8",
+        "architectures": ["x64"],
+        "coverage": "admission",
+        "role": "latest-node-18"
+      },
+      {
+        "version": "20.20.2",
+        "architectures": ["x64"],
+        "coverage": "admission",
+        "role": "latest-node-20"
+      },
+      {
+        "version": "22.23.2",
+        "architectures": ["x64"],
+        "coverage": "admission",
+        "role": "latest-node-22"
+      },
+      {
+        "version": "24.14.0",
+        "architectures": ["x64"],
+        "coverage": "full-lifecycle",
+        "role": "codex-electron-regression"
+      },
+      {
+        "version": "24.19.0",
+        "architectures": ["x64"],
+        "coverage": "admission",
+        "role": "latest-node-24"
+      },
+      {
+        "version": "26.7.0",
+        "architectures": ["x64", "arm64"],
+        "coverage": "full-lifecycle",
+        "role": "newest-node"
+      }
+    ],
+    "electron": [
+      {
+        "id": "oldest-supported",
+        "electron": "28.0.0",
+        "node": "18.18.2",
+        "nodeApi": 9,
+        "architecture": "x64",
+        "coverage": "full-lifecycle",
+        "archiveArchitecture": "x64",
+        "archiveSha256": "d66b6774b886bd57519d49b9eb8e6e745b523519414a8819f67aa19f76e2b53c"
+      },
+      {
+        "id": "current",
+        "electron": "43.2.0",
+        "node": "24.18.0",
+        "nodeApi": 10,
+        "architecture": "x64",
+        "coverage": "full-lifecycle",
+        "archiveArchitecture": "x64",
+        "archiveSha256": "f77ca6ed67bbc68702b69b56ad499bca6ae090705ade7d04f0ac545e409dec68"
+      }
+    ]
+  },
   "rustMinimum": "1.88",
   "packageManager": "pnpm@10.33.2",
   "rootThreatModel": "trusted-stable-local-roots",

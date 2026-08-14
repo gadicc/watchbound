@@ -252,7 +252,7 @@ function inspectCapabilities(): void {
   const targetCompatible: boolean =
     capabilities.support.currentRuntime.targetCompatible;
   const targetPackage: string = capabilities.support.targets[0]!.package;
-  const nodeRange: ">=24.15.0 <25" = capabilities.support.nodeRange;
+  const nodeRange: ">=18.15.0" = capabilities.support.nodeRange;
   const initialExclusions: boolean = capabilities.features.initialExclusions;
   const directoryNameExclusions: boolean =
     capabilities.features.directoryNameExclusions;

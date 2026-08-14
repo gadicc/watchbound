@@ -11,6 +11,7 @@ const packageDelivery = packageManifest.watchbound?.delivery;
 
 const REQUIRED_METADATA_SCHEMA_VERSION = 1;
 const REQUIRED_BINDING_API_VERSION = 5;
+const REQUIRED_CAPABILITY_SCHEMA_VERSION = 5;
 const MAX_NATIVE_BYTES = 8 * 1024 * 1024;
 const MAX_MESSAGE_BYTES = 1_024;
 const MAX_CAUSE_MESSAGE_BYTES = 512;
@@ -19,6 +20,7 @@ const MAX_CAUSE_FIELD_BYTES = 128;
 const WatchboundLoaderErrorCode = Object.freeze({
   UNSUPPORTED_PLATFORM: "WATCHBOUND_UNSUPPORTED_PLATFORM",
   UNSUPPORTED_LIBC: "WATCHBOUND_UNSUPPORTED_LIBC",
+  UNSUPPORTED_KERNEL: "WATCHBOUND_UNSUPPORTED_KERNEL",
   UNSUPPORTED_NODE: "WATCHBOUND_UNSUPPORTED_NODE",
   UNSUPPORTED_NODE_API: "WATCHBOUND_UNSUPPORTED_NODE_API",
   TARGET_PACKAGE_MISSING: "WATCHBOUND_TARGET_PACKAGE_MISSING",
@@ -32,11 +34,12 @@ const WatchboundLoaderErrorCode = Object.freeze({
 });
 
 class WatchboundLoaderError extends Error {
-  constructor(code, message, cause) {
+  constructor(code, message, cause, details = {}) {
     super(boundedUtf8(message, MAX_MESSAGE_BYTES));
     Object.defineProperties(this, {
       name: { value: "WatchboundLoaderError", enumerable: false },
       code: { value: code, enumerable: true },
+      details: { value: deepFreeze(details), enumerable: true },
       ...(cause === undefined
         ? {}
         : { cause: { value: cause, enumerable: false } }),
@@ -55,25 +58,74 @@ function loadNative(options = {}) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.UNSUPPORTED_PLATFORM,
       `Watchbound has no native target for ${boundedUtf8(`${platform}/${arch}`, 128)}`,
+      undefined,
+      {
+        observed: { platform, architecture: arch },
+        supportedTargets: matrix.targets.map((target) => ({
+          platform: target.platform,
+          architecture: target.architecture,
+          id: target.id,
+        })),
+      },
     );
   }
 
   const report = injected(options, "report", process.report);
-  const libc = detectLibc(report);
+  const reportValue = readProcessReport(report);
+  const libc = detectLibcValue(reportValue);
+  const glibcVersion = detectedGlibcVersion(reportValue);
   const target = platformTargets[0];
   const runtimeArmAbi = assertRuntimeAbi(options, target);
-  if (libc !== target.libc) {
+  if (
+    libc !== target.libc ||
+    !supportsVersionMinimum(glibcVersion, matrix.releaseBaseline.glibcMaximum)
+  ) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
-      `Watchbound target ${target.id} requires detected ${target.libc}`,
+      `Watchbound target ${target.id} requires ${target.libc} ${matrix.releaseBaseline.glibcMaximum} or newer`,
+      undefined,
+      {
+        targetId: target.id,
+        observed: { family: libc, version: glibcVersion },
+        required: {
+          family: target.libc,
+          minimumVersion: matrix.releaseBaseline.glibcMaximum,
+        },
+      },
     );
   }
 
+  const kernelVersion = injected(options, "kernelVersion", os.release());
+  if (!supportsVersionMinimum(kernelVersion, matrix.releaseBaseline.kernelMinimum)) {
+    throw new WatchboundLoaderError(
+      WatchboundLoaderErrorCode.UNSUPPORTED_KERNEL,
+      `Watchbound requires Linux kernel ${matrix.releaseBaseline.kernelMinimum} or newer`,
+      undefined,
+      {
+        targetId: target.id,
+        observed: { kernel: kernelVersion },
+        required: { minimumKernel: matrix.releaseBaseline.kernelMinimum },
+      },
+    );
+  }
+
+  const expectedVersion = injected(options, "packageVersion", packageVersion);
+  const delivery = injected(options, "packageDelivery", packageDelivery);
+  const location = delivery === "controlled-source-build"
+    ? sourceLocation(options, target)
+    : packagedLocation(options, target, expectedVersion, matrix.nodeApiMinimum);
+  inspectExactNative(options, location, target);
+
   const nodeVersion = injected(options, "nodeVersion", process.versions?.node);
-  if (!supportsNodeRange(nodeVersion, matrix.nodeMinimum)) {
+  if (!supportsVersionMinimum(nodeVersion, matrix.nodeMinimum, true)) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.UNSUPPORTED_NODE,
       `Watchbound requires Node ${matrix.nodeRange}`,
+      undefined,
+      {
+        observed: { node: nodeVersion ?? null },
+        required: { javascriptMinimum: matrix.nodeMinimum },
+      },
     );
   }
 
@@ -82,15 +134,13 @@ function loadNative(options = {}) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.UNSUPPORTED_NODE_API,
       `Watchbound requires process Node-API ${matrix.nodeApiMinimum} or newer`,
+      undefined,
+      {
+        observed: { nodeApi: napiVersion ?? null },
+        required: { nodeApiMinimum: matrix.nodeApiMinimum },
+      },
     );
   }
-
-  const expectedVersion = injected(options, "packageVersion", packageVersion);
-  const delivery = injected(options, "packageDelivery", packageDelivery);
-  const location = delivery === "controlled-source-build"
-    ? sourceLocation(options, target)
-    : packagedLocation(options, target, expectedVersion);
-  inspectExactNative(options, location, target);
 
   const requireNative = injected(options, "requireNative", require);
   let binding;
@@ -104,7 +154,13 @@ function loadNative(options = {}) {
     );
   }
 
-  validateBinding(binding, expectedVersion, location.binaryPath, target);
+  validateBinding(
+    binding,
+    expectedVersion,
+    location.binaryPath,
+    target,
+    matrix.nodeApiMinimum,
+  );
   const deliveryMetadata = deepFreeze({
     schemaVersion: 1,
     delivery,
@@ -119,6 +175,9 @@ function loadNative(options = {}) {
     binary: target.binary,
     sha256: location.observedSha256,
     qualification: target.qualification,
+    javascriptNodeMinimum: matrix.nodeMinimum,
+    nodeRange: matrix.nodeRange,
+    nodeApiMinimum: matrix.nodeApiMinimum,
     glibcMaximum: matrix.releaseBaseline.glibcMaximum,
     kernelMinimum: matrix.releaseBaseline.kernelMinimum,
   });
@@ -148,7 +207,7 @@ function sourceLocation(options, target) {
   };
 }
 
-function packagedLocation(options, target, expectedVersion) {
+function packagedLocation(options, target, expectedVersion, requiredNodeApiMinimum) {
   if (injected(options, "packageDelivery", packageDelivery) !== "bundled-native-package") {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.TARGET_PACKAGE_INVALID,
@@ -192,12 +251,19 @@ function packagedLocation(options, target, expectedVersion) {
     !sameArmAbi(metadata?.armAbi, target.armAbi) ||
     metadata?.libc !== target.libc ||
     metadata?.binary !== target.binary ||
+    metadata?.nodeApiMinimum !== requiredNodeApiMinimum ||
     typeof metadata?.nativeSha256 !== "string" ||
     !/^[0-9a-f]{64}$/u.test(metadata.nativeSha256)
   ) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.TARGET_PACKAGE_INVALID,
       `Watchbound target package ${target.package} does not match this loader`,
+      undefined,
+      {
+        targetId: target.id,
+        targetPackage: target.package,
+        requiredNodeApiMinimum,
+      },
     );
   }
   const packageRoot = path.dirname(manifestPath);
@@ -393,15 +459,41 @@ function elfFlags(contents, elfClass) {
   return contents.readUInt32LE(offset);
 }
 
-function validateBinding(binding, expectedVersion, binaryPath, target) {
-  if (binding === null || typeof binding !== "object" ||
-      typeof binding.bindingMetadata !== "function") {
-    throw apiMismatch("Watchbound native binding metadata is unavailable");
+function validateBinding(
+  binding,
+  expectedVersion,
+  binaryPath,
+  target,
+  requiredNodeApiMinimum,
+) {
+  if (binding === null || typeof binding !== "object") {
+    throw apiMismatch(
+      "Watchbound native binding metadata is unavailable",
+      undefined,
+      { required: { bindingMetadata: "function" } },
+    );
   }
 
+  let bindingMetadata;
   let metadata;
   try {
-    metadata = binding.bindingMetadata();
+    bindingMetadata = binding.bindingMetadata;
+    if (typeof bindingMetadata !== "function") {
+      throw new TypeError("bindingMetadata is not a function");
+    }
+    const observed = bindingMetadata.call(binding);
+    metadata = observed !== null && typeof observed === "object" &&
+        !Array.isArray(observed)
+      ? {
+          schemaVersion: observed.schemaVersion,
+          bindingApiVersion: observed.bindingApiVersion,
+          nativeVersion: observed.nativeVersion,
+          engineVersion: observed.engineVersion,
+          nodeApiVersion: observed.nodeApiVersion,
+          targetTriple: observed.targetTriple,
+          buildProfile: observed.buildProfile,
+        }
+      : observed;
   } catch (error) {
     throw apiMismatch(
       "Watchbound native binding metadata could not be read",
@@ -410,11 +502,28 @@ function validateBinding(binding, expectedVersion, binaryPath, target) {
   }
 
   if (!validMetadataShape(metadata)) {
-    throw apiMismatch("Watchbound native binding metadata is malformed");
+    throw apiMismatch(
+      "Watchbound native binding metadata is malformed",
+      undefined,
+      { observed: { type: observedValueType(metadata) } },
+    );
   }
   if (metadata.schemaVersion !== REQUIRED_METADATA_SCHEMA_VERSION ||
       metadata.bindingApiVersion !== REQUIRED_BINDING_API_VERSION) {
-    throw apiMismatch("Watchbound native binding API metadata does not match this loader");
+    throw apiMismatch(
+      "Watchbound native binding API metadata does not match this loader",
+      undefined,
+      {
+        observed: {
+          metadataSchemaVersion: metadata.schemaVersion,
+          bindingApiVersion: metadata.bindingApiVersion,
+        },
+        required: {
+          metadataSchemaVersion: REQUIRED_METADATA_SCHEMA_VERSION,
+          bindingApiVersion: REQUIRED_BINDING_API_VERSION,
+        },
+      },
+    );
   }
   if (metadata.nativeVersion !== expectedVersion ||
       metadata.engineVersion !== expectedVersion ||
@@ -422,13 +531,90 @@ function validateBinding(binding, expectedVersion, binaryPath, target) {
     throw new WatchboundLoaderError(
       WatchboundLoaderErrorCode.NATIVE_VERSION_MISMATCH,
       "Watchbound native, engine, and package versions do not match",
+      undefined,
+      {
+        observed: {
+          nativeVersion: metadata.nativeVersion,
+          engineVersion: metadata.engineVersion,
+        },
+        required: { packageVersion: expectedVersion },
+      },
     );
   }
-  if (metadata.nodeApiVersion !== 6 ||
+  if (metadata.nodeApiVersion !== requiredNodeApiMinimum ||
       metadata.targetTriple !== target.rustTarget ||
       metadata.buildProfile !== "release") {
-    throw apiMismatch("Watchbound native build metadata does not match this loader");
+    throw apiMismatch(
+      "Watchbound native build metadata does not match this loader",
+      undefined,
+      {
+        observed: {
+          nodeApiVersion: metadata.nodeApiVersion,
+          targetTriple: metadata.targetTriple,
+          buildProfile: metadata.buildProfile,
+        },
+        required: {
+          nodeApiVersion: requiredNodeApiMinimum,
+          targetTriple: target.rustTarget,
+          buildProfile: "release",
+        },
+      },
+    );
   }
+
+  let readCapabilities;
+  try {
+    readCapabilities = binding.capabilities;
+  } catch (error) {
+    throw apiMismatch(
+      "Watchbound native capabilities could not be read",
+      safeCause(error, binaryPath, target.binary),
+    );
+  }
+  if (typeof readCapabilities !== "function") {
+    throw apiMismatch(
+      "Watchbound native capabilities are unavailable",
+      undefined,
+      { required: { capabilities: "function" } },
+    );
+  }
+  let capabilitySchemaVersion = null;
+  let capabilityValueType = "unknown";
+  try {
+    const capabilities = readCapabilities.call(binding);
+    capabilityValueType = observedValueType(capabilities);
+    if (
+      capabilities !== null &&
+      typeof capabilities === "object" &&
+      !Array.isArray(capabilities)
+    ) {
+      capabilitySchemaVersion = capabilities.schemaVersion;
+    }
+  } catch (error) {
+    throw apiMismatch(
+      "Watchbound native capabilities could not be read",
+      safeCause(error, binaryPath, target.binary),
+    );
+  }
+  if (
+    capabilityValueType !== "object" ||
+    capabilitySchemaVersion !== REQUIRED_CAPABILITY_SCHEMA_VERSION
+  ) {
+    throw apiMismatch(
+      "Watchbound native capability schema does not match this loader",
+      undefined,
+      {
+        observed: { capabilitySchemaVersion, type: capabilityValueType },
+        required: { capabilitySchemaVersion: REQUIRED_CAPABILITY_SCHEMA_VERSION },
+      },
+    );
+  }
+}
+
+function observedValueType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
 }
 
 function validMetadataShape(metadata) {
@@ -444,11 +630,12 @@ function validMetadataShape(metadata) {
     typeof metadata.buildProfile === "string";
 }
 
-function apiMismatch(message, cause) {
+function apiMismatch(message, cause, details) {
   return new WatchboundLoaderError(
     WatchboundLoaderErrorCode.NATIVE_API_MISMATCH,
     message,
     cause,
+    details,
   );
 }
 
@@ -469,14 +656,20 @@ function assertWrapperVersion(version, delivery) {
   }
 }
 
-function detectLibc(report) {
-  let value;
+function readProcessReport(report) {
   try {
-    if (!report || typeof report.getReport !== "function") return "unknown";
-    value = report.getReport();
+    if (!report || typeof report.getReport !== "function") return null;
+    return report.getReport();
   } catch {
-    return "unknown";
+    return null;
   }
+}
+
+function detectLibc(report) {
+  return detectLibcValue(readProcessReport(report));
+}
+
+function detectLibcValue(value) {
   if (typeof value?.header?.glibcVersionRuntime === "string" &&
       value.header.glibcVersionRuntime.length > 0) {
     return "glibc";
@@ -489,19 +682,34 @@ function detectLibc(report) {
   return "unknown";
 }
 
-function supportsNodeRange(value, minimum) {
-  const parsed = parseVersion(value);
-  const floor = parseVersion(minimum);
-  if (parsed === null || floor === null || parsed[0] !== 24) return false;
-  return compareVersions(parsed, floor) >= 0;
+function detectedGlibcVersion(value) {
+  const version = value?.header?.glibcVersionRuntime;
+  return typeof version === "string" && version.length > 0 ? version : null;
 }
 
-function parseVersion(value) {
+function supportsVersionMinimum(value, minimum, exact = false) {
+  const parsed = parseVersion(value, exact);
+  const floor = parseVersion(minimum, exact);
+  if (parsed === null || floor === null) return false;
+  const width = Math.max(parsed.length, floor.length);
+  return compareVersions(
+    paddedVersion(parsed, width),
+    paddedVersion(floor, width),
+  ) >= 0;
+}
+
+function parseVersion(value, exact) {
   if (typeof value !== "string") return null;
-  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(value);
+  const match = exact
+    ? /^(\d+)\.(\d+)\.(\d+)$/u.exec(value)
+    : /^(\d+)\.(\d+)(?:\.(\d+))?(?:[-+].*)?$/u.exec(value);
   if (match === null) return null;
-  const parts = match.slice(1).map(Number);
+  const parts = match.slice(1).filter((part) => part !== undefined).map(Number);
   return parts.every(Number.isSafeInteger) ? parts : null;
+}
+
+function paddedVersion(value, width) {
+  return Array.from({ length: width }, (_, index) => value[index] ?? 0);
 }
 
 function compareVersions(left, right) {
@@ -526,11 +734,14 @@ function loadNativeMatrix() {
 }
 
 function validateNativeMatrix(matrix) {
+  const parsedMinimum = parseVersion(matrix?.nodeMinimum, true);
   if (
     matrix?.schemaVersion !== 1 ||
-    typeof matrix.nodeRange !== "string" ||
-    typeof matrix.nodeMinimum !== "string" ||
-    !Number.isInteger(matrix.nodeApiMinimum) ||
+    parsedMinimum === null ||
+    matrix.nodeRange !== `>=${matrix.nodeMinimum}` ||
+    !Number.isInteger(matrix.nodeApiMinimum) || matrix.nodeApiMinimum < 1 ||
+    parseVersion(matrix.releaseBaseline?.kernelMinimum, false) === null ||
+    parseVersion(matrix.releaseBaseline?.glibcMaximum, false) === null ||
     !Array.isArray(matrix.targets) ||
     matrix.targets.length === 0 ||
     new Set(matrix.targets.map((target) => target.id)).size !== matrix.targets.length

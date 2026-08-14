@@ -48,6 +48,7 @@ function glibcReport() {
 function validBinding(metadata = validMetadata) {
   return {
     bindingMetadata: () => metadata,
+    capabilities: () => ({ schemaVersion: 5 }),
     marker: "native-binding",
   };
 }
@@ -66,8 +67,9 @@ function loadOptions(overrides = {}) {
   return {
     platform: "linux",
     arch: "x64",
-    nodeVersion: "24.15.0",
+    nodeVersion: "24.14.0",
     napiVersion: "9",
+    kernelVersion: "6.8.0",
     report: glibcReport(),
     processConfig: { variables: {} },
     endianness: "LE",
@@ -93,6 +95,8 @@ function expectLoaderError(action, code) {
     assert.ok(error instanceof WatchboundLoaderError);
     assert.equal(error.name, "WatchboundLoaderError");
     assert.equal(error.code, code);
+    assert.ok(error.details && typeof error.details === "object");
+    assert.ok(Object.isFrozen(error.details));
     assert.ok(Buffer.byteLength(error.message, "utf8") <= 1_024);
     return true;
   });
@@ -282,6 +286,7 @@ test("loader distinguishes detected glibc from musl and unknown libc", () => {
   assert.equal(detectLibc({ getReport: () => { throw new Error("report failed"); } }), "unknown");
 
   for (const report of [
+    { getReport: () => ({ header: { glibcVersionRuntime: "2.34" }, sharedObjects: [] }) },
     { getReport: () => ({ header: {}, sharedObjects: ["/lib/libc.musl-x86_64.so.1"] }) },
     { getReport: () => ({ header: {}, sharedObjects: [] }) },
   ]) {
@@ -290,6 +295,27 @@ test("loader distinguishes detected glibc from musl and unknown libc", () => {
       WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
     );
   }
+});
+
+test("loader requires the qualified kernel floor before inspecting the addon", () => {
+  for (const kernelVersion of [undefined, null, "", "5.14.99", "unknown"]) {
+    let filesystemCalls = 0;
+    expectLoaderError(
+      () => loadNative(loadOptions({
+        kernelVersion,
+        existsSync: () => {
+          filesystemCalls += 1;
+          return true;
+        },
+      })),
+      WatchboundLoaderErrorCode.UNSUPPORTED_KERNEL,
+    );
+    assert.equal(filesystemCalls, 0);
+  }
+  assert.equal(
+    loadNative(loadOptions({ kernelVersion: "5.15.0-185-generic" })).marker,
+    "native-binding",
+  );
 });
 
 test("loader requires an integer process Node-API version of at least six", () => {
@@ -303,17 +329,52 @@ test("loader requires an integer process Node-API version of at least six", () =
   assert.equal(loadNative(loadOptions({ napiVersion: "10" })).marker, "native-binding");
 });
 
-test("loader enforces the exact supported Node 24 range", () => {
-  for (const nodeVersion of [undefined, null, "", "24.14.9", "24.15.0-rc.1", "23.9.0", "25.0.0"]) {
+test("loader enforces only the JavaScript minimum and has no Node upper bound", () => {
+  for (const nodeVersion of [undefined, null, "", "18.14.9", "18.15.0-rc.1", "17.99.0"]) {
     expectLoaderError(
       () => loadNative(loadOptions({ nodeVersion })),
       WatchboundLoaderErrorCode.UNSUPPORTED_NODE,
     );
   }
-  assert.equal(
-    loadNative(loadOptions({ nodeVersion: "24.99.0" })).marker,
-    "native-binding",
+  for (const nodeVersion of ["18.15.0", "24.14.0", "25.0.0", "99.0.0"]) {
+    assert.equal(loadNative(loadOptions({ nodeVersion })).marker, "native-binding");
+  }
+});
+
+test("loader validates native availability before JavaScript and Node-API admission", () => {
+  expectLoaderError(
+    () => loadNative(loadOptions({
+      nodeVersion: "17.0.0",
+      napiVersion: undefined,
+      existsSync: () => false,
+    })),
+    WatchboundLoaderErrorCode.NATIVE_NOT_BUILT,
   );
+});
+
+test("loader fails closed for malformed compatibility matrix metadata", () => {
+  const malformed = [
+    { ...nativeMatrix, nodeRange: ">=18.15.0 <27" },
+    { ...nativeMatrix, nodeMinimum: "18.15" },
+    { ...nativeMatrix, nodeApiMinimum: 0 },
+    { ...nativeMatrix, releaseBaseline: { ...nativeMatrix.releaseBaseline, kernelMinimum: "5.x" } },
+  ];
+  for (const matrix of malformed) {
+    expectLoaderError(
+      () => loadNative(loadOptions({ matrix })),
+      WatchboundLoaderErrorCode.NATIVE_API_MISMATCH,
+    );
+  }
+});
+
+test("loader does not turn build pins or tested runtime evidence into admission policy", () => {
+  for (const matrix of [
+    { ...nativeMatrix, buildNode: "not-runtime-policy" },
+    { ...nativeMatrix, testedRuntimes: null },
+    { ...nativeMatrix, buildNode: undefined, testedRuntimes: undefined },
+  ]) {
+    assert.equal(loadNative(loadOptions({ matrix })).marker, "native-binding");
+  }
 });
 
 test("loader reports a missing exact local addon without trying to require it", () => {
@@ -354,6 +415,7 @@ test("loader bounds and sanitizes dlopen failures", () => {
   assert.ok(Buffer.byteLength(caught.message, "utf8") <= 1_024);
   assert.ok(Buffer.byteLength(caught.cause.message, "utf8") <= 512);
   assert.ok(Object.isFrozen(caught.cause));
+  assert.ok(Object.isFrozen(caught.details));
 });
 
 test("loader rejects malformed or unreadable binding metadata as an API mismatch", () => {
@@ -365,6 +427,19 @@ test("loader rejects malformed or unreadable binding metadata as an API mismatch
     { bindingMetadata: () => { throw new Error(`${nativePath}: metadata failed`); } },
     { bindingMetadata: () => ({ ...validMetadata, buildProfile: "" }) },
     { bindingMetadata: () => ({ ...validMetadata, targetTriple: null }) },
+    {
+      get bindingMetadata() {
+        throw new Error(`${nativePath}: metadata getter failed`);
+      },
+    },
+    {
+      bindingMetadata: () => ({
+        ...validMetadata,
+        get schemaVersion() {
+          throw new Error(`${nativePath}: metadata field failed`);
+        },
+      }),
+    },
   ]) {
     expectLoaderError(
       () => loadNative(loadOptions({ requireNative: () => binding })),
@@ -382,9 +457,15 @@ test("loader distinguishes metadata API and version mismatches", () => {
     { ...validMetadata, targetTriple: "aarch64-unknown-linux-gnu" },
     { ...validMetadata, buildProfile: "debug" },
   ]) {
-    expectLoaderError(
+    assert.throws(
       () => loadNative(loadOptions({ requireNative: () => validBinding(metadata) })),
-      WatchboundLoaderErrorCode.NATIVE_API_MISMATCH,
+      (error) => {
+        assert.ok(error instanceof WatchboundLoaderError);
+        assert.equal(error.code, WatchboundLoaderErrorCode.NATIVE_API_MISMATCH);
+        assert.ok(Object.isFrozen(error.details));
+        assert.ok(error.details.required || error.details.observed);
+        return true;
+      },
     );
   }
 
@@ -395,6 +476,40 @@ test("loader distinguishes metadata API and version mismatches", () => {
     expectLoaderError(
       () => loadNative(loadOptions({ requireNative: () => validBinding(metadata) })),
       WatchboundLoaderErrorCode.NATIVE_VERSION_MISMATCH,
+    );
+  }
+});
+
+test("loader verifies native capabilities after loading", () => {
+  for (const binding of [
+    { bindingMetadata: () => validMetadata },
+    { bindingMetadata: () => validMetadata, capabilities: null },
+    { bindingMetadata: () => validMetadata, capabilities: () => null },
+    { bindingMetadata: () => validMetadata, capabilities: () => ({ schemaVersion: 4 }) },
+    {
+      bindingMetadata: () => validMetadata,
+      get capabilities() {
+        throw new Error(`${nativePath}: capabilities getter failed`);
+      },
+    },
+    {
+      bindingMetadata: () => validMetadata,
+      capabilities: () => ({
+        get schemaVersion() {
+          throw new Error(`${nativePath}: capability field failed`);
+        },
+      }),
+    },
+    {
+      bindingMetadata: () => validMetadata,
+      capabilities: () => {
+        throw new Error(`${nativePath}: capabilities failed`);
+      },
+    },
+  ]) {
+    expectLoaderError(
+      () => loadNative(loadOptions({ requireNative: () => binding })),
+      WatchboundLoaderErrorCode.NATIVE_API_MISMATCH,
     );
   }
 });
@@ -442,8 +557,9 @@ test("bundled loader resolves one exact target package and verifies its digest",
     targetTriple: x64Target.rustTarget,
     architecture: x64Target.architecture,
       armAbi: null,
-    libc: x64Target.libc,
+      libc: x64Target.libc,
       binary: x64Target.binary,
+      nodeApiMinimum: nativeMatrix.nodeApiMinimum,
       nativeSha256: sha256,
     },
   };
@@ -498,6 +614,9 @@ test("bundled loader resolves one exact target package and verifies its digest",
     binary: x64Target.binary,
     sha256,
     qualification: "supported",
+    javascriptNodeMinimum: "18.15.0",
+    nodeRange: ">=18.15.0",
+    nodeApiMinimum: 6,
     glibcMaximum: "2.35",
     kernelMinimum: "5.15",
   });

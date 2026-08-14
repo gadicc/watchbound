@@ -158,8 +158,8 @@ function recordEvidence(destination) {
     "qualification host is not Ubuntu 24.04",
   );
   check(
-    process.version === `v${matrix.nodeMinimum}`,
-    "Node version differs from the pinned version",
+    process.version === `v${matrix.buildNode}`,
+    "Node version differs from the pinned build/qualification version",
   );
   check(
     target.overflowRunner ===

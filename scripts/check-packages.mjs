@@ -52,6 +52,7 @@ try {
       armAbi: target.armAbi ?? null,
       libc: target.libc,
       binary: target.binary,
+      nodeApiMinimum: matrix.nodeApiMinimum,
       nativeSha256: packagedTarget.sha256,
     });
     assert.deepEqual(

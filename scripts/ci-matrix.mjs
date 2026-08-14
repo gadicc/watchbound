@@ -133,8 +133,41 @@ const registryEmulated = matrix.targets
     binfmtImage: target.runtimeRootfs.binfmtImage,
     rootfsSnapshot: target.runtimeRootfs.snapshot,
   })));
+const nodeRuntime = matrix.testedRuntimes.node.flatMap((runtime) =>
+  runtime.architectures.map((architecture) => {
+    const target = matrix.targets.find((candidate) =>
+      candidate.architecture === architecture && candidate.buildMode !== "cross");
+    assert.ok(target, `Node runtime ${runtime.version} omits target ${architecture}`);
+    return {
+      target: target.id,
+      architecture,
+      runner: target.runner,
+      binary: target.binary,
+      nodeVersion: runtime.version,
+      coverage: runtime.coverage,
+      role: runtime.role,
+    };
+  }));
+const electronRuntime = matrix.testedRuntimes.electron.map((runtime) => {
+  const target = matrix.targets.find((candidate) =>
+    candidate.architecture === runtime.architecture);
+  assert.ok(target, `Electron runtime ${runtime.id} omits ${runtime.architecture}`);
+  return {
+    target: target.id,
+    architecture: target.architecture,
+    runner: target.runner,
+    binary: target.binary,
+    runtime: runtime.id,
+    electron: runtime.electron,
+    node: runtime.node,
+    nodeApi: runtime.nodeApi,
+    electronArchitecture: runtime.archiveArchitecture,
+    electronSha256: runtime.archiveSha256,
+  };
+});
 
 export const outputs = {
+  buildNode: matrix.buildNode,
   source,
   cross,
   runtime,
@@ -145,12 +178,15 @@ export const outputs = {
   nix,
   registry,
   registryEmulated,
+  nodeRuntime,
+  electronRuntime,
 };
 if (import.meta.main && options["github-output"]) {
   const destination = path.resolve(options["github-output"]);
   fs.appendFileSync(
     destination,
-    `${Object.entries(outputs).map(([name, value]) => `${name}=${JSON.stringify(value)}`).join("\n")}\n`,
+    `${Object.entries(outputs).map(([name, value]) =>
+      `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join("\n")}\n`,
   );
 } else if (import.meta.main) {
   process.stdout.write(`${JSON.stringify(outputs, null, 2)}\n`);

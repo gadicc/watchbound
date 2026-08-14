@@ -113,6 +113,10 @@ async function runSmoke() {
   assert.equal(nativePackage.name, nativeTarget.package);
   assert.equal(nativePackage.watchbound?.target, nativeTarget.id);
   assert.equal(nativePackage.watchbound?.targetTriple, nativeTarget.rustTarget);
+  assert.equal(
+    nativePackage.watchbound?.nodeApiMinimum,
+    nativeMatrix.nodeApiMinimum,
+  );
   assert.ok(fs.existsSync(nativePath), `missing installed native addon: ${nativePath}`);
   const nativeSha256 = sha256(nativePath);
   assert.equal(
@@ -423,11 +427,13 @@ async function checkRealDeliveryAndSerialization(engine) {
   let entered = 0;
   let active = 0;
   let maximumActive = 0;
+  const invalidatedPaths = [];
   try {
     logPhase("real-delivery-subscribe-start");
     subscription = await engine.subscribe(
       root,
-      async () => {
+      async (batch) => {
+        invalidatedPaths.push(...batch.invalidatedPaths);
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         entered += 1;
@@ -463,6 +469,24 @@ async function checkRealDeliveryAndSerialization(engine) {
     await waitFor(() => entered >= 2, "the serialized callback did not resume");
     logPhase("real-delivery-second-callback-wait-complete");
     assert.equal(maximumActive, 1);
+    const first = path.join(root, "first.txt");
+    const second = path.join(root, "second.txt");
+    const beforeChange = entered;
+    const firstInvalidations = invalidatedPaths.filter((value) => value === first).length;
+    fs.appendFileSync(first, "-changed");
+    await waitFor(
+      () => entered > beforeChange &&
+        invalidatedPaths.filter((value) => value === first).length > firstInvalidations,
+      "the file-change callback was not delivered",
+    );
+    const beforeDelete = entered;
+    const secondInvalidations = invalidatedPaths.filter((value) => value === second).length;
+    fs.rmSync(second);
+    await waitFor(
+      () => entered > beforeDelete &&
+        invalidatedPaths.filter((value) => value === second).length > secondInvalidations,
+      "the file-deletion callback was not delivered",
+    );
   } finally {
     logPhase("real-delivery-disposal-start");
     await releaseCallbackGateAndJoinDisposal(

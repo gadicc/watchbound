@@ -10,6 +10,15 @@ Release `2.1.1` carries public capability schema 9, raw native capability
 schema 5, and binding API 5. Future checked-in package, Cargo, and lockfile
 placeholders must still remain at `0.0.0-development`.
 
+For the next patch candidate, release qualification also consumes the
+matrix-generated Node and Electron compatibility lanes. Each architecture's
+source-build artifact is retained once and reused byte-for-byte across its Node
+versions; Node 18.15.0, 24.14.0, and 26.7.0 run the full installed lifecycle,
+while current patches of the other supported even-major lines run admission.
+x64 Electron 28.0.0 and 43.2.0 reuse that same x64 addon and assert Electron,
+embedded Node, and Node-API independently. These lanes do not replace the
+separate distro, glibc, kernel, ARM ABI, Nix, overflow, or registry gates.
+
 ## ARMv7 2.1.x release record
 
 1. Implementation revision `1c9b4e3` completed the 24-job CI matrix, including

@@ -14,12 +14,32 @@ const options = parseOptions(process.argv.slice(2));
 const electron = path.resolve(options.electron);
 const matrix = loadNativeMatrix(workspaceRoot);
 const target = targetForId(matrix, options.target);
+const expectedRuntime = options.runtime
+  ? matrix.testedRuntimes.electron.find(({ id }) => id === options.runtime)
+  : {
+      id: "codex-upstream-reference",
+      electron: matrix.codexRuntime.electron,
+      node: matrix.codexRuntime.node,
+      nodeApi: matrix.codexRuntime.nodeApi,
+    };
+assert.ok(expectedRuntime, `native matrix omits Electron runtime ${options.runtime}`);
+if (options.runtime) {
+  assert.equal(expectedRuntime.architecture, target.architecture);
+}
 const packageManifest = readJson(path.join(workspaceRoot, "dist/native-package-manifest.json"));
 const packagedTarget = packageManifest.targets.find(({ id }) => id === target.id);
 assert.ok(packagedTarget, `prepared package tree omits ${target.id}`);
 const nativePath = path.join(workspaceRoot, "dist", packagedTarget.root, target.binary);
 const nativeSha256 = sha256(nativePath);
 assert.equal(nativeSha256, packagedTarget.sha256);
+if (options["native-sha256"]) {
+  assert.match(options["native-sha256"], /^[0-9a-f]{64}$/u);
+  assert.equal(
+    nativeSha256,
+    options["native-sha256"],
+    "prepared package does not contain the retained source-build addon",
+  );
+}
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-electron-asar-"));
 const appRoot = path.join(scratch, "app");
@@ -58,13 +78,16 @@ try {
     "JSON.stringify(process.versions)",
   ]);
   const runtime = JSON.parse(versions.stdout.trim());
-  assert.equal(runtime.electron, matrix.codexRuntime.electron);
-  assert.equal(runtime.node, matrix.codexRuntime.node);
-  assert.ok(Number(runtime.napi) >= matrix.codexRuntime.nodeApi);
+  assert.equal(runtime.electron, expectedRuntime.electron);
+  assert.equal(runtime.node, expectedRuntime.node);
+  assert.equal(Number(runtime.napi), expectedRuntime.nodeApi);
 
   const smoke = runElectron(electron, [asarPath], {
     WATCHBOUND_EXPECTED_TARGET: target.id,
     WATCHBOUND_EXPECTED_NATIVE_SHA256: nativeSha256,
+    WATCHBOUND_EXPECTED_ELECTRON: expectedRuntime.electron,
+    WATCHBOUND_EXPECTED_NODE: expectedRuntime.node,
+    WATCHBOUND_EXPECTED_NODE_API: String(expectedRuntime.nodeApi),
   });
   const resultLine = smoke.stdout.split(/\r?\n/u)
     .find((line) => line.includes('"kind":"watchbound-electron-asar-smoke"'));
@@ -79,6 +102,7 @@ try {
     kind: "watchbound-electron-asar-qualification",
     status: "passed",
     target: target.id,
+    runtimeId: expectedRuntime.id,
     runtime,
     archive: {
       name: matrix.codexRuntime.asar.archive,
@@ -134,7 +158,7 @@ function parseOptions(args) {
     const flag = args[index];
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
-      throw new Error("usage: check-electron-asar.mjs --electron <path> --target <id> [--evidence <path>] [--emulator <path> --emulator-cpu <cpu> --rootfs <path>]");
+      throw new Error("usage: check-electron-asar.mjs --electron <path> --target <id> [--runtime <id>] [--native-sha256 <digest>] [--evidence <path>] [--emulator <path> --emulator-cpu <cpu> --rootfs <path>]");
     }
     parsed[flag.slice(2)] = value;
   }

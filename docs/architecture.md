@@ -866,7 +866,8 @@ other backends or product surface.
 The current source matrix in `docs/support-matrix.md` covers supported x64,
 ARM64, and exact ARMv7 hard-float GNU/Linux targets,
 with a kernel 5.15/glibc 2.35 baseline and Node
-`>=24.15.0 <25`. Detected WSL and environments with recognized container
+`>=18.15.0` plus Node-API 6 or newer. Tested Node/Electron releases are
+evidence, not an allowlist, and the loader has no Node upper bound. Detected WSL and environments with recognized container
 evidence cannot qualify. Network filesystems, Filesystem in Userspace (FUSE),
 and overlay filesystems are unqualified; musl, soft-float/unknown/non-v7 ARM,
 big-endian ARM, and non-Linux platforms are unsupported. The engine traverses

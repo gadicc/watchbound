@@ -34,6 +34,9 @@ jobs:
       qualification: ${{ steps.matrix.outputs.qualification }}
       kernel: ${{ steps.matrix.outputs.kernel }}
       nix: ${{ steps.matrix.outputs.nix }}
+      node-runtime: ${{ steps.matrix.outputs.nodeRuntime }}
+      electron-runtime: ${{ steps.matrix.outputs.electronRuntime }}
+      build-node: ${{ steps.matrix.outputs.buildNode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -69,7 +72,7 @@ jobs:
           test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''
@@ -85,7 +88,7 @@ jobs:
           rustup default 1.88.0
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
-          test "$(node --version)" = v24.15.0
+          test "$(node --version)" = "v${{ needs.matrix.outputs.build-node }}"
           test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
           rustc --version | grep -Eq '^rustc 1\.88\.0 '
           test "$(pnpm --version)" = 10.33.2
@@ -175,7 +178,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''
@@ -196,7 +199,7 @@ jobs:
           rustup target add "${{ matrix.rustTarget }}"
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
-          test "$(node --version)" = v24.15.0
+          test "$(node --version)" = "v${{ needs.matrix.outputs.build-node }}"
           test "$(node -p 'process.arch')" = x64
           "${{ matrix.linker }}" --version
       - name: Cross-compile and validate the exact target package
@@ -228,6 +231,138 @@ jobs:
           retention-days: 30
           overwrite: true
 
+  node-runtime-compatibility:
+    name: Node ${{ matrix.nodeVersion }} ${{ matrix.architecture }} (${{ matrix.coverage }})
+    needs: [matrix, source-build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.node-runtime) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.matrix.outputs.build-node }}
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
+      - name: Prepare packages around the one retained native artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}
+          path: node
+      - shell: bash
+        run: |
+          set -euo pipefail
+          retained_native_sha256="$(sha256sum "node/${{ matrix.binary }}" | cut -d ' ' -f 1)"
+          echo "WATCHBOUND_RETAINED_NATIVE_SHA256=$retained_native_sha256" >> "$GITHUB_ENV"
+          pnpm package:prepare
+          node scripts/pack-prepared-packages.mjs --target "${{ matrix.target }}"
+          sha256sum "node/${{ matrix.binary }}"
+      - name: Select the runtime under test without rebuilding the addon
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.nodeVersion }}
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - name: Exercise loader admission or the full installed lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v${{ matrix.nodeVersion }}"
+          test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
+          node scripts/check-node-runtime.mjs \
+            --target "${{ matrix.target }}" \
+            --version "${{ matrix.nodeVersion }}" \
+            --coverage "${{ matrix.coverage }}" \
+            --native-sha256 "$WATCHBOUND_RETAINED_NATIVE_SHA256" \
+            --evidence "$RUNNER_TEMP/watchbound-node-${{ matrix.nodeVersion }}-${{ matrix.architecture }}.json"
+      - if: always() && matrix.coverage == 'full-lifecycle'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-node-${{ matrix.nodeVersion }}-${{ matrix.architecture }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-node-${{ matrix.nodeVersion }}-${{ matrix.architecture }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  electron-runtime-compatibility:
+    name: Electron ${{ matrix.electron }} / Node ${{ matrix.node }} (${{ matrix.runtime }})
+    needs: [matrix, source-build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.electron-runtime) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.matrix.outputs.build-node }}
+          architecture: ${{ matrix.architecture }}
+          package-manager-cache: false
+      - if: inputs.candidate_version != ''
+        uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ inputs.candidate_sha }}
+          version: ${{ inputs.candidate_version }}
+      - name: Prepare packages around the one retained native artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: watchbound-ci-native-${{ matrix.target }}
+          path: node
+      - name: Exercise the exact addon through the pinned Electron archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          retained_native_sha256="$(sha256sum "node/${{ matrix.binary }}" | cut -d ' ' -f 1)"
+          pnpm package:prepare
+          archive="$RUNNER_TEMP/electron-${{ matrix.electron }}.zip"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/electron/electron/releases/download/v${{ matrix.electron }}/electron-v${{ matrix.electron }}-linux-${{ matrix.electronArchitecture }}.zip"
+          printf '%s  %s\n' '${{ matrix.electronSha256 }}' "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/electron-${{ matrix.electron }}"
+          unzip -q "$archive" -d "$RUNNER_TEMP/electron-${{ matrix.electron }}"
+          node scripts/check-electron-asar.mjs \
+            --electron "$RUNNER_TEMP/electron-${{ matrix.electron }}/electron" \
+            --target "${{ matrix.target }}" \
+            --runtime "${{ matrix.runtime }}" \
+            --native-sha256 "$retained_native_sha256" \
+            --evidence "$RUNNER_TEMP/watchbound-electron-${{ matrix.runtime }}.json"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watchbound-electron-${{ matrix.runtime }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbound-electron-${{ matrix.runtime }}.json
+          if-no-files-found: warn
+          retention-days: 90
+
   armv7-runtime:
     name: QEMU ARMv7 Electron lifecycle (${{ matrix.target }})
     needs: [matrix, cross-build]
@@ -245,7 +380,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''
@@ -363,7 +498,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''
@@ -425,7 +560,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''
@@ -522,7 +657,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''
@@ -587,7 +722,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.15.0
+          node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
           package-manager-cache: false
       - if: inputs.candidate_version != ''

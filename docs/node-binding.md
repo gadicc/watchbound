@@ -28,6 +28,15 @@ Node and avoids binding this package directly to V8 or libuv APIs. Node-API 6
 also gives the proof a JavaScript `bigint` representation for monotonic batch
 sequences.
 
+Published-package inspection confirms the build configuration at the artifact
+boundary. The x64, ARM64, and ARMv7 addons each export only the
+`napi_register_module_v1` Node entry point and have no undefined or directly
+linked `napi_*`, V8, Node C++, or libuv symbol; napi-rs dynamically resolves
+the host Node-API table. The x64 published addon reports Node-API 6 through its
+runtime `bindingMetadata()` contract under a newer Node major. See
+[`runtime-compatibility.md`](runtime-compatibility.md) for hashes, commands,
+JavaScript-floor evidence, and the resulting admission policy.
+
 The resulting `.node` file is a shared library loaded into the Node or Electron
 process. It is not a helper executable. Synchronous binding entry points,
 native faults, descriptors, Rust threads, and memory therefore belong to the
@@ -147,16 +156,20 @@ with `--no-js` and writes its diagnostic declaration output only to the ignored
 `native.generated.d.ts`; the workspace build verifies that the hand-owned
 loader, declarations, and loader implementation remain byte-identical.
 
-The loader accepts exactly `watchbound.linux-x64-gnu.node` beside the package.
-It has no environment-variable override, optional-package lookup, WASI branch,
+The loader accepts exactly the one matrix filename for the current Linux
+architecture, either beside a controlled source build or in the resolved exact
+target package. It has no environment-variable override, WASI branch,
 download, or install-time build fallback. Before exporting the binding it
-requires Linux x64, detected glibc, Node-API 6 or newer, metadata schema 1,
-binding API 5, matching package/native/engine versions, Node-API build floor 6,
-the `x86_64-unknown-linux-gnu` target, and a release build profile. The wrapper
-then asserts its own package version against the native package version.
+requires the configured architecture and ARM ABI, detected glibc 2.35+, kernel
+5.15+, an intact target artifact, Node 18.15.0+, process Node-API 6+, metadata
+schema 1, binding API 5, matching package/native/engine versions, Node-API build
+floor 6, the expected target triple and release profile, and raw capability
+schema 5. The wrapper then asserts its own package version and verifies the
+detailed capability contract.
 
 Definitive loader failures have bounded `WATCHBOUND_UNSUPPORTED_PLATFORM`,
-`WATCHBOUND_UNSUPPORTED_LIBC`, `WATCHBOUND_UNSUPPORTED_NODE_API`,
+`WATCHBOUND_UNSUPPORTED_LIBC`, `WATCHBOUND_UNSUPPORTED_KERNEL`,
+`WATCHBOUND_UNSUPPORTED_NODE`, `WATCHBOUND_UNSUPPORTED_NODE_API`,
 `WATCHBOUND_NATIVE_NOT_BUILT`, `WATCHBOUND_NATIVE_LOAD_FAILED`,
 `WATCHBOUND_NATIVE_VERSION_MISMATCH`, or `WATCHBOUND_NATIVE_API_MISMATCH`
 codes. These import-time packaging diagnostics are separate from the

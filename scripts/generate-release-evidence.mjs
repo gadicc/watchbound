@@ -57,6 +57,7 @@ const nativeArtifacts = packageManifest.targets.map((packagedTarget) => {
   assert.deepEqual(targetManifest.watchbound?.armAbi, target.armAbi ?? null);
   assert.equal(targetManifest.watchbound?.libc, target.libc);
   assert.equal(targetManifest.watchbound?.binary, target.binary);
+  assert.equal(targetManifest.watchbound?.nodeApiMinimum, matrix.nodeApiMinimum);
   assert.equal(targetManifest.watchbound?.nativeSha256, packagedTarget.sha256);
   return inspectNative(binaryPath, target);
 });

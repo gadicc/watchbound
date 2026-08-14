@@ -15,10 +15,12 @@ are in
 
 ## One matrix, three package roles
 
-`config/native-matrix.json` is the source of truth for runtime versions,
-targets, filenames, package names, ELF identities, distro lanes, and explicit
-exclusions. Generated npm, JSR, CI, release, capability, Electron, and Nix
-paths consume that matrix.
+`config/native-matrix.json` is the source of truth for the JavaScript Node
+floor, native Node-API floor, tested runtime evidence, targets, filenames,
+package names, ELF identities, distro lanes, and explicit exclusions.
+Generated npm, JSR, CI, release, capability, Electron, and Nix paths consume
+that matrix. The separate `buildNode` value pins reproducible build tooling; it
+does not narrow runtime support.
 
 The generated public boundary is:
 
@@ -64,18 +66,23 @@ identifier, Rust triple, architecture, libc, filename, declared SHA-256, one
 regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,
 class, endianness, and machine before `require()`. After load it verifies
 metadata schema 1, binding API 5, wrapper/native/engine version lockstep,
-Node-API floor 6, target triple, and release profile.
+Node-API floor 6, target triple, release profile, and raw capability schema 5.
+The wrapper then verifies the detailed native capability contract and public
+capability schema 9.
 
 ELF validation includes the ARM artifact's ELF32 class, little-endian encoding,
 `EM_ARM` machine value, and EABI5 hard-float `e_flags`; a soft-float ELF cannot
 be relabeled as the armhf package. Generated target metadata repeats the exact
 ARM ABI object and is covered by the package manifest and binding SHA.
 
-Node is restricted to `>=24.15.0 <25`. The Codex boundary is Electron 42.3.0,
-embedded Node 24.15.0, and Node-API 10. Stable bounded loader codes distinguish
-unsupported Node/platform/architecture/libc, a missing or invalid target
-package, integrity/ELF failures, load failures, and binding-contract failures.
-The loader never retries with a nearby artifact.
+The JavaScript boundary is Node `>=18.15.0`; the native ABI boundary is process
+Node-API 6 or newer. There is no Node upper bound because source and published
+ELF inspection found no direct V8, Node C++, or libuv host API dependency.
+Tested Node and Electron releases are evidence points, not admission entries.
+Stable bounded loader codes and frozen structured details distinguish
+unsupported Node/Node-API/platform/architecture/libc/kernel, a missing or
+invalid target package, integrity/ELF failures, load failures, and
+binding-contract failures. The loader never retries with a nearby artifact.
 
 Electron qualification packs the wrapper and loader inside `app.asar` with the
 native file materialized by Electron under `app.asar.unpacked`. The fixture

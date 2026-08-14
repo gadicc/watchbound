@@ -17,9 +17,16 @@ export function loadNativeMatrix(workspaceRoot = defaultWorkspaceRoot) {
 
 export function validateNativeMatrix(matrix) {
   assert.equal(matrix.schemaVersion, 1, "native matrix schema");
-  assert.equal(matrix.nodeRange, ">=24.15.0 <25", "native matrix Node range");
-  assert.equal(matrix.nodeMinimum, "24.15.0", "native matrix Node floor");
+  assert.match(matrix.nodeMinimum, /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u);
+  assert.equal(
+    matrix.nodeRange,
+    `>=${matrix.nodeMinimum}`,
+    "native matrix Node range must derive from its JavaScript floor without an upper bound",
+  );
+  assert.equal(matrix.nodeMinimum, "18.15.0", "native matrix JavaScript Node floor");
   assert.equal(matrix.nodeApiMinimum, 6, "native matrix Node-API floor");
+  assert.equal(matrix.buildNode, "24.15.0", "native matrix build/qualification Node pin");
+  validateTestedRuntimes(matrix.testedRuntimes, matrix);
   assert.equal(matrix.releaseBaseline.glibcMaximum, "2.35");
   assert.equal(matrix.releaseBaseline.kernelMinimum, "5.15");
   const kernelBaseline = matrix.kernelBaselineQualification;
@@ -158,6 +165,48 @@ export function validateNativeMatrix(matrix) {
     ].includes(lane.evidence));
   }
   return matrix;
+}
+
+function validateTestedRuntimes(tested, matrix) {
+  assert.ok(tested && typeof tested === "object" && !Array.isArray(tested));
+  assert.ok(Array.isArray(tested.node) && tested.node.length > 0);
+  assert.ok(Array.isArray(tested.electron) && tested.electron.length > 0);
+  assert.equal(new Set(tested.node.map(({ version }) => version)).size, tested.node.length);
+  for (const runtime of tested.node) {
+    assert.match(runtime.version, /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u);
+    assert.ok(Array.isArray(runtime.architectures) && runtime.architectures.length > 0);
+    assert.ok(runtime.architectures.every((architecture) => ["x64", "arm64"].includes(architecture)));
+    assert.equal(new Set(runtime.architectures).size, runtime.architectures.length);
+    assert.ok(["admission", "full-lifecycle"].includes(runtime.coverage));
+    assert.match(runtime.role, /^[a-z0-9-]+$/u);
+  }
+  const minimum = tested.node.find(({ role }) => role === "javascript-minimum");
+  assert.equal(minimum?.version, matrix.nodeMinimum);
+  assert.equal(minimum?.coverage, "full-lifecycle");
+  const regression = tested.node.find(({ role }) => role === "codex-electron-regression");
+  assert.equal(regression?.version, "24.14.0");
+  assert.equal(regression?.coverage, "full-lifecycle");
+  const newest = tested.node.find(({ role }) => role === "newest-node");
+  assert.equal(newest?.coverage, "full-lifecycle");
+  assert.deepEqual(minimum.architectures, ["x64", "arm64"]);
+  assert.deepEqual(newest.architectures, ["x64", "arm64"]);
+
+  assert.equal(new Set(tested.electron.map(({ id }) => id)).size, tested.electron.length);
+  for (const runtime of tested.electron) {
+    assert.match(runtime.id, /^[a-z0-9-]+$/u);
+    assert.match(runtime.electron, /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u);
+    assert.match(runtime.node, /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u);
+    assert.ok(Number.isInteger(runtime.nodeApi) && runtime.nodeApi >= matrix.nodeApiMinimum);
+    assert.equal(runtime.architecture, "x64");
+    assert.equal(runtime.coverage, "full-lifecycle");
+    assert.equal(runtime.archiveArchitecture, "x64");
+    assert.match(runtime.archiveSha256, /^[0-9a-f]{64}$/u);
+  }
+  assert.equal(
+    tested.electron.find(({ id }) => id === "oldest-supported")?.electron,
+    "28.0.0",
+  );
+  assert.ok(tested.electron.some(({ id }) => id === "current"));
 }
 
 export function targetForRuntime(matrix, platform, architecture) {

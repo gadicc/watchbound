@@ -111,6 +111,8 @@ const nativeManifest = {
   watchbound: {
     delivery: "bundled-native-package",
     nativeMatrixSchema: matrix.schemaVersion,
+    javascriptNodeMinimum: matrix.nodeMinimum,
+    nodeApiMinimum: matrix.nodeApiMinimum,
   },
 };
 
@@ -129,6 +131,7 @@ const wrapperManifest = {
   },
   watchbound: {
     delivery: "bundled-native-package",
+    javascriptNodeMinimum: matrix.nodeMinimum,
   },
 };
 
@@ -178,6 +181,7 @@ for (const { target, artifactPath } of availableTargets) {
       armAbi: target.armAbi ?? null,
       libc: target.libc,
       binary: target.binary,
+      nodeApiMinimum: matrix.nodeApiMinimum,
       nativeSha256,
     },
   };

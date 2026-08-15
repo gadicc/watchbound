@@ -61,6 +61,16 @@ delivery modes:
 2. generated package: the exact matrix package selected by platform and
    architecture.
 
+Libc admission is report-free in the current source. The loader reads the
+running executable's exact bounded `PT_INTERP` metadata, including ELF32 ARM,
+and accepts only the recognized dynamic-linker basename for the selected
+target. It runs that absolute interpreter directly with `--version` under a
+sanitized environment and strict time/output bounds; it never invokes a shell,
+searches `PATH`, reads `/usr/bin/ldd`, or calls `process.report`. The resulting
+loader-owned runtime snapshot is reused by the JavaScript capability builder.
+Any missing or ambiguous evidence refuses before target-package inspection or
+native loading.
+
 The public-package path verifies package name, version, delivery kind, target
 identifier, Rust triple, architecture, libc, filename, declared SHA-256, one
 regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,

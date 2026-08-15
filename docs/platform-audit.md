@@ -16,11 +16,14 @@ the repository regression; Codex retains the signed-runtime integration test.
 
 Candidate commit `1305e2af15853749d12fe06ef9cb370e3bd18800`
 subsequently passed three cold signed-Owl x64 lifecycles. That consumer route
-must retain its Owl-safe `process.report` shim before importing Watchbound:
+required its Owl-safe `process.report` shim before importing Watchbound:
 calling Owl's native `process.report.getReport()` directly caused `SIGILL`,
 which JavaScript cannot catch. The shim is distinct from, and does not restore,
 the removed Node-range workaround. See the
 [signed-runtime acceptance record](codex-signed-runtime-acceptance-2026-08-14.md).
+The later source loader is report-free, but that source change does not retire
+the consumer shim until an exact released candidate passes the same signed-Owl
+suite without it.
 
 Audit date: 2026-07-26. Watchbound started at
 `df61736cf325b522f24320f8ecc2064dc9ff8781`. The sibling Codex checkout was

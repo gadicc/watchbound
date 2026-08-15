@@ -15,6 +15,11 @@ version, publish packages, create a tag, or authorize a release.
   V8, Node C++, or libuv APIs directly.
 - Return structured loader diagnostics with observed and required
   compatibility facts.
+- Stop calling `process.report.getReport()` during native admission or public
+  capability construction. Read the running executable's exact bounded ELF
+  interpreter metadata, obtain the glibc version from the exact interpreter
+  under strict subprocess bounds, and reuse one immutable admitted runtime
+  snapshot across the loader and wrapper.
 
 ## Qualification
 

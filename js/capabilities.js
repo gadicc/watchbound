@@ -33,16 +33,29 @@ const FILESYSTEM_MAGIC = Object.freeze({
   overlay: new Set([0x794c7630n]),
 });
 
-export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
+export function buildCapabilities(
+  native,
+  metadata,
+  deliveryMetadata,
+  runtimeAdmission,
+  matrix,
+) {
   if (
     native?.schemaVersion !== 5 ||
     metadata?.schemaVersion !== 1 ||
     metadata?.bindingApiVersion !== 5 ||
     deliveryMetadata?.schemaVersion !== 1 ||
+    runtimeAdmission?.schemaVersion !== 1 ||
+    typeof runtimeAdmission.platform !== "string" ||
+    typeof runtimeAdmission.architecture !== "string" ||
+    typeof runtimeAdmission.kernel !== "string" ||
+    !validRuntimeLibc(runtimeAdmission.libc) ||
+    typeof runtimeAdmission.node?.version !== "string" ||
+    !Number.isInteger(runtimeAdmission.node?.api) ||
     matrix?.schemaVersion !== 1
   ) {
     throw new Error(
-      "native capability, delivery, or target metadata uses an incompatible schema",
+      "native capability, delivery, runtime, or target metadata uses an incompatible schema",
     );
   }
   if (
@@ -66,7 +79,7 @@ export function buildCapabilities(native, metadata, deliveryMetadata, matrix) {
     throw new Error("native cancellation and shared-delivery capabilities are incompatible");
   }
 
-  const runtime = runtimeFacts(deliveryMetadata);
+  const runtime = runtimeFacts(runtimeAdmission);
   const minimum = native.positiveIntegerMinimum;
   const maximum = native.positiveIntegerMaximum;
   const defaults = native.subscriptionDefaults;
@@ -874,31 +887,33 @@ function integerOption(unit, defaultValue, minimum, maximum) {
   };
 }
 
-function runtimeFacts(deliveryMetadata) {
-  let report;
-  try {
-    report = process.report?.getReport?.();
-  } catch {
-    report = undefined;
-  }
-  const glibcVersion = report?.header?.glibcVersionRuntime;
-  const musl = report?.sharedObjects?.some((value) =>
-    /(?:^|\/)(?:ld-musl|libc\.musl)/u.test(value),
-  );
+function runtimeFacts(admission) {
   return {
-    platform: process.platform,
-    architecture: process.arch,
-    armAbi: process.arch === "arm" ? deliveryMetadata.runtimeArmAbi : null,
-    kernel: os.release(),
+    platform: admission.platform,
+    architecture: admission.architecture,
+    armAbi: admission.armAbi,
+    kernel: admission.kernel,
     libc: {
-      family: typeof glibcVersion === "string" ? "glibc" : musl ? "musl" : "unknown",
-      version: typeof glibcVersion === "string" ? glibcVersion : null,
+      family: admission.libc.family,
+      version: admission.libc.version,
     },
     node: {
-      version: process.versions.node,
-      api: process.versions.napi === undefined ? null : Number(process.versions.napi),
+      version: admission.node.version,
+      api: admission.node.api,
     },
   };
+}
+
+function validRuntimeLibc(libc) {
+  return (libc?.family === "glibc" &&
+      typeof libc.version === "string" &&
+      libc.evidence === "elf-interpreter-version") ||
+    (libc?.family === "musl" &&
+      libc.version === null &&
+      libc.evidence === "elf-interpreter") ||
+    (libc?.family === "unknown" &&
+      libc.version === null &&
+      libc.evidence === "unavailable");
 }
 
 function sameArmAbi(runtime, packaged) {

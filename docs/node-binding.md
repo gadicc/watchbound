@@ -167,6 +167,14 @@ floor 6, the expected target triple and release profile, and raw capability
 schema 5. The wrapper then asserts its own package version and verifies the
 detailed capability contract.
 
+The glibc proof is derived without Node diagnostic reports: bounded ELF reads
+select the exact running interpreter, then one bounded synchronous
+`interpreter --version` child is joined before admission continues. The child
+receives only a C locale, is never launched through a shell or `PATH`, and a
+failure produces unknown libc evidence. `runtimeAdmissionMetadata()` freezes
+the admitted host facts on the loader-owned binding; the wrapper consumes that
+same object rather than probing again.
+
 Definitive loader failures have bounded `WATCHBOUND_UNSUPPORTED_PLATFORM`,
 `WATCHBOUND_UNSUPPORTED_LIBC`, `WATCHBOUND_UNSUPPORTED_KERNEL`,
 `WATCHBOUND_UNSUPPORTED_NODE`, `WATCHBOUND_UNSUPPORTED_NODE_API`,

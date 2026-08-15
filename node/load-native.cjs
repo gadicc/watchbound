@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -16,6 +17,11 @@ const MAX_NATIVE_BYTES = 8 * 1024 * 1024;
 const MAX_MESSAGE_BYTES = 1_024;
 const MAX_CAUSE_MESSAGE_BYTES = 512;
 const MAX_CAUSE_FIELD_BYTES = 128;
+const MAX_RUNTIME_PROGRAM_HEADERS = 128;
+const MAX_RUNTIME_PROGRAM_TABLE_BYTES = 64 * 1024;
+const MAX_RUNTIME_INTERPRETER_BYTES = 4 * 1024;
+const MAX_RUNTIME_VERSION_BYTES = 8 * 1024;
+const RUNTIME_VERSION_TIMEOUT_MS = 1_000;
 
 const WatchboundLoaderErrorCode = Object.freeze({
   UNSUPPORTED_PLATFORM: "WATCHBOUND_UNSUPPORTED_PLATFORM",
@@ -70,12 +76,15 @@ function loadNative(options = {}) {
     );
   }
 
-  const report = injected(options, "report", process.report);
-  const reportValue = readProcessReport(report);
-  const libc = detectLibcValue(reportValue);
-  const glibcVersion = detectedGlibcVersion(reportValue);
   const target = platformTargets[0];
   const runtimeArmAbi = assertRuntimeAbi(options, target);
+  const runtimeLibc = normalizeRuntimeLibc(
+    Object.prototype.hasOwnProperty.call(options, "runtimeLibc")
+      ? options.runtimeLibc
+      : detectRuntimeLibc({ ...options, target }),
+  );
+  const libc = runtimeLibc.family;
+  const glibcVersion = runtimeLibc.version;
   if (
     libc !== target.libc ||
     !supportsVersionMinimum(glibcVersion, matrix.releaseBaseline.glibcMaximum)
@@ -161,6 +170,18 @@ function loadNative(options = {}) {
     target,
     matrix.nodeApiMinimum,
   );
+  const runtimeAdmissionMetadata = deepFreeze({
+    schemaVersion: 1,
+    platform,
+    architecture: arch,
+    armAbi: runtimeArmAbi,
+    kernel: kernelVersion,
+    libc: runtimeLibc,
+    node: {
+      version: nodeVersion,
+      api: Number(napiVersion),
+    },
+  });
   const deliveryMetadata = deepFreeze({
     schemaVersion: 1,
     delivery,
@@ -183,6 +204,12 @@ function loadNative(options = {}) {
   });
   Object.defineProperty(binding, "nativeDeliveryMetadata", {
     value: () => deliveryMetadata,
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  });
+  Object.defineProperty(binding, "runtimeAdmissionMetadata", {
+    value: () => runtimeAdmissionMetadata,
     enumerable: true,
     configurable: false,
     writable: false,
@@ -656,35 +683,270 @@ function assertWrapperVersion(version, delivery) {
   }
 }
 
-function readProcessReport(report) {
+function readElfInterpreter(readAt) {
+  const ident = readExactRange(readAt, 0, 16, "ELF identification");
+  if (!ident.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {
+    throw new Error("runtime executable is not ELF");
+  }
+  const elfClass = ident[4];
+  const endianness = ident[5];
+  if ((elfClass !== 1 && elfClass !== 2) || endianness !== 1) {
+    throw new Error("runtime executable has an unsupported ELF encoding");
+  }
+
+  const headerSize = elfClass === 1 ? 52 : 64;
+  const programHeaderSize = elfClass === 1 ? 32 : 56;
+  const header = readExactRange(readAt, 0, headerSize, "ELF header");
+  if (header.readUInt16LE(elfClass === 1 ? 40 : 52) !== headerSize) {
+    throw new Error("runtime executable has an unexpected ELF header size");
+  }
+  const entrySize = header.readUInt16LE(elfClass === 1 ? 42 : 54);
+  const entryCount = header.readUInt16LE(elfClass === 1 ? 44 : 56);
+  if (
+    entrySize !== programHeaderSize ||
+    entryCount < 1 ||
+    entryCount > MAX_RUNTIME_PROGRAM_HEADERS
+  ) {
+    throw new Error("runtime executable has an unsupported program header table");
+  }
+  const tableOffset = elfClass === 1
+    ? header.readUInt32LE(28)
+    : safeElfNumber(header.readBigUInt64LE(32), "program header offset");
+  const tableSize = entrySize * entryCount;
+  if (tableSize > MAX_RUNTIME_PROGRAM_TABLE_BYTES) {
+    throw new Error("runtime program header table is too large");
+  }
+  const table = readExactRange(
+    readAt,
+    tableOffset,
+    tableSize,
+    "ELF program header table",
+  );
+
+  const interpreters = [];
+  for (let index = 0; index < entryCount; index += 1) {
+    const entry = index * entrySize;
+    if (table.readUInt32LE(entry) !== 3) continue;
+    interpreters.push({
+      offset: elfClass === 1
+        ? table.readUInt32LE(entry + 4)
+        : safeElfNumber(
+            table.readBigUInt64LE(entry + 8),
+            "interpreter offset",
+          ),
+      size: elfClass === 1
+        ? table.readUInt32LE(entry + 16)
+        : safeElfNumber(
+            table.readBigUInt64LE(entry + 32),
+            "interpreter size",
+          ),
+    });
+  }
+  if (interpreters.length !== 1) {
+    throw new Error(`runtime executable has ${interpreters.length} interpreters`);
+  }
+  const [{ offset, size }] = interpreters;
+  if (size < 2 || size > MAX_RUNTIME_INTERPRETER_BYTES) {
+    throw new Error("runtime interpreter path has an invalid size");
+  }
+  const encodedPath = readExactRange(
+    readAt,
+    offset,
+    size,
+    "ELF interpreter path",
+  );
+  if (
+    encodedPath[encodedPath.length - 1] !== 0 ||
+    encodedPath.subarray(0, -1).includes(0)
+  ) {
+    throw new Error("runtime interpreter path is not exactly NUL-terminated");
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const interpreterPath = decoder.decode(encodedPath.subarray(0, -1));
+  if (!path.isAbsolute(interpreterPath)) {
+    throw new Error("runtime interpreter path is not absolute");
+  }
+  return {
+    path: interpreterPath,
+    elfClass,
+    endianness,
+    machine: header.readUInt16LE(18),
+  };
+}
+
+function readExactRange(readAt, offset, length, label) {
+  if (
+    !Number.isSafeInteger(offset) || offset < 0 ||
+    !Number.isSafeInteger(length) || length < 0 ||
+    offset > Number.MAX_SAFE_INTEGER - length
+  ) {
+    throw new Error(`${label} has an invalid range`);
+  }
+  const contents = readAt(offset, length);
+  if (!Buffer.isBuffer(contents) || contents.length !== length) {
+    throw new Error(`${label} is truncated`);
+  }
+  return contents;
+}
+
+function safeElfNumber(value, label) {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${label} exceeds JavaScript's safe integer range`);
+  }
+  return Number(value);
+}
+
+function readCurrentExecutableInterpreter() {
+  const descriptor = fs.openSync("/proc/self/exe", "r");
   try {
-    if (!report || typeof report.getReport !== "function") return null;
-    return report.getReport();
+    return readElfInterpreter((offset, length) =>
+      readFileRange(descriptor, offset, length));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readFileRange(descriptor, offset, length) {
+  const contents = Buffer.alloc(length);
+  let total = 0;
+  while (total < length) {
+    const count = fs.readSync(
+      descriptor,
+      contents,
+      total,
+      length - total,
+      offset + total,
+    );
+    if (count === 0) break;
+    total += count;
+  }
+  return contents.subarray(0, total);
+}
+
+function detectRuntimeLibc(options) {
+  const unavailable = () => ({
+    family: "unknown",
+    version: null,
+    evidence: "unavailable",
+  });
+  const target = options?.target;
+  const readInterpreter = injected(
+    options ?? {},
+    "readRuntimeElfInterpreter",
+    readCurrentExecutableInterpreter,
+  );
+  let interpreter;
+  try {
+    interpreter = readInterpreter();
   } catch {
-    return null;
+    return unavailable();
+  }
+  if (
+    interpreter?.elfClass !== target?.elf?.class ||
+    interpreter?.endianness !== target?.elf?.endianness ||
+    interpreter?.machine !== target?.elf?.machine ||
+    typeof interpreter?.path !== "string" ||
+    !path.isAbsolute(interpreter.path)
+  ) {
+    return unavailable();
+  }
+
+  const basename = path.basename(interpreter.path);
+  if (/^ld-musl-[A-Za-z0-9_+-]+\.so\.1$/u.test(basename)) {
+    return {
+      family: "musl",
+      version: null,
+      evidence: "elf-interpreter",
+    };
+  }
+  if (basename !== glibcInterpreterBasename(target.architecture)) {
+    return unavailable();
+  }
+
+  const runVersion = injected(
+    options,
+    "runInterpreterVersion",
+    (interpreterPath) => runInterpreterVersion(
+      interpreterPath,
+      injected(options, "spawnSync", spawnSync),
+    ),
+  );
+  let result;
+  try {
+    result = runVersion(interpreter.path);
+  } catch {
+    return unavailable();
+  }
+  if (
+    result?.status !== 0 ||
+    result.signal != null ||
+    result.error != null ||
+    typeof result.stdout !== "string" ||
+    Buffer.byteLength(result.stdout, "utf8") > MAX_RUNTIME_VERSION_BYTES
+  ) {
+    return unavailable();
+  }
+  const match = /^ld\.so \([^\r\n)]*(?:GNU libc|GLIBC)[^\r\n)]*\) stable release version (\d+\.\d+(?:\.\d+)?)\.\r?$/mu
+    .exec(result.stdout);
+  if (match === null || parseVersion(match[1], false) === null) {
+    return unavailable();
+  }
+  return {
+    family: "glibc",
+    version: match[1],
+    evidence: "elf-interpreter-version",
+  };
+}
+
+function glibcInterpreterBasename(architecture) {
+  switch (architecture) {
+    case "x64": return "ld-linux-x86-64.so.2";
+    case "arm64": return "ld-linux-aarch64.so.1";
+    case "arm": return "ld-linux-armhf.so.3";
+    default: return null;
   }
 }
 
-function detectLibc(report) {
-  return detectLibcValue(readProcessReport(report));
+function runInterpreterVersion(interpreterPath, spawn) {
+  return spawn(interpreterPath, ["--version"], {
+    encoding: "utf8",
+    env: { LANG: "C", LC_ALL: "C" },
+    killSignal: "SIGKILL",
+    maxBuffer: MAX_RUNTIME_VERSION_BYTES,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: RUNTIME_VERSION_TIMEOUT_MS,
+  });
 }
 
-function detectLibcValue(value) {
-  if (typeof value?.header?.glibcVersionRuntime === "string" &&
-      value.header.glibcVersionRuntime.length > 0) {
-    return "glibc";
+function normalizeRuntimeLibc(value) {
+  if (
+    value?.family === "glibc" &&
+    typeof value.version === "string" &&
+    parseVersion(value.version, false) !== null &&
+    value.evidence === "elf-interpreter-version"
+  ) {
+    return deepFreeze({
+      family: "glibc",
+      version: value.version,
+      evidence: value.evidence,
+    });
   }
-  if (Array.isArray(value?.sharedObjects) && value.sharedObjects.some((entry) =>
-    typeof entry === "string" &&
-    (entry.includes("libc.musl-") || entry.includes("ld-musl-")))) {
-    return "musl";
+  if (
+    value?.family === "musl" &&
+    value.version === null &&
+    value.evidence === "elf-interpreter"
+  ) {
+    return deepFreeze({
+      family: "musl",
+      version: null,
+      evidence: value.evidence,
+    });
   }
-  return "unknown";
-}
-
-function detectedGlibcVersion(value) {
-  const version = value?.header?.glibcVersionRuntime;
-  return typeof version === "string" && version.length > 0 ? version : null;
+  return deepFreeze({
+    family: "unknown",
+    version: null,
+    evidence: "unavailable",
+  });
 }
 
 function supportsVersionMinimum(value, minimum, exact = false) {
@@ -839,6 +1101,7 @@ module.exports = {
   WatchboundLoaderError,
   WatchboundLoaderErrorCode,
   assertWrapperVersion,
-  detectLibc,
+  detectRuntimeLibc,
   loadNative,
+  readElfInterpreter,
 };

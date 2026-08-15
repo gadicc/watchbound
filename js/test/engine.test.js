@@ -84,6 +84,18 @@ test("capability schema v9 exposes physical bytes-only and exact ARM ABI deliver
     capabilities.runtime.libc.version === null ||
       typeof capabilities.runtime.libc.version === "string",
   );
+  const admittedRuntime = nativeBinding.runtimeAdmissionMetadata();
+  assert.deepEqual(capabilities.runtime, {
+    platform: admittedRuntime.platform,
+    architecture: admittedRuntime.architecture,
+    armAbi: admittedRuntime.armAbi,
+    kernel: admittedRuntime.kernel,
+    libc: {
+      family: admittedRuntime.libc.family,
+      version: admittedRuntime.libc.version,
+    },
+    node: admittedRuntime.node,
+  });
   assert.deepEqual({
     scope: capabilities.support.scope,
     status: capabilities.support.status,
@@ -460,6 +472,7 @@ test("capability handshake fails closed without native exclusion isolation", () 
   const raw = nativeBinding.capabilities();
   const metadata = nativeBinding.bindingMetadata();
   const delivery = nativeBinding.nativeDeliveryMetadata();
+  const runtime = nativeBinding.runtimeAdmissionMetadata();
   const matrix = nativeBinding.nativeTargetMatrix();
   for (const incompatible of [
     { ...raw, schemaVersion: 4 },
@@ -469,18 +482,40 @@ test("capability handshake fails closed without native exclusion isolation", () 
     { ...raw, physicalRootResolution: false },
   ]) {
     assert.throws(
-      () => buildCapabilities(incompatible, metadata, delivery, matrix),
+      () => buildCapabilities(incompatible, metadata, delivery, runtime, matrix),
       /incompatible/u,
     );
   }
   assert.throws(
-    () => buildCapabilities(raw, { ...metadata, bindingApiVersion: 4 }, delivery, matrix),
+    () => buildCapabilities(
+      raw,
+      { ...metadata, bindingApiVersion: 4 },
+      delivery,
+      runtime,
+      matrix,
+    ),
     /incompatible/u,
   );
   assert.throws(
-    () => buildCapabilities(raw, { ...metadata, bindingApiVersion: 6 }, delivery, matrix),
+    () => buildCapabilities(
+      raw,
+      { ...metadata, bindingApiVersion: 6 },
+      delivery,
+      runtime,
+      matrix,
+    ),
     /incompatible/u,
   );
+  for (const incompatibleRuntime of [
+    { ...runtime, schemaVersion: 0 },
+    { ...runtime, libc: { ...runtime.libc, version: null } },
+    { ...runtime, node: { ...runtime.node, api: null } },
+  ]) {
+    assert.throws(
+      () => buildCapabilities(raw, metadata, delivery, incompatibleRuntime, matrix),
+      /incompatible/u,
+    );
+  }
 });
 
 test("createEngine validates and retains resource-free immutable configuration", () => {

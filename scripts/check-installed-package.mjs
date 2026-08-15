@@ -60,7 +60,7 @@ const evidence = {
     architecture: process.arch,
     node: process.version,
     kernel: os.release(),
-    glibc: process.report?.getReport?.().header?.glibcVersionRuntime ?? null,
+    glibc: null,
   },
 };
 
@@ -129,6 +129,7 @@ async function runSmoke() {
   logPhase("native-module-start");
   const module = await import(pathToFileURL(wrapperEntry));
   const { capabilities, createEngine, qualifyRoot } = module;
+  evidence.host.glibc = capabilities.runtime.libc.version;
   assert.deepEqual(capabilities.versions, {
     wrapper: options.version,
     native: options.version,

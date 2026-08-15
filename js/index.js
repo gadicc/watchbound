@@ -51,6 +51,7 @@ export const capabilities = invokeWatchbound("create-engine", () =>
     nativeBinding.capabilities(),
     nativeBinding.bindingMetadata(),
     nativeBinding.nativeDeliveryMetadata(),
+    nativeBinding.runtimeAdmissionMetadata(),
     nativeBinding.nativeTargetMatrix(),
   ));
 

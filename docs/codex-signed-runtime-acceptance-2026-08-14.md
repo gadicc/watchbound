@@ -1,5 +1,10 @@
 # Codex signed-runtime acceptance — 2026-08-14
 
+This is the historical acceptance record for candidate `1305e2a`, whose
+loader still depended on a consumer-supplied report shim. Later source removes
+that dependency, but requires a new exact-candidate signed-runtime run before a
+Codex integration may remove the shim.
+
 ## Verdict and scope
 
 Watchbound candidate `1305e2af15853749d12fe06ef9cb370e3bd18800`

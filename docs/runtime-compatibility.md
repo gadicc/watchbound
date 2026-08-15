@@ -67,6 +67,23 @@ remain mandatory.
 
 ## Loader admission order
 
+The source loader does not call `process.report.getReport()`. It opens the
+running executable through `/proc/self/exe`, reads the ELF header, bounded
+program-header table, and exact `PT_INTERP` segment, and requires the ELF
+class, endianness, and machine to match the selected target. A musl
+interpreter is rejected directly. For a recognized glibc interpreter, the
+loader executes that exact absolute interpreter with `--version`, a sanitized
+environment, no shell or `PATH` lookup, bounded output, and a one-second
+timeout. Only a successful glibc-specific stable-release banner supplies the
+version used for the 2.35 floor. Missing, malformed, mismatched, timed-out, or
+unrecognized evidence remains unknown and fails before the addon loads.
+
+The admitted platform, architecture, ARM ABI, kernel, libc, Node, and Node-API
+facts are frozen once by the loader. The wrapper builds public capabilities
+from that same snapshot instead of probing the host again. This prevents a
+loader/capability disagreement and avoids fatal diagnostic-report APIs in
+embedded runtimes.
+
 The production loader fails closed in this order:
 
 1. validate the matrix, platform, architecture, and ARM ABI;

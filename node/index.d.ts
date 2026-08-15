@@ -39,6 +39,8 @@ export declare function bindingMetadata(): JsBindingMetadata
 
 export declare function nativeDeliveryMetadata(): JsNativeDeliveryMetadata
 
+export declare function runtimeAdmissionMetadata(): JsRuntimeAdmissionMetadata
+
 export declare function nativeTargetMatrix(): JsNativeTargetMatrix
 
 export declare function capabilities(): JsCapabilities
@@ -93,6 +95,34 @@ export interface JsNativeDeliveryMetadata {
   nodeApiMinimum: 6
   glibcMaximum: string
   kernelMinimum: string
+}
+
+export interface JsRuntimeAdmissionMetadata {
+  schemaVersion: 1
+  platform: "linux"
+  architecture: "x64" | "arm64" | "arm"
+  armAbi: { version: 7; floatAbi: "hard"; endianness: "little" } | null
+  kernel: string
+  libc:
+    | {
+        family: "glibc"
+        version: string
+        evidence: "elf-interpreter-version"
+      }
+    | {
+        family: "musl"
+        version: null
+        evidence: "elf-interpreter"
+      }
+    | {
+        family: "unknown"
+        version: null
+        evidence: "unavailable"
+      }
+  node: {
+    version: string
+    api: number
+  }
 }
 
 export interface JsNativeTargetMatrix {

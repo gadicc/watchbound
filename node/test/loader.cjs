@@ -10,8 +10,9 @@ const {
   WatchboundLoaderError,
   WatchboundLoaderErrorCode,
   assertWrapperVersion,
-  detectLibc,
+  detectRuntimeLibc,
   loadNative,
+  readElfInterpreter,
 } = require("../load-native.cjs");
 
 const nodeRoot = path.resolve(__dirname, "..");
@@ -36,14 +37,11 @@ const validMetadata = Object.freeze({
   buildProfile: "release",
 });
 
-function glibcReport() {
-  return {
-    getReport: () => ({
-      header: { glibcVersionRuntime: "2.39" },
-      sharedObjects: ["/lib64/ld-linux-x86-64.so.2"],
-    }),
-  };
-}
+const supportedRuntimeLibc = Object.freeze({
+  family: "glibc",
+  version: "2.39",
+  evidence: "elf-interpreter-version",
+});
 
 function validBinding(metadata = validMetadata) {
   return {
@@ -70,7 +68,7 @@ function loadOptions(overrides = {}) {
     nodeVersion: "24.14.0",
     napiVersion: "9",
     kernelVersion: "6.8.0",
-    report: glibcReport(),
+    runtimeLibc: supportedRuntimeLibc,
     processConfig: { variables: {} },
     endianness: "LE",
     matrix: nativeMatrix,
@@ -139,6 +137,27 @@ test("loader accepts only configured Linux architectures", () => {
   }));
   assert.equal(armBinding.marker, "native-binding");
   assert.equal(armBinding.nativeDeliveryMetadata().architecture, "arm64");
+});
+
+test("loader exposes one immutable admitted runtime snapshot", () => {
+  const binding = loadNative(loadOptions());
+  const runtime = binding.runtimeAdmissionMetadata();
+  assert.deepEqual(runtime, {
+    schemaVersion: 1,
+    platform: "linux",
+    architecture: "x64",
+    armAbi: null,
+    kernel: "6.8.0",
+    libc: supportedRuntimeLibc,
+    node: {
+      version: "24.14.0",
+      api: 9,
+    },
+  });
+  assert.equal(binding.runtimeAdmissionMetadata(), runtime);
+  assert.equal(Object.isFrozen(runtime), true);
+  assert.equal(Object.isFrozen(runtime.libc), true);
+  assert.equal(Object.isFrozen(runtime.node), true);
 });
 
 test("loader selects only a little-endian ARMv7 hard-float runtime", () => {
@@ -261,40 +280,224 @@ test("loader rejects musl on an otherwise compatible ARMv7 runtime", () => {
       processConfig: {
         variables: { arm_version: 7, arm_float_abi: "hard" },
       },
-      report: {
-        getReport: () => ({
-          header: {},
-          sharedObjects: ["/lib/ld-musl-armhf.so.1"],
-        }),
+      runtimeLibc: {
+        family: "musl",
+        version: null,
+        evidence: "elf-interpreter",
       },
     })),
     WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
   );
 });
 
-test("loader distinguishes detected glibc from musl and unknown libc", () => {
-  assert.equal(detectLibc(glibcReport()), "glibc");
-  assert.equal(detectLibc({
-    getReport: () => ({
-      header: {},
-      sharedObjects: ["/lib/ld-musl-x86_64.so.1"],
-    }),
-  }), "musl");
-  assert.equal(detectLibc({
-    getReport: () => ({ header: {}, sharedObjects: ["/lib/libc.so.6"] }),
-  }), "unknown");
-  assert.equal(detectLibc({ getReport: () => { throw new Error("report failed"); } }), "unknown");
-
-  for (const report of [
-    { getReport: () => ({ header: { glibcVersionRuntime: "2.34" }, sharedObjects: [] }) },
-    { getReport: () => ({ header: {}, sharedObjects: ["/lib/libc.musl-x86_64.so.1"] }) },
-    { getReport: () => ({ header: {}, sharedObjects: [] }) },
+test("loader rejects old, musl, unknown, or malformed libc evidence", () => {
+  for (const runtimeLibc of [
+    { family: "glibc", version: "2.34", evidence: "elf-interpreter-version" },
+    { family: "musl", version: null, evidence: "elf-interpreter" },
+    { family: "unknown", version: null, evidence: "unavailable" },
+    { family: "glibc", version: null, evidence: "elf-interpreter-version" },
   ]) {
     expectLoaderError(
-      () => loadNative(loadOptions({ report })),
+      () => loadNative(loadOptions({ runtimeLibc })),
       WatchboundLoaderErrorCode.UNSUPPORTED_LIBC,
     );
   }
+});
+
+function runtimeElf(target, interpreter, interpreterOffset = 4096) {
+  const elf64 = target.elf.class === 2;
+  const headerSize = elf64 ? 64 : 52;
+  const programHeaderSize = elf64 ? 56 : 32;
+  const programOffset = headerSize;
+  const interpreterBytes = Buffer.from(`${interpreter}\0`, "utf8");
+  const contents = Buffer.alloc(interpreterOffset + interpreterBytes.length);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(contents);
+  contents[4] = target.elf.class;
+  contents[5] = target.elf.endianness;
+  contents.writeUInt16LE(target.elf.machine, 18);
+  if (elf64) {
+    contents.writeBigUInt64LE(BigInt(programOffset), 32);
+    contents.writeUInt16LE(headerSize, 52);
+    contents.writeUInt16LE(programHeaderSize, 54);
+    contents.writeUInt16LE(1, 56);
+    contents.writeUInt32LE(3, programOffset);
+    contents.writeBigUInt64LE(BigInt(interpreterOffset), programOffset + 8);
+    contents.writeBigUInt64LE(BigInt(interpreterBytes.length), programOffset + 32);
+  } else {
+    contents.writeUInt32LE(programOffset, 28);
+    contents.writeUInt16LE(headerSize, 40);
+    contents.writeUInt16LE(programHeaderSize, 42);
+    contents.writeUInt16LE(1, 44);
+    contents.writeUInt32LE(3, programOffset);
+    contents.writeUInt32LE(interpreterOffset, programOffset + 4);
+    contents.writeUInt32LE(interpreterBytes.length, programOffset + 16);
+  }
+  interpreterBytes.copy(contents, interpreterOffset);
+  return contents;
+}
+
+function bufferReader(contents) {
+  return (offset, length) => contents.subarray(offset, offset + length);
+}
+
+test("runtime ELF interpreter reads exact bounded ELF64 and ELF32 segments", () => {
+  for (const [target, interpreter] of [
+    [x64Target, "/lib64/ld-linux-x86-64.so.2"],
+    [arm64Target, "/lib/ld-linux-aarch64.so.1"],
+    [armv7Target, "/lib/ld-linux-armhf.so.3"],
+  ]) {
+    const contents = runtimeElf(target, interpreter, 8192);
+    assert.deepEqual(readElfInterpreter(bufferReader(contents)), {
+      path: interpreter,
+      elfClass: target.elf.class,
+      endianness: target.elf.endianness,
+      machine: target.elf.machine,
+    });
+  }
+});
+
+test("runtime ELF interpreter rejects malformed or unbounded metadata", () => {
+  const interpreter = "/lib64/ld-linux-x86-64.so.2";
+  const malformed = [
+    Buffer.alloc(64),
+    runtimeElf(x64Target, interpreter).subarray(0, 100),
+    (() => {
+      const contents = runtimeElf(x64Target, interpreter);
+      contents.writeUInt16LE(129, 56);
+      return contents;
+    })(),
+    (() => {
+      const contents = runtimeElf(x64Target, interpreter);
+      const entry = Buffer.from(contents.subarray(64, 120));
+      entry.copy(contents, 120);
+      contents.writeUInt16LE(2, 56);
+      return contents;
+    })(),
+    (() => {
+      const contents = runtimeElf(x64Target, interpreter);
+      contents.writeBigUInt64LE(4097n, 64 + 32);
+      return contents;
+    })(),
+    (() => {
+      const contents = runtimeElf(x64Target, interpreter);
+      contents[contents.length - 1] = 1;
+      return contents;
+    })(),
+  ];
+  for (const contents of malformed) {
+    assert.throws(() => readElfInterpreter(bufferReader(contents)));
+  }
+});
+
+test("runtime libc detection uses only the exact interpreter version output", () => {
+  let invocation;
+  const glibc = detectRuntimeLibc({
+    target: x64Target,
+    readRuntimeElfInterpreter: () => ({
+      path: "/nix/store/example-glibc/lib64/ld-linux-x86-64.so.2",
+      elfClass: 2,
+      endianness: 1,
+      machine: 62,
+    }),
+    spawnSync(command, args, options) {
+      invocation = { command, args, options };
+      return {
+        status: 0,
+        signal: null,
+        error: undefined,
+        stdout: "ld.so (GNU libc) stable release version 2.40.\n",
+      };
+    },
+  });
+  assert.deepEqual(invocation, {
+    command: "/nix/store/example-glibc/lib64/ld-linux-x86-64.so.2",
+    args: ["--version"],
+    options: {
+      encoding: "utf8",
+      env: { LANG: "C", LC_ALL: "C" },
+      killSignal: "SIGKILL",
+      maxBuffer: 8 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1_000,
+    },
+  });
+  assert.deepEqual(glibc, {
+    family: "glibc",
+    version: "2.40",
+    evidence: "elf-interpreter-version",
+  });
+
+  assert.deepEqual(detectRuntimeLibc({
+    target: x64Target,
+    readRuntimeElfInterpreter: () => ({
+      path: "/lib/ld-musl-x86_64.so.1",
+      elfClass: 2,
+      endianness: 1,
+      machine: 62,
+    }),
+    runInterpreterVersion() {
+      throw new Error("musl must not be executed");
+    },
+  }), {
+    family: "musl",
+    version: null,
+    evidence: "elf-interpreter",
+  });
+});
+
+test("runtime libc detection fails closed for mismatches and bad version output", () => {
+  const base = {
+    target: x64Target,
+    readRuntimeElfInterpreter: () => ({
+      path: "/lib64/ld-linux-x86-64.so.2",
+      elfClass: 2,
+      endianness: 1,
+      machine: 62,
+    }),
+  };
+  for (const overrides of [
+    { readRuntimeElfInterpreter: () => { throw new Error("no procfs"); } },
+    { readRuntimeElfInterpreter: () => ({
+      path: "/lib64/ld-linux-x86-64.so.2",
+      elfClass: 1,
+      endianness: 1,
+      machine: 62,
+    }) },
+    { readRuntimeElfInterpreter: () => ({
+      path: "/custom/loader.so",
+      elfClass: 2,
+      endianness: 1,
+      machine: 62,
+    }) },
+    { runInterpreterVersion: () => ({ status: 1, stdout: "" }) },
+    { runInterpreterVersion: () => ({
+      status: 0,
+      signal: "SIGTERM",
+      stdout: "ld.so (GNU libc) stable release version 2.40.\n",
+    }) },
+    { runInterpreterVersion: () => ({
+      status: 0,
+      stdout: "ld.so (not glibc) stable release version 2.40.\n",
+    }) },
+    { runInterpreterVersion: () => ({ status: 0, stdout: "x".repeat(8_193) }) },
+  ]) {
+    assert.deepEqual(detectRuntimeLibc({ ...base, ...overrides }), {
+      family: "unknown",
+      version: null,
+      evidence: "unavailable",
+    });
+  }
+});
+
+test("production runtime libc detection proves the current qualified host", () => {
+  const target = nativeMatrix.targets.find((candidate) =>
+    candidate.platform === process.platform &&
+    candidate.architecture === process.arch);
+  assert.ok(target, "native matrix must contain the current test runtime");
+  const runtimeLibc = detectRuntimeLibc({ target });
+  assert.equal(runtimeLibc.family, "glibc");
+  assert.match(runtimeLibc.version, /^\d+\.\d+(?:\.\d+)?$/u);
+  assert.equal(runtimeLibc.evidence, "elf-interpreter-version");
 });
 
 test("loader requires the qualified kernel floor before inspecting the addon", () => {
@@ -742,5 +945,13 @@ test("native build cannot overwrite the tracked loader or public declarations", 
   assert.doesNotMatch(indexSource, /auto-generated by NAPI-RS/i);
   assert.match(declarations, /Hand-owned public declarations/);
   assert.match(ignore, /^\/node\/native\.generated\.d\.ts$/m);
-  assert.doesNotMatch(loaderSource, /child_process|execSync|NAPI_RS_|FORCE_WASI/);
+  assert.doesNotMatch(loaderSource, /execSync|NAPI_RS_|FORCE_WASI/);
+  assert.match(
+    loaderSource,
+    /return spawn\(interpreterPath, \["--version"\]/u,
+  );
+  assert.doesNotMatch(
+    loaderSource,
+    /process\.report|\/usr\/bin\/ldd|execFileSync\("getconf"|shell:\s*true/u,
+  );
 });

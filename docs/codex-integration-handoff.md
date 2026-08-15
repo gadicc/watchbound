@@ -20,13 +20,15 @@ and limitations are summarized in
 [`codex-signed-runtime-acceptance-2026-08-14.md`](codex-signed-runtime-acceptance-2026-08-14.md).
 ARM64 signed-runtime evidence remains unavailable rather than failed.
 
-Codex must remove the old Watchbound 2.1.1 Node-range rewrite when it adopts
-the new lockstep packages, but retain its separate Owl-safe `process.report`
-shim. Directly invoking Owl's native `process.report.getReport()` caused
-`SIGILL`; because that terminates the process rather than throwing a JavaScript
-exception, Watchbound cannot recover after the call. The shim must be installed
-before importing the Watchbound loader and must continue to provide trustworthy
-glibc identity and version evidence.
+Release `2.1.1` still requires the separate Owl-safe `process.report` shim.
+Directly invoking Owl's native `process.report.getReport()` caused `SIGILL`,
+which terminates the process rather than throwing a JavaScript exception. The
+current source loader removes that dependency: it obtains bounded libc
+evidence from the running ELF interpreter and shares one admitted snapshot
+with capabilities. Codex may remove the shim only when it adopts a later exact
+lockstep release containing that change and the no-shim signed-Owl lifecycle
+passes for the exact release candidate. The old 2.1.1 Node-range rewrite must
+also remain removed; these are independent compatibility changes.
 
 Status: release `2.1.1` is published. The retained native, distro, Electron,
 Nix, reproducibility, pinned-kernel, and supervised-overflow scenarios are

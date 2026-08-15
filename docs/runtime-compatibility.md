@@ -116,4 +116,9 @@ queries and asserts Electron, Node, and Node-API independently; it
 does not derive one from another. The legacy official Electron 42.3.0 lanes
 remain ARMv7 and existing Codex-upstream qualification evidence, not a claim
 about OpenAI's signed executable. Codex Desktop owns the consumer-specific
-test for its signed Electron 42.3.0 / Node 24.14.0 runtime.
+test for that executable. The 2026-08-14 x64 acceptance run observed Owl
+reporting Electron 151.0.7922.137, Node 24.14.0, and Node-API 10; Electron
+42.3.0 was an application dependency rather than `process.versions.electron`.
+It passed three cold lifecycles for candidate `1305e2a` with the existing
+Owl-safe `process.report` shim. See the
+[consumer acceptance record](codex-signed-runtime-acceptance-2026-08-14.md).

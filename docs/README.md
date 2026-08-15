@@ -38,6 +38,7 @@ This index groups Watchbound's design, contract, qualification, evidence, and ma
 - [Local native matrix evidence](local-native-matrix-evidence.md): local artifact inspection and package checks
 - [x64/ARM64 qualification evidence](qualification-evidence-2026-07-26.md): retained qualification record for the original native matrix
 - [ARMv7 source qualification](qualification-evidence-2026-08-07-armv7.md): pre-publication cross-build and emulated execution record
+- [Codex signed-runtime acceptance](codex-signed-runtime-acceptance-2026-08-14.md): consumer-owned Owl x64 lifecycle evidence and remaining limitations
 - [ARMv7 release evidence](qualification-evidence-2026-08-09-armv7-release.md): immutable `2.1.1` artifacts, registry routes, hashes, and caveats
 - [Platform audit](platform-audit.md): Codex Desktop Linux runtime and packaging boundary
 - [Codex integration handoff](codex-integration-handoff.md): consumer-side requirements and remaining gates

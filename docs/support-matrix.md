@@ -125,8 +125,12 @@ asserts Electron, embedded Node, and Node-API separately.
 | 28.0.0 | 18.18.2 | 9 | Oldest supported Electron; first stable Electron ESM/ASAR boundary |
 | 43.2.0 | 24.18.0 | 10 | Current representative Electron |
 
-OpenAI's signed executable is intentionally absent. Codex Desktop retains the
-consumer-specific Node 24.14.0 integration test.
+OpenAI's signed executable is intentionally absent from Watchbound CI. The
+consumer-owned x64 test passed three cold signed-Owl lifecycles for candidate
+`1305e2a`, observing Electron 151.0.7922.137, Node 24.14.0, and Node-API 10.
+ARM64 signed-runtime execution was unavailable, not failed. See the
+[acceptance record](codex-signed-runtime-acceptance-2026-08-14.md); the final
+release candidate still needs evidence bound to its exact source SHA.
 
 ## Immutable published-release runtime lanes
 

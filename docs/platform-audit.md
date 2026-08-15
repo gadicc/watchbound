@@ -2,15 +2,25 @@
 
 ## 2026-08-14 runtime-policy addendum
 
-Codex Desktop now reports a signed Electron 42.3.0 executable with embedded
-Node 24.14.0. Watchbound does not include that proprietary executable in CI and
-does not infer its Node version from the Electron label. Source and published
-artifact inspection found no Node 24.15-only dependency: the checked-in source
-policy now requires Node `>=18.15.0` and process Node-API 6 or newer, with no
-Node upper bound, while preserving the platform, architecture, ARM ABI, glibc,
-kernel, ELF, digest, metadata, and capability gates. A full stock-Node 24.14.0
-lifecycle is the repository regression; Codex retains the signed-runtime
-integration test.
+Codex Desktop's signed Owl executable reports `process.versions.electron` as
+151.0.7922.137, `process.versions.node` as 24.14.0, and
+`process.versions.napi` as 10. Electron 42.3.0 remains an application package
+dependency, but it is not the signed Owl process's reported Electron identity.
+Watchbound does not include that proprietary executable in CI and does not
+infer Node from either Electron value. Source and published artifact inspection
+found no Node 24.15-only dependency: the checked-in source policy now requires
+Node `>=18.15.0` and process Node-API 6 or newer, with no Node upper bound,
+while preserving the platform, architecture, ARM ABI, glibc, kernel, ELF,
+digest, metadata, and capability gates. A full stock-Node 24.14.0 lifecycle is
+the repository regression; Codex retains the signed-runtime integration test.
+
+Candidate commit `1305e2af15853749d12fe06ef9cb370e3bd18800`
+subsequently passed three cold signed-Owl x64 lifecycles. That consumer route
+must retain its Owl-safe `process.report` shim before importing Watchbound:
+calling Owl's native `process.report.getReport()` directly caused `SIGILL`,
+which JavaScript cannot catch. The shim is distinct from, and does not restore,
+the removed Node-range workaround. See the
+[signed-runtime acceptance record](codex-signed-runtime-acceptance-2026-08-14.md).
 
 Audit date: 2026-07-26. Watchbound started at
 `df61736cf325b522f24320f8ecc2064dc9ff8781`. The sibling Codex checkout was
@@ -44,8 +54,9 @@ not Watchbound qualification lanes.
 
 ## 2026-07-26 runtime conclusions (historical)
 
-- The exact inspected Codex binary reports Electron 42.3.0, Node 24.15.0, and
-  Node-API 10.
+- The legacy stock-Electron Codex binary inspected on that date reported
+  Electron 42.3.0, Node 24.15.0, and Node-API 10. It was not the later signed
+  Owl executable described by the addendum above.
 - Codex's x64 and ARM64 Electron archive pins were carried into the Watchbound
   matrix. At that audit point Watchbound kept Node `>=24.15.0 <25`; the
   2026-08-14 addendum above supersedes that runtime admission policy.

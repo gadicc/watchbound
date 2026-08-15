@@ -5,19 +5,35 @@
 The source-candidate loader accepts Node 24.14.0 through the general Node
 `>=18.15.0` plus Node-API 6 policy; it no longer equates a tested Node patch
 range with ABI compatibility. Watchbound CI exercises the full lifecycle under
-stock Node 24.14.0 but intentionally cannot exercise OpenAI's signed Electron
-executable. Codex Desktop should retain a consumer-owned test that proves the
-signed executable reports Node 24.14.0 and sufficient Node-API, selects the
-expected immutable Watchbound target digest, completes initial observation and
+stock Node 24.14.0 but intentionally cannot exercise OpenAI's signed Owl
+executable. Codex Desktop must retain a consumer-owned test that records
+Electron, Node, and Node-API independently, selects the expected immutable
+Watchbound target digest, completes initial observation and
 create/change/delete delivery, preserves exclusions, joins disposal, and exits
-cleanly. Electron, Node, and Node-API values must be asserted independently.
+cleanly.
+
+The first signed x64 acceptance bound to candidate `1305e2a` passed all of
+those checks across three cold processes. Owl reported Electron
+151.0.7922.137, Node 24.14.0, and Node-API 10; its Electron 42.3.0 application
+dependency was not its process-reported Electron identity. The exact evidence
+and limitations are summarized in
+[`codex-signed-runtime-acceptance-2026-08-14.md`](codex-signed-runtime-acceptance-2026-08-14.md).
+ARM64 signed-runtime evidence remains unavailable rather than failed.
+
+Codex must remove the old Watchbound 2.1.1 Node-range rewrite when it adopts
+the new lockstep packages, but retain its separate Owl-safe `process.report`
+shim. Directly invoking Owl's native `process.report.getReport()` caused
+`SIGILL`; because that terminates the process rather than throwing a JavaScript
+exception, Watchbound cannot recover after the call. The shim must be installed
+before importing the Watchbound loader and must continue to provide trustworthy
+glibc identity and version evidence.
 
 Status: release `2.1.1` is published. The retained native, distro, Electron,
 Nix, reproducibility, pinned-kernel, and supervised-overflow scenarios are
 green for the applicable target matrix. Post-publication npm and JSR Node-route
 smokes passed on native x64 and ARM64 and under the pinned ARMv7 QEMU-user
-runtime. A maintainer-reported Codex Desktop pilot has run without observed
-crashes, but consumer acceptance remains codex-desktop-linux-owned.
+runtime. Signed-runtime acceptance and its raw evidence remain
+codex-desktop-linux-owned.
 
 ## Package and loader contract
 

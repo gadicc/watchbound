@@ -64,12 +64,15 @@ delivery modes:
 Libc admission is report-free in the current source. The loader reads the
 running executable's exact bounded `PT_INTERP` metadata, including ELF32 ARM,
 and accepts only the recognized dynamic-linker basename for the selected
-target. It runs that absolute interpreter directly with `--version` under a
-sanitized environment and strict time/output bounds; it never invokes a shell,
-searches `PATH`, reads `/usr/bin/ldd`, or calls `process.report`. The resulting
-loader-owned runtime snapshot is reused by the JavaScript capability builder.
-Any missing or ambiguous evidence refuses before target-package inspection or
-native loading.
+target. It opens that absolute interpreter once, inherits the descriptor as
+child fd 3, and executes `/proc/self/fd/3 --version` under a sanitized
+environment and strict time/output bounds. This binds execution to the file
+that supplied the evidence and preserves QEMU user-mode guest-path translation
+across its host execution boundary. It never invokes a shell, searches `PATH`,
+reads `/usr/bin/ldd`, or calls `process.report`. The resulting loader-owned
+runtime snapshot is reused by the JavaScript capability builder. Any missing
+or ambiguous evidence refuses before target-package inspection or native
+loading.
 
 The public-package path verifies package name, version, delivery kind, target
 identifier, Rust triple, architecture, libc, filename, declared SHA-256, one

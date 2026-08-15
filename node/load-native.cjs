@@ -868,6 +868,8 @@ function detectRuntimeLibc(options) {
     "runInterpreterVersion",
     (interpreterPath) => runInterpreterVersion(
       interpreterPath,
+      injected(options, "openRuntimeInterpreter", fs.openSync),
+      injected(options, "closeRuntimeInterpreter", fs.closeSync),
       injected(options, "spawnSync", spawnSync),
     ),
   );
@@ -907,15 +909,20 @@ function glibcInterpreterBasename(architecture) {
   }
 }
 
-function runInterpreterVersion(interpreterPath, spawn) {
-  return spawn(interpreterPath, ["--version"], {
-    encoding: "utf8",
-    env: { LANG: "C", LC_ALL: "C" },
-    killSignal: "SIGKILL",
-    maxBuffer: MAX_RUNTIME_VERSION_BYTES,
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: RUNTIME_VERSION_TIMEOUT_MS,
-  });
+function runInterpreterVersion(interpreterPath, open, close, spawn) {
+  const descriptor = open(interpreterPath, "r");
+  try {
+    return spawn("/proc/self/fd/3", ["--version"], {
+      encoding: "utf8",
+      env: { LANG: "C", LC_ALL: "C" },
+      killSignal: "SIGKILL",
+      maxBuffer: MAX_RUNTIME_VERSION_BYTES,
+      stdio: ["ignore", "pipe", "ignore", descriptor],
+      timeout: RUNTIME_VERSION_TIMEOUT_MS,
+    });
+  } finally {
+    close(descriptor);
+  }
 }
 
 function normalizeRuntimeLibc(value) {

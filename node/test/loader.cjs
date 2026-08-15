@@ -391,6 +391,8 @@ test("runtime ELF interpreter rejects malformed or unbounded metadata", () => {
 
 test("runtime libc detection uses only the exact interpreter version output", () => {
   let invocation;
+  let openedPath;
+  let closedDescriptor;
   const glibc = detectRuntimeLibc({
     target: x64Target,
     readRuntimeElfInterpreter: () => ({
@@ -399,6 +401,13 @@ test("runtime libc detection uses only the exact interpreter version output", ()
       endianness: 1,
       machine: 62,
     }),
+    openRuntimeInterpreter(interpreterPath) {
+      openedPath = interpreterPath;
+      return 37;
+    },
+    closeRuntimeInterpreter(descriptor) {
+      closedDescriptor = descriptor;
+    },
     spawnSync(command, args, options) {
       invocation = { command, args, options };
       return {
@@ -409,18 +418,23 @@ test("runtime libc detection uses only the exact interpreter version output", ()
       };
     },
   });
+  assert.equal(
+    openedPath,
+    "/nix/store/example-glibc/lib64/ld-linux-x86-64.so.2",
+  );
   assert.deepEqual(invocation, {
-    command: "/nix/store/example-glibc/lib64/ld-linux-x86-64.so.2",
+    command: "/proc/self/fd/3",
     args: ["--version"],
     options: {
       encoding: "utf8",
       env: { LANG: "C", LC_ALL: "C" },
       killSignal: "SIGKILL",
       maxBuffer: 8 * 1024,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "ignore", 37],
       timeout: 1_000,
     },
   });
+  assert.equal(closedDescriptor, 37);
   assert.deepEqual(glibc, {
     family: "glibc",
     version: "2.40",
@@ -442,6 +456,34 @@ test("runtime libc detection uses only the exact interpreter version output", ()
     family: "musl",
     version: null,
     evidence: "elf-interpreter",
+  });
+});
+
+test("runtime libc detection closes the interpreter after spawn failure", () => {
+  let closedDescriptor;
+  const runtimeLibc = detectRuntimeLibc({
+    target: x64Target,
+    readRuntimeElfInterpreter: () => ({
+      path: "/lib64/ld-linux-x86-64.so.2",
+      elfClass: 2,
+      endianness: 1,
+      machine: 62,
+    }),
+    openRuntimeInterpreter() {
+      return 41;
+    },
+    closeRuntimeInterpreter(descriptor) {
+      closedDescriptor = descriptor;
+    },
+    spawnSync() {
+      throw new Error("spawn failed");
+    },
+  });
+  assert.equal(closedDescriptor, 41);
+  assert.deepEqual(runtimeLibc, {
+    family: "unknown",
+    version: null,
+    evidence: "unavailable",
   });
 });
 
@@ -948,7 +990,7 @@ test("native build cannot overwrite the tracked loader or public declarations", 
   assert.doesNotMatch(loaderSource, /execSync|NAPI_RS_|FORCE_WASI/);
   assert.match(
     loaderSource,
-    /return spawn\(interpreterPath, \["--version"\]/u,
+    /return spawn\("\/proc\/self\/fd\/3", \["--version"\]/u,
   );
   assert.doesNotMatch(
     loaderSource,

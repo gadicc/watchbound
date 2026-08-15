@@ -17,9 +17,11 @@ version, publish packages, create a tag, or authorize a release.
   compatibility facts.
 - Stop calling `process.report.getReport()` during native admission or public
   capability construction. Read the running executable's exact bounded ELF
-  interpreter metadata, obtain the glibc version from the exact interpreter
-  under strict subprocess bounds, and reuse one immutable admitted runtime
-  snapshot across the loader and wrapper.
+  interpreter metadata, obtain the glibc version from an opened descriptor for
+  that exact interpreter under strict subprocess bounds, and reuse one
+  immutable admitted runtime snapshot across the loader and wrapper. The
+  descriptor-bound probe also preserves QEMU user-mode guest-path translation
+  across child execution.
 
 ## Qualification
 

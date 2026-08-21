@@ -1,7 +1,7 @@
 "use strict";
 
 const { parentPort, workerData } = require("node:worker_threads");
-const binding = require("../../index.js");
+const binding = require(workerData.bindingPath ?? "../../index.js");
 
 let liveSubscription;
 let changeReported = false;

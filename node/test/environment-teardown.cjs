@@ -335,3 +335,42 @@ test("tearing down a Worker cancels queued establishment and permits a fresh sub
     },
   );
 });
+
+// Regression seam: the other teardown tests destroy one Worker environment per
+// run. Repeating create/destroy cycles exercises per-environment cleanup-hook
+// registration and removal across environment generations, catching hook or
+// registry leaks that a single teardown cannot.
+test("repeated Worker environment teardown releases native resources each cycle", { timeout: 60_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-node-env-repeat-"));
+  const observer = binding.createEngine();
+
+  try {
+    for (let iteration = 1; iteration <= 10; iteration += 1) {
+      const worker = new Worker(path.join(__dirname, "fixtures", "environment-teardown-worker.cjs"), {
+        workerData: {
+          root,
+          expectedPath: path.join(root, `repeat-${iteration}.txt`),
+        },
+      });
+      const ready = await waitForWorkerMessage(worker, "ready");
+      assert.deepEqual(ready.initialCoverage, { state: "complete" });
+
+      await terminateWorker(worker);
+      await waitFor(
+        () => isDeepStrictEqual(normalizedRuntimeStats(observer), ZERO_RUNTIME_STATS),
+        () => `teardown cycle ${iteration} left process runtime resources active: ${JSON.stringify(normalizedRuntimeStats(observer))}`,
+      );
+      await waitFor(() => {
+        const diagnostics = binding.deliveryDiagnostics();
+        return diagnostics.dispatcherEnvironments === 0
+          && diagnostics.dispatcherThreads === 0
+          && diagnostics.registrations === 0
+          && diagnostics.cleanupCoordinatorThreads === 0
+          && diagnostics.cleanupRequests === 0
+          && diagnostics.activeThreadsafeFunctions === 0;
+      }, `teardown cycle ${iteration} left Node delivery resources active`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

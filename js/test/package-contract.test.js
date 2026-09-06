@@ -82,6 +82,17 @@ test("private manifests retain source-build development and architecture-neutral
     wrapper.dependencies["@gadicc/watchbound-node"],
     `workspace:${version}`,
   );
+  assert.match(wrapper.description, /Node\.js recursive file watching for Linux/u);
+  for (const keyword of [
+    "backpressure",
+    "directory-watcher",
+    "file-watcher",
+    "nodejs",
+    "overflow",
+    "parcel-watcher",
+  ]) {
+    assert.ok(wrapper.keywords.includes(keyword), `wrapper keyword ${keyword} is missing`);
+  }
   assert.equal(root.scripts["build:node"], "node scripts/build-node.mjs");
   assert.deepEqual(root.workspaces, ["js", "node"]);
   assert.equal(
@@ -119,6 +130,7 @@ test("public guides defer Watchbound release versioning to package and release r
     "0.0.0",
     "2.1.1",
     "2.5.6",
+    "2.6.0",
     "10.33.2",
     "18.15.0",
     "18.18.2",
@@ -140,6 +152,7 @@ test("public guides defer Watchbound release versioning to package and release r
     "CONTRIBUTING.md",
     "benches/README.md",
     "docs/README.md",
+    "docs/parcel-watcher-limitations-linux.md",
     "skills/watchbound/SKILL.md",
   ]) {
     const source = fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8");
@@ -167,6 +180,7 @@ test("qualification summaries limit container exclusions to recognized evidence"
     ["README.md", "The supported native targets"],
     ["docs/api-lifecycle.md", "The candidate target matrix"],
     ["docs/architecture.md", "The current source matrix"],
+    ["docs/parcel-watcher-limitations-linux.md", "Watchbound is not a fit"],
     ["docs/support-matrix.md", "The full machine-readable contract"],
     ["skills/watchbound/SKILL.md", "An environment with recognized container evidence"],
   ];

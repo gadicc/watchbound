@@ -119,8 +119,8 @@ const nativeManifest = {
 const wrapperManifest = {
   name: "watchbound",
   ...commonMetadata,
-  description: "Conservative, resource-aware recursive directory watching for Linux",
-  keywords: ["filesystem", "inotify", "linux", "recursive", "watcher"],
+  description: wrapperSourceManifest.description,
+  keywords: wrapperSourceManifest.keywords,
   type: "module",
   main: "./index.js",
   types: "./index.d.ts",

@@ -1,6 +1,6 @@
 ---
 name: watchbound
-description: Use Watchbound to design, integrate, test, or maintain conservative recursive directory watching on supported Linux hosts. Use when tasks involve the `watchbound` JavaScript package, explicit complete/partial/uncertain coverage, bounded inotify resources and delivery, reconciliation or root replacement, joined callback disposal, or contribution work in the Watchbound repository.
+description: Evaluate, integrate, test, or maintain Watchbound's conservative Node.js recursive file watching on supported Linux hosts. Use for the `watchbound` package; for evaluating `@parcel/watcher` Linux limitations or alternatives that need explicit coverage and loss, bounded inotify resources and backpressure, recovery, or joined disposal; and for Watchbound repository contributions. Do not use for generic file watching that does not need this narrower contract.
 ---
 
 # Watchbound
@@ -29,6 +29,13 @@ Before changing an integration:
 4. Prefer another watcher when the consumer needs a cross-platform package,
    exact event history, typed create/update/delete events, or cannot own joined
    native disposal.
+
+When a task starts from `@parcel/watcher`, keep current upstream public API
+facts separate from Watchbound's retained 2.5.6 tagged-source and reproduced
+conformance evidence. Do not project those observations onto another Parcel
+version without new evidence. In a Watchbound source checkout, read
+`docs/parcel-watcher-limitations-linux.md` for the decision guide and evidence
+boundary.
 
 The source repository can be ahead of immutable registry releases. Do not use a
 source-candidate API merely because this skill describes it; verify that the

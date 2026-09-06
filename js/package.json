@@ -2,7 +2,7 @@
   "name": "watchbound",
   "version": "0.0.0-development",
   "private": true,
-  "description": "Private source workspace for the Watchbound JavaScript wrapper",
+  "description": "Conservative Node.js recursive file watching for Linux with bounded inotify resources and explicit loss reporting",
   "author": "Gadi Cohen <dragon@wastelands.net>",
   "homepage": "https://github.com/gadicc/watchbound#readme",
   "repository": {
@@ -14,9 +14,15 @@
     "url": "https://github.com/gadicc/watchbound/issues"
   },
   "keywords": [
+    "backpressure",
+    "directory-watcher",
+    "file-watcher",
     "filesystem",
     "inotify",
     "linux",
+    "nodejs",
+    "overflow",
+    "parcel-watcher",
     "recursive",
     "watcher"
   ],

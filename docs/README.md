@@ -15,6 +15,7 @@ This index groups Watchbound's design, contract, qualification, evidence, and ma
 
 ## Evaluate correctness and performance
 
+- [`@parcel/watcher` limitations on Linux](parcel-watcher-limitations-linux.md): decision guide, current-versus-tested evidence boundary, and migration implications
 - [Benchmark and conformance methodology](benchmark-methodology.md): adapters, scenarios, measurements, host preparation, and commands
 - [Benchmark results](benchmark-results.md): retained measurements, artifacts, host state, ranges, and caveats
 - [Conformance findings](conformance-findings.md): reproduced behavior and capability conclusions

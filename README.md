@@ -13,7 +13,7 @@ Copyright (c) 2026 by Gadi Cohen. [MIT Licensed](LICENSE.txt).
 
 ## Intro
 
-Watchbound is an experimental Linux-first watcher built directly on inotify. It reports conservative path invalidations and makes complete, partial, or uncertain filesystem coverage part of every result. It never silently turns resource pressure or event loss into a claim of complete coverage.
+Watchbound is an experimental Linux-first Node.js recursive file watcher built directly on inotify. It reports conservative path invalidations and makes complete, partial, or uncertain filesystem coverage part of every result. It never silently turns resource pressure or event loss into a claim of complete coverage.
 
 Packages are available from [npm](https://www.npmjs.com/package/watchbound) and [JSR](https://jsr.io/@gadicc/watchbound). Version history and availability come from registry metadata, [Git tags](https://github.com/gadicc/watchbound/tags), and [GitHub Releases](https://github.com/gadicc/watchbound/releases).
 
@@ -119,6 +119,8 @@ Read the [complete benchmark results](docs/benchmark-results.md) for memory, bur
 
 Parcel remains the better default when its public contract is sufficient. It is mature, cross-platform, prebuilt, and exposes typed events and historical snapshot queries. Watchbound targets a narrower Linux use case with stronger resource, loss, and lifecycle semantics.
 
+For a decision-focused guide, including the distinction between the current upstream release and Watchbound's exact tested evidence, read [`@parcel/watcher` limitations on Linux and when Watchbound fits](docs/parcel-watcher-limitations-linux.md).
+
 | Need | Watchbound | `@parcel/watcher` 2.5.6 |
 | --- | --- | --- |
 | Platforms | Qualified GNU/Linux x64, ARM64, and exact ARMv7 hard-float | Broad cross-platform prebuild coverage |
@@ -130,6 +132,8 @@ Parcel remains the better default when its public contract is sufficient. It is 
 | Disposal | Idempotent join with no later callback start | Async `unsubscribe()` without the same public guarantee |
 
 The comparison is scoped to Parcel's public API and reproduced Linux inotify behavior at exactly 2.5.6. It is not a claim about every Parcel backend, version, or workload. See the [correctness and capability findings](docs/conformance-findings.md) for source attribution and reproduced scenarios.
+
+Upstream Parcel 2.6.0 adds RegExp ignore support. Watchbound's retained conformance evidence has not been rerun against it, so the reproduced 2.5.6 findings must not be projected onto that later version.
 
 ## Understand the contract
 

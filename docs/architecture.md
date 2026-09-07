@@ -20,8 +20,8 @@ Release `1.2.0` adds exact recursive directory-name pruning and observed
 excluded boundaries. It advances binding API 4 and public capability schema 5,
 passed exact x64/ARM64 qualification, and is published on npm and JSR.
 
-Release `2.1.0` added one exact GNU/Linux ARMv7 hard-float target, and `2.1.1`
-is the current corrective release. It cross-builds
+Release `2.1.0` added one exact GNU/Linux ARMv7 hard-float target, and `2.1.2`
+is the currently selected qualified native stack. It cross-builds
 `armv7-unknown-linux-gnueabihf`, packages the ELF32 binding separately, and
 passed real loader/watch/dispose runs through pinned ARMv7 Electron under
 QEMU-user and the snapshot-pinned 5.15 generic-LPAE kernel under system QEMU.
@@ -446,6 +446,15 @@ result/getter lead, stats scope, counter encodings, the one-entry native
 callback queue, per-environment dispatcher scope, single-credit admission,
 promise-aware serialized callback completion, error/disposal/teardown policy,
 and the fixed 64-registration/5 ms dispatcher scheduling bounds.
+
+The wrapper release and native-stack release are separate identities. The
+generated wrapper exact-pins the selected architecture-neutral loader; that
+loader exact-pins same-version targets and still requires its own package,
+native binding, and engine metadata to be lockstep. The wrapper-to-loader
+handshake checks the declared dependency version rather than requiring the
+wrapper's own version to match. Consequently `versions.wrapper` may advance in
+a wrapper-only release while `versions.native` and `versions.engine` continue
+to identify the immutable qualified native stack.
 
 The `runtime` section is observed information about the process that loaded a
 native binary, not evidence that the host is supported. Schema 6 separately

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "kind": "watchbound-qualified-native-stack",
+  "version": "2.1.2",
+  "sourceSha": "fa188992ef2cc800f9e65b9395139f85ef945c45",
+  "sourceTag": "v2.1.2",
+  "qualification": {
+    "workflow": "Release",
+    "workflowPath": ".github/workflows/release.yml",
+    "runId": 32010819262,
+    "runAttempt": 1,
+    "url": "https://github.com/gadicc/watchbound/actions/runs/32010819262",
+    "verifiedJob": {
+      "id": 95335905297,
+      "name": "Stable target matrix verified"
+    }
+  },
+  "evidence": {
+    "releaseMetadata": {
+      "url": "https://github.com/gadicc/watchbound/releases/download/v2.1.2/release-metadata.json",
+      "sha256": "0a3002009998c05425e47fa7b860407b41fa4672419a1b4f7af6cc760ffe8ed5"
+    },
+    "independentReproducibility": {
+      "url": "https://github.com/gadicc/watchbound/releases/download/v2.1.2/independent-reproducibility.json",
+      "sha256": "3b4acb0aacaeee6c70b28ac55c32c74506e4c6a341d94cbe833f148f36d484d2"
+    },
+    "publicationLedger": {
+      "url": "https://github.com/gadicc/watchbound/releases/download/v2.1.2/publication-ledger.json",
+      "sha256": "09e711d011bcb1bab13d7ad47fdaf8c676dfb638ced54d3e48ddc76b5629613b"
+    }
+  },
+  "buildIdentity": {
+    "distribution": "ubuntu 22.04",
+    "kernel": "6.8.0-1064-azure",
+    "glibc": "glibc 2.35",
+    "node": "v24.15.0",
+    "pnpm": "10.33.2",
+    "rustc": "1.88.0",
+    "cargo": "1.88.0",
+    "ld": "GNU ld (GNU Binutils for Ubuntu) 2.38"
+  },
+  "loader": {
+    "name": "@gadicc/watchbound-node",
+    "integrity": "sha512-h66Xgk2tNowLj1HfRn87whqsuzg4FJulusSrv3NsdIKE/89tONc2wGqHc2DDkn8j90C7XWYmRtZm0cIA0fok6Q==",
+    "tarballSha256": "e12c138118990425892e606184f9cd9f96cd32c841254078747240c5942ba770"
+  },
+  "targets": [
+    {
+      "id": "linux-x64-gnu",
+      "name": "@gadicc/watchbound-node-linux-x64-gnu",
+      "builderArchitecture": "x86_64",
+      "cc": "cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+      "integrity": "sha512-UuEIg6OrHcksCl/yR3JsX6SneEYvxDpT8n68AKPEWajLclj9+aSgCWHi6t2ihh+yC1a5qQbGYNkuUpjSkZh7Dg==",
+      "tarballSha256": "2b4aff140baf6a512dab3fa0f14c12dfb1f785d60b3d2ba28e4144e7d275eded",
+      "nativeSha256": "1f4713bb126bc8652d83e66d25219e0c0f3c354b3e0efeafcc2ec5e8b0bbec45"
+    },
+    {
+      "id": "linux-arm64-gnu",
+      "name": "@gadicc/watchbound-node-linux-arm64-gnu",
+      "builderArchitecture": "aarch64",
+      "cc": "cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+      "integrity": "sha512-Eo/jJL+I1UKnxIeSZP1Vk6QIve4Oy9Ik2wcpfq+ifRQfxlyjClSm7KCt94tyYmDzpZUUGq92CjM+/DxiEhJZiA==",
+      "tarballSha256": "8a016583cd3ad16bf627e314f72e515ab80c1e1415af7a1b65fdea0b1856d9e3",
+      "nativeSha256": "8929d81485731438afd66b732f4581f20cdf33bca5e36fb200ef7b2b67be74d2"
+    },
+    {
+      "id": "linux-arm-gnueabihf",
+      "name": "@gadicc/watchbound-node-linux-arm-gnueabihf",
+      "builderArchitecture": "x86_64",
+      "cc": "arm-linux-gnueabihf-gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+      "integrity": "sha512-ag6EykQrrAgmp+UOBYC75rt2UCpeJpIsaTJLWBRvAez7yUQ3B7hpkE9BDb1Grw8eUjzMx8UEPZxo4tr0u+bjLw==",
+      "tarballSha256": "b2896577857cb2f172e81c19cd86a6042fe6bf3db48c3714e5bde0ce7a773000",
+      "nativeSha256": "0544477951c87cdcafac0afef278eb6d47ebe54a384e2a4ab44555d297f49cda"
+    }
+  ]
+}

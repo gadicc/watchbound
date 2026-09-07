@@ -1,12 +1,13 @@
 # Release and registry runbook
 
-Status: `2.1.1` is the current published release; `1.1.0` remains the
-historical first multi-target release, and `2.1.0` first published ARMv7.
-Semantic-release selected and materialized each version while the checked-in
-source remained at `0.0.0-development`. This runbook continues to govern future
-releases; the repository configuration is not blanket permission to publish.
+Status: `2.1.2` is the current published release and the explicitly selected
+qualified native stack. `1.1.0` remains the historical first multi-target
+release, and `2.1.0` first published ARMv7. Semantic-release selected and
+materialized each version while the checked-in source remained at
+`0.0.0-development`. This runbook continues to govern future releases; the
+repository configuration is not blanket permission to publish.
 
-Release `2.1.1` carries public capability schema 9, raw native capability
+Release `2.1.2` carries public capability schema 9, raw native capability
 schema 5, and binding API 5. Future checked-in package, Cargo, and lockfile
 placeholders must still remain at `0.0.0-development`.
 
@@ -42,8 +43,91 @@ separate distro, glibc, kernel, ARM ABI, Nix, overflow, or registry gates.
 6. The final tag, package and native hashes, schemas, and retained job URLs are
    recorded in
    [`qualification-evidence-2026-08-09-armv7-release.md`](qualification-evidence-2026-08-09-armv7-release.md).
-   codex-desktop-linux should pin `2.1.1`, not a development artifact or the
-   superseded `2.1.0` release. The consumer remains outside this repository.
+   That record's consumer recommendation remains historical.
+7. Release `2.1.2` at source
+   `fa188992ef2cc800f9e65b9395139f85ef945c45` passed Release run
+   [32010819262](https://github.com/gadicc/watchbound/actions/runs/32010819262).
+   Its full retained and registry identity is the initial explicit selection
+   in `config/qualified-native-stack.json`. Consumer changes remain outside
+   this repository.
+
+## Release units and selected native baseline
+
+The release planner has three exhaustive outcomes:
+
+| Change class | Registry result | Required gates |
+| --- | --- | --- |
+| documentation or checked-in skill only | none | ordinary CI |
+| wrapper-only `js/**` change | npm `watchbound` and JSR `@gadicc/watchbound` | wrapper/package tests, JSR dry run, and installed npm/JSR smoke against the selected published native stack |
+| native or uncertain | every target, `@gadicc/watchbound-node`, npm `watchbound`, and JSR `@gadicc/watchbound` | the complete native qualification and post-publication pipeline in this runbook |
+
+The allowlist is intentionally narrow. Release tooling, workflow, matrix,
+engine, binding, loader, packaging, or otherwise unclassified changes select
+the native path. `config/qualified-native-stack.json` is a non-publishing
+selection change and may accompany a wrapper change. It is never inferred
+from npm's `latest` tag or from version ordering.
+
+That descriptor is the durable source of truth for a wrapper-only release. It
+names one exact loader/native version, source SHA and tag, successful Release
+workflow run and terminal verification job, retained release-metadata,
+independent-reproducibility and publication-ledger URLs plus SHA-256 digests,
+the pinned build identity, each npm integrity and tarball SHA-256, and each
+native binary SHA-256.
+`node scripts/verify-qualified-native-stack.mjs` checks the descriptor against
+the retained GitHub evidence, immutable tag, successful workflow/job, npm
+provenance, downloaded registry tarballs, loader target pins, target delivery
+metadata, and native digests.
+Ordinary CI and every wrapper prepare/publish preflight run that verifier.
+
+To select a newer native baseline, first complete and registry-verify a full
+native release. Then update the descriptor from that release's retained
+artifacts and immutable registry records in a reviewed, non-release change.
+The descriptor must pass its online verifier before a later wrapper release can
+consume it. A wrapper release does not copy or relabel the old native evidence;
+its metadata records the descriptor digest and refers to the original native
+version, source and evidence.
+
+The generated package identities are therefore independent where safe:
+
+```text
+watchbound@WRAPPER_VERSION
+  -> @gadicc/watchbound-node@NATIVE_STACK_VERSION
+     -> every target package @NATIVE_STACK_VERSION
+```
+
+All arrows are exact versions. On a native/full release both identities equal
+semantic-release's new version. On a wrapper-only release only the root and
+`js/package.json` candidates are materialized to the new wrapper version; the
+loader/Cargo/lock sources retain `0.0.0-development`, and the generated wrapper
+exact-pins the selected, already-published native version.
+
+The implementation map is:
+
+- `scripts/plan-release.mjs` and `scripts/lib/release-classification.mjs`
+  classify all paths since the last release and record both identities in the
+  retained plan; `scripts/select-release-plan.mjs` independently recomputes
+  that Git diff from the recorded base and rejects a stale, truncated, or
+  otherwise malformed plan. Both sides disable rename collapsing so moving a
+  native or release file beneath `js/` cannot hide its original path.
+- `scripts/lib/release-version.mjs` is the only candidate transform.
+  `.github/actions/materialize-release-candidate/action.yml` carries its
+  wrapper/native identities consistently between workflow steps.
+- `scripts/lib/release-package-plan.mjs` and
+  `scripts/prepare-packages.mjs` generate exact dependency graphs. Wrapper
+  mode emits only npm/JSR wrapper trees; native mode also emits the loader and
+  all target trees.
+- `scripts/semantic-release-watchbound.mjs` owns preparation, immutable
+  registry preflight, ordered publication, JSR checksum verification, and the
+  resumable publication ledger. Semantic-release remains the only version and
+  tag authority.
+- `scripts/generate-release-evidence.mjs` records full native artifacts and
+  reproducibility. `scripts/check-wrapper-packages.mjs` records wrapper
+  artifacts plus a reference to the unchanged qualified-native descriptor;
+  it does not manufacture new native evidence.
+- `.github/workflows/release.yml` selects either the complete native graph or
+  the bounded wrapper graph. `scripts/check-registry-packages.mjs` and
+  `scripts/check-installed-package.mjs` verify the published wrapper and
+  native identities separately after publication.
 
 ## Fail-closed release boundary
 
@@ -52,8 +136,11 @@ Only a push to `main` can enter the publication path in
 lockfile version remains `0.0.0-development`. The write-capable planning job
 uses semantic-release, Conventional Commits, and release tags to select the
 only publication version. Every version-sensitive builder then applies that
-version as the same deterministic, uncommitted transform of the exact source
-SHA and records the transform in its evidence.
+version as a deterministic, uncommitted transform of the exact source SHA and
+records the transform in its evidence. A native/full transform stamps that
+version across wrapper, loader, Cargo and lock identities. A wrapper transform
+stamps only the public wrapper manifests and substitutes the exact selected
+native-stack dependency.
 
 A separate manual dispatch path can run exact-source qualification with
 repository-read permission only. It retains the source placeholder, cannot
@@ -62,17 +149,19 @@ guards, and is never reused as versioned publication evidence. The custom
 plugin requires semantic-release's version to equal the retained release-plan
 version and verifies the exact generated candidate before every mutation.
 
-The plugin refuses preparation unless every matrix target is checked in as
-`supported`. The ARMv7 target is supported in the follow-up source matrix only
-after exact cross-build/package, QEMU-user runtime, and system-QEMU kernel-floor
-evidence completed. This does not bypass the exact status-bearing CI,
-namespace-bootstrap, explicit release-authorization, or publication gates.
-Publication remains independently restricted to an approved semantic-release
-push on `main`; qualification or credentials alone never authorize it.
+For a native/full release, the plugin refuses preparation unless every matrix
+target is checked in as `supported`. For a wrapper-only release it instead
+refuses preparation unless the selected published native stack passes every
+descriptor, evidence and registry check above. This does not bypass the exact
+status-bearing CI, namespace-bootstrap, explicit release-authorization, or
+publication gates. Publication remains independently restricted to an
+approved semantic-release push on `main`; qualification or credentials alone
+never authorize it.
 
 ## Exact target pipeline
 
-For each x64, ARM64, and ARMv7 hard-float registry target, the release workflow:
+For each x64, ARM64, and ARMv7 hard-float registry target, a native/full release
+workflow:
 
 1. starts two isolated builders from the exact clean source SHA, applies the
    same recorded semantic-release version transform, and builds on Ubuntu
@@ -140,8 +229,8 @@ acknowledgement, interpretation, and retention policy.
 
 ## Publication ordering and partial failure
 
-After every gate, the custom semantic-release plugin checks immutable registry
-state and publishes missing packages in this order:
+After every native/full gate, the custom semantic-release plugin checks
+immutable registry state and publishes missing packages in this order:
 
 1. `@gadicc/watchbound-node-linux-arm-gnueabihf`;
 2. `@gadicc/watchbound-node-linux-x64-gnu`;
@@ -155,6 +244,20 @@ Existing versions must have exact identity, integrity, dependencies,
 wrapper version that exists without both exact target versions. It writes a
 publication ledger after every mutation so an immutable partial failure can be
 handled as an incident rather than overwritten.
+
+For a wrapper-only release, preflight first re-verifies the selected native
+baseline, then the only publication order is npm `watchbound` followed by JSR
+`@gadicc/watchbound`. Existing wrapper versions must match the locally packed
+integrity and exact loader dependency. An existing JSR version must match the
+complete generated file set, sizes, and SHA-256 checksums and cannot precede
+its npm wrapper. The JSR dry run and publication install the exact selected
+loader and current target from npm; they never build a native artifact.
+
+Both release classes are resumable from immutable partial state. Native/full
+resume still requires every target before loader and wrapper. Wrapper-only
+resume may verify an existing npm wrapper and continue to the missing JSR
+operation. Neither class overwrites a version, accepts an integrity mismatch,
+or permits JSR to exist before the matching npm wrapper.
 
 npm publication uses trusted publishing and provenance. JSR publication uses
 its GitHub OIDC relationship. The workflow has no npm/JSR token. Semantic
@@ -171,8 +274,9 @@ The ARMv7 name `@gadicc/watchbound-node-linux-arm-gnueabihf` was bootstrapped
 with explicit maintainer authorization on 2026-08-07. Its inert
 `0.0.0-bootstrap.0` contains only `package.json` and `README.md`, is deprecated
 with the required text, and retains the `bootstrap` tag. Stable releases
-`2.1.0` and `2.1.1` were subsequently published through the trusted workflow;
-`latest` now resolves to `2.1.1`.
+from `2.1.0` through `2.1.2` were subsequently published through the trusted
+workflow. The selected native baseline is never derived from the mutable
+`latest` tag.
 
 The bootstrap tarball has npm shasum
 `c55b4956f7cd52805bc141ea3aa35092ee0e1778` and integrity
@@ -200,11 +304,14 @@ environment constraints exact.
 
 ## Post-publication verification
 
-The immutable release is only verified after npm and JSR Node routes install
-the exact version on native x64 and ARM64 runners and the ARMv7 QEMU-user
-Electron lane. Each smoke confirms the
-selected target package and digest, production loader/capability handshake,
-real delivery, initial/dynamic whole-policy exclusions, root recovery, reconciliation,
+An immutable native/full release is only verified after npm and JSR Node routes
+install the exact wrapper/native version on native x64 and ARM64 runners and
+the ARMv7 QEMU-user Electron lane. A wrapper-only release runs the native x64
+and ARM64 npm/JSR routes with the new wrapper version and selected older native
+version, but does not rerun the ARMv7 emulator, distro, kernel, overflow, or
+reproducibility lanes. Each applicable smoke confirms the selected target
+package and digest, production loader/capability handshake, real delivery,
+initial/dynamic whole-policy exclusions, root recovery, reconciliation,
 cancellation, callback serialization, joined disposal, and resource return.
 
 If any route fails after publication, stop. Do not replace, unpublish, or

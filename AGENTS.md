@@ -49,6 +49,18 @@ pnpm check
   `0.0.0-development`. Semantic-release is the only published-version
   authority; release jobs apply its planned version as a deterministic,
   uncommitted transform of the exact source SHA.
+- Keep release classification fail-closed. Documentation and checked-in skills
+  publish nothing; changes confined to `js/**` may publish only the npm and JSR
+  wrappers; native, packaging, workflow, release-tooling, or uncertain changes
+  require the full native qualification path.
+- Wrapper-only releases must exact-pin the published loader version explicitly
+  selected by `config/qualified-native-stack.json`. Do not infer `latest` or
+  another registry tag. Verify the selection against its retained workflow,
+  source, evidence digests, provenance, npm integrities, and native SHA-256s.
+- Keep `@gadicc/watchbound-node` and every native target package version-
+  lockstep. A full release advances them with the wrapper; a wrapper-only
+  release must reuse the immutable selected stack without relabeling its native
+  qualification as evidence for the new wrapper version.
 - Keep Ubuntu 22.04/glibc 2.35 as the release builder and guest compatibility
   floor. System-QEMU runs on the target's explicit Ubuntu 24.04
   `kernelRunner`; that Actions host is emulator tooling, not support evidence.

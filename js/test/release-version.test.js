@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,8 +17,11 @@ import {
 import {
   orderReleasePackages,
   preflightNpmNamespaces,
+  publicationResumePlan,
+  verifyExistingJsrPackage,
   verifyPublishPreconditions,
 } from "../../scripts/semantic-release-watchbound.mjs";
+import { createReleasePackagePlan } from "../../scripts/lib/release-package-plan.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -28,13 +32,19 @@ test("committed workspace versions are permanent development placeholders", () =
   assert.equal(SOURCE_VERSION, "0.0.0-development");
   if (process.env.WATCHBOUND_CANDIDATE_VERSION) {
     assertCommittedSourceVersion(workspaceRoot);
-    assertWorkspaceVersion(workspaceRoot, process.env.WATCHBOUND_CANDIDATE_VERSION);
+    verifyReleaseCandidate(workspaceRoot, {
+      sourceSha: process.env.WATCHBOUND_CANDIDATE_SHA,
+      wrapperVersion: process.env.WATCHBOUND_CANDIDATE_VERSION,
+      nativeStackVersion: process.env.WATCHBOUND_NATIVE_STACK_VERSION ??
+        process.env.WATCHBOUND_CANDIDATE_VERSION,
+      releaseClass: process.env.WATCHBOUND_RELEASE_CLASS ?? "native",
+    });
   } else {
     assertWorkspaceVersion(workspaceRoot, SOURCE_VERSION);
   }
 });
 
-test("semantic-release publish preflight validates the exact generated candidate", () => {
+test("semantic-release publish preflight validates the exact generated candidate", async () => {
   const fixture = createFixture({ qualifyTargets: true });
   const version = "9.8.7";
   const previousPlannedVersion = process.env.WATCHBOUND_PLANNED_VERSION;
@@ -42,7 +52,7 @@ test("semantic-release publish preflight validates the exact generated candidate
     const sourceSha = capture(fixture, "git", ["rev-parse", "HEAD"]);
     materializeReleaseCandidate(fixture, { sourceSha, version });
     process.env.WATCHBOUND_PLANNED_VERSION = version;
-    const candidate = verifyPublishPreconditions(version, fixture);
+    const candidate = await verifyPublishPreconditions(version, fixture);
     assert.equal(candidate.kind, "watchbound-materialized-release-candidate");
     assert.equal(candidate.sourceVersion, SOURCE_VERSION);
     assert.equal(candidate.version, version);
@@ -123,6 +133,9 @@ test("release versions are deterministic generated candidates", () => {
     assert.equal(candidate.sourceSha, sourceSha);
     assert.equal(candidate.sourceVersion, SOURCE_VERSION);
     assert.equal(candidate.version, "9.8.7");
+    assert.equal(candidate.wrapperVersion, "9.8.7");
+    assert.equal(candidate.nativeStackVersion, "9.8.7");
+    assert.equal(candidate.releaseClass, "native");
     assert.equal(candidate.gitDirty, true);
     assert.deepEqual(
       candidate.files.map(({ path: relativePath }) => relativePath),
@@ -135,6 +148,183 @@ test("release versions are deterministic generated candidates", () => {
     );
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("wrapper candidates stamp only wrapper identity and exact-pin an older loader", () => {
+  const fixture = createFixture();
+  try {
+    const sourceSha = capture(fixture, "git", ["rev-parse", "HEAD"]);
+    const candidate = materializeReleaseCandidate(fixture, {
+      sourceSha,
+      wrapperVersion: "9.8.7",
+      nativeStackVersion: "2.1.2",
+      releaseClass: "wrapper",
+    });
+    assert.equal(candidate.wrapperVersion, "9.8.7");
+    assert.equal(candidate.nativeStackVersion, "2.1.2");
+    assert.equal(candidate.releaseClass, "wrapper");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(fixture, "package.json"))).version, "9.8.7");
+    const wrapper = JSON.parse(fs.readFileSync(path.join(fixture, "js/package.json")));
+    assert.equal(wrapper.version, "9.8.7");
+    assert.equal(wrapper.dependencies["@gadicc/watchbound-node"], "2.1.2");
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(fixture, "node/package.json"))).version,
+      SOURCE_VERSION,
+    );
+    assert.match(
+      fs.readFileSync(path.join(fixture, "Cargo.toml"), "utf8"),
+      /^version = "0\.0\.0-development"$/mu,
+    );
+    assert.deepEqual(
+      capture(fixture, "git", ["diff", "--name-only"]).split("\n").sort(),
+      ["js/package.json", "package.json"],
+    );
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("release package plans preserve wrapper/native identities and exact target pins", () => {
+  const targets = [
+    { id: "linux-x64-gnu", package: "@gadicc/watchbound-node-linux-x64-gnu" },
+    { id: "linux-arm64-gnu", package: "@gadicc/watchbound-node-linux-arm64-gnu" },
+  ];
+  const wrapper = createReleasePackagePlan({
+    releaseClass: "wrapper",
+    wrapperVersion: "9.8.7",
+    nativeStackVersion: "2.1.2",
+    targets,
+  });
+  assert.deepEqual(wrapper.wrapper.dependencies, {
+    "@gadicc/watchbound-node": "2.1.2",
+  });
+  assert.equal(wrapper.loader, null);
+  assert.deepEqual(wrapper.targets, []);
+
+  const full = createReleasePackagePlan({
+    releaseClass: "native",
+    wrapperVersion: "9.8.7",
+    nativeStackVersion: "9.8.7",
+    targets,
+  });
+  assert.equal(full.wrapper.dependencies["@gadicc/watchbound-node"], "9.8.7");
+  assert.deepEqual(full.loader.optionalDependencies, {
+    "@gadicc/watchbound-node-linux-x64-gnu": "9.8.7",
+    "@gadicc/watchbound-node-linux-arm64-gnu": "9.8.7",
+  });
+  assert.deepEqual(full.targets.map(({ version }) => version), ["9.8.7", "9.8.7"]);
+  assert.throws(
+    () => createReleasePackagePlan({
+      releaseClass: "native",
+      wrapperVersion: "9.8.7",
+      nativeStackVersion: "2.1.2",
+      targets,
+    }),
+    /must remain lockstep/u,
+  );
+  for (const nativeStackVersion of ["9.8.7", "10.0.0"]) {
+    assert.throws(
+      () => createReleasePackagePlan({
+        releaseClass: "wrapper",
+        wrapperVersion: "9.8.7",
+        nativeStackVersion,
+        targets,
+      }),
+      /require an older native stack/u,
+    );
+  }
+  assert.doesNotThrow(() => createReleasePackagePlan({
+    releaseClass: "wrapper",
+    wrapperVersion: "9.8.7",
+    nativeStackVersion: "9.8.7-rc.1",
+    targets,
+  }));
+});
+
+test("publication resume plans remain ordered for wrapper and native releases", () => {
+  const wrapperPackages = [
+    { kind: "wrapper", name: "watchbound", version: "9.8.7" },
+  ];
+  assert.deepEqual(
+    publicationResumePlan({
+      releaseClass: "wrapper",
+      packages: wrapperPackages,
+      states: new Map([["watchbound", { version: "9.8.7" }]]),
+      jsrExists: false,
+    }),
+    { npm: [], jsr: true },
+  );
+  assert.throws(
+    () => publicationResumePlan({
+      releaseClass: "wrapper",
+      packages: wrapperPackages,
+      states: new Map([["watchbound", null]]),
+      jsrExists: true,
+    }),
+    /JSR wrapper exists before its exact npm wrapper/u,
+  );
+
+  const nativePackages = [
+    { kind: "target", targetId: "x64", name: "target", version: "9.8.7" },
+    { kind: "loader", name: "loader", version: "9.8.7" },
+    { kind: "wrapper", name: "watchbound", version: "9.8.7" },
+  ];
+  assert.deepEqual(
+    publicationResumePlan({
+      releaseClass: "native",
+      packages: nativePackages,
+      states: new Map([
+        ["target", { version: "9.8.7" }],
+        ["loader", null],
+        ["watchbound", null],
+      ]),
+      jsrExists: false,
+    }),
+    { npm: ["loader", "watchbound"], jsr: true },
+  );
+  assert.throws(
+    () => publicationResumePlan({
+      releaseClass: "native",
+      packages: nativePackages,
+      states: new Map([
+        ["target", null],
+        ["loader", { version: "9.8.7" }],
+        ["watchbound", null],
+      ]),
+      jsrExists: false,
+    }),
+    /without exact native targets/u,
+  );
+});
+
+test("JSR publication resume rejects registry exports that differ from the package", () => {
+  const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-jsr-resume-"));
+  try {
+    const files = {
+      "README.md": "readme\n",
+      "LICENSE.txt": "license\n",
+      "package.json": "{}\n",
+      "jsr.json": `${JSON.stringify({ exports: { ".": "./index.js" } })}\n`,
+      "index.js": "export const value = 1;\n",
+      "index.d.ts": "export declare const value: 1;\n",
+    };
+    const manifest = {};
+    for (const [relativePath, contents] of Object.entries(files)) {
+      fs.writeFileSync(path.join(packageRoot, relativePath), contents);
+      manifest[`/${relativePath}`] = {
+        checksum: `sha256-${crypto.createHash("sha256").update(contents).digest("hex")}`,
+        size: Buffer.byteLength(contents),
+      };
+    }
+    const metadata = { exports: { ".": "./index.js" }, manifest };
+    assert.doesNotThrow(() => verifyExistingJsrPackage(metadata, packageRoot));
+    assert.throws(
+      () => verifyExistingJsrPackage({ ...metadata, exports: { ".": "./other.js" } }, packageRoot),
+      /existing JSR package exports/u,
+    );
+  } finally {
+    fs.rmSync(packageRoot, { recursive: true, force: true });
   }
 });
 

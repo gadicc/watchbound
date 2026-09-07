@@ -23,6 +23,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  qualified-native-baseline:
+    name: Verify selected qualified native stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Match retained qualification and immutable registries
+        run: node scripts/verify-qualified-native-stack.mjs
+
   matrix:
     name: Read native matrix
     runs-on: ubuntu-24.04

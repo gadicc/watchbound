@@ -8,6 +8,11 @@ import {
   SOURCE_VERSION,
   assertWorkspaceVersion,
 } from "./lib/release-version.mjs";
+import {
+  RELEASE_CLASS,
+  classifyReleaseChanges,
+} from "./lib/release-classification.mjs";
+import { readQualifiedNativeStack } from "./lib/qualified-native-stack.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -20,13 +25,20 @@ let plan;
 
 if (options.mode === "qualification") {
   plan = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "watchbound-release-plan",
     mode: options.mode,
+    changeClass: RELEASE_CLASS.NATIVE,
+    releaseClass: RELEASE_CLASS.NATIVE,
+    classification: "manual-native-qualification",
+    baseSha: null,
+    changedPaths: [],
     qualify: true,
     willRelease: false,
     sourceVersion: SOURCE_VERSION,
     version: SOURCE_VERSION,
+    wrapperVersion: SOURCE_VERSION,
+    nativeStackVersion: SOURCE_VERSION,
     sourceSha,
     tag: null,
   };
@@ -41,15 +53,33 @@ if (options.mode === "qualification") {
       env: process.env,
     },
   );
+  const lastReleaseSha = result === false
+    ? capture("git", ["rev-list", "-n", "1", capture("git", ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"])])
+    : result.lastRelease.gitHead;
+  const changedPaths = capture("git", [
+    "diff",
+    "--no-renames",
+    "--name-only",
+    `${lastReleaseSha}..${sourceSha}`,
+    "--",
+  ]).split("\n").filter(Boolean);
+  const change = classifyReleaseChanges(changedPaths);
   if (result === false) {
     plan = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "watchbound-release-plan",
       mode: options.mode,
+      changeClass: change.releaseClass,
+      releaseClass: RELEASE_CLASS.NONE,
+      classification: change.reason,
+      baseSha: lastReleaseSha,
+      changedPaths: change.paths,
       qualify: false,
       willRelease: false,
       sourceVersion: SOURCE_VERSION,
       version: null,
+      wrapperVersion: null,
+      nativeStackVersion: null,
       sourceSha,
       tag: null,
     };
@@ -69,16 +99,28 @@ if (options.mode === "qualification") {
       sourceSha,
       "semantic-release planned a different source commit",
     );
+    const releaseClass = change.releaseClass;
+    const willRelease = releaseClass !== RELEASE_CLASS.NONE;
+    const nativeStackVersion = releaseClass === RELEASE_CLASS.WRAPPER
+      ? readQualifiedNativeStack(workspaceRoot).version
+      : result.nextRelease.version;
     plan = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "watchbound-release-plan",
       mode: options.mode,
-      qualify: true,
-      willRelease: true,
+      changeClass: change.releaseClass,
+      releaseClass,
+      classification: change.reason,
+      baseSha: lastReleaseSha,
+      changedPaths: change.paths,
+      qualify: releaseClass === RELEASE_CLASS.NATIVE,
+      willRelease,
       sourceVersion: SOURCE_VERSION,
-      version: result.nextRelease.version,
+      version: willRelease ? result.nextRelease.version : null,
+      wrapperVersion: willRelease ? result.nextRelease.version : null,
+      nativeStackVersion: willRelease ? nativeStackVersion : null,
       sourceSha,
-      tag: result.nextRelease.gitTag,
+      tag: willRelease ? result.nextRelease.gitTag : null,
     };
   }
 }
@@ -94,8 +136,12 @@ if (options["github-output"]) {
     [
       `qualify=${plan.qualify}`,
       `will-release=${plan.willRelease}`,
+      `change-class=${plan.changeClass}`,
+      `release-class=${plan.releaseClass}`,
       `source-version=${plan.sourceVersion}`,
       `version=${plan.version ?? ""}`,
+      `wrapper-version=${plan.wrapperVersion ?? ""}`,
+      `native-stack-version=${plan.nativeStackVersion ?? ""}`,
       `source-sha=${plan.sourceSha}`,
       `tag=${plan.tag ?? ""}`,
       "",

@@ -29,7 +29,10 @@ if (candidateVersion === null && candidateSha === null) {
   assertCommittedSourceVersion(workspaceRoot);
   verifyReleaseCandidate(workspaceRoot, {
     sourceSha: candidateSha,
-    version: candidateVersion,
+    wrapperVersion: candidateVersion,
+    nativeStackVersion:
+      process.env.WATCHBOUND_NATIVE_STACK_VERSION ?? candidateVersion,
+    releaseClass: process.env.WATCHBOUND_RELEASE_CLASS ?? "native",
   });
   process.stdout.write(
     `Verified semantic-release candidate ${candidateSha} at ${candidateVersion}\n`,

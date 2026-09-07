@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { compareExactVersions } from "./release-package-plan.mjs";
 
 export const SOURCE_VERSION = "0.0.0-development";
 export const VERSION_FILES = Object.freeze([
@@ -33,28 +34,33 @@ export function assertCommittedSourceVersion(workspaceRoot) {
 
 export function materializeReleaseCandidate(
   workspaceRoot,
-  { sourceSha, version },
+  options,
 ) {
+  const { sourceSha } = options;
+  const identity = normalizeCandidateIdentity(options);
   verifyReleaseCandidate(workspaceRoot, {
     sourceSha,
-    version: SOURCE_VERSION,
+    wrapperVersion: SOURCE_VERSION,
+    nativeStackVersion: SOURCE_VERSION,
+    releaseClass: "native",
   });
   const committedSources = committedVersionSources(workspaceRoot);
-  for (const relativePath of VERSION_FILES) {
+  for (const relativePath of candidateVersionFiles(identity.releaseClass)) {
     fs.writeFileSync(
       path.join(workspaceRoot, relativePath),
-      materializeVersion(relativePath, committedSources[relativePath], version),
+      materializeVersion(relativePath, committedSources[relativePath], identity),
     );
   }
-  return verifyReleaseCandidate(workspaceRoot, { sourceSha, version });
+  return verifyReleaseCandidate(workspaceRoot, { sourceSha, ...identity });
 }
 
 export function verifyReleaseCandidate(
   workspaceRoot,
-  { sourceSha, version },
+  options,
 ) {
+  const { sourceSha } = options;
+  const identity = normalizeCandidateIdentity(options);
   assert.match(sourceSha ?? "", /^[0-9a-f]{40}$/u, "invalid candidate source SHA");
-  assertVersion(version);
   assert.equal(
     captureGit(workspaceRoot, ["rev-parse", "HEAD"]).trim(),
     sourceSha,
@@ -63,11 +69,14 @@ export function verifyReleaseCandidate(
 
   const committedSources = committedVersionSources(workspaceRoot);
   assertVersionSources(committedSources, SOURCE_VERSION);
+  const transformed = new Set(candidateVersionFiles(identity.releaseClass));
   const expectedChangedFiles = [];
   const files = [];
   for (const relativePath of VERSION_FILES) {
     const committed = committedSources[relativePath];
-    const expected = materializeVersion(relativePath, committed, version);
+    const expected = transformed.has(relativePath)
+      ? materializeVersion(relativePath, committed, identity)
+      : committed;
     const actual = fs.readFileSync(path.join(workspaceRoot, relativePath), "utf8");
     assert.equal(
       actual,
@@ -103,7 +112,10 @@ export function verifyReleaseCandidate(
     kind: "watchbound-materialized-release-candidate",
     sourceSha,
     sourceVersion: SOURCE_VERSION,
-    version,
+    version: identity.wrapperVersion,
+    wrapperVersion: identity.wrapperVersion,
+    nativeStackVersion: identity.nativeStackVersion,
+    releaseClass: identity.releaseClass,
     gitDirty: expectedChangedFiles.length > 0,
     files,
   };
@@ -156,18 +168,27 @@ function assertVersionSources(sources, expectedVersion) {
   }
 }
 
-function materializeVersion(relativePath, source, version) {
-  assertVersion(version);
+function materializeVersion(relativePath, source, identity) {
+  const { wrapperVersion, nativeStackVersion, releaseClass } = identity;
   if (relativePath.endsWith("package.json")) {
     const manifest = JSON.parse(source);
-    manifest.version = version;
+    manifest.version = relativePath === "node/package.json"
+      ? nativeStackVersion
+      : wrapperVersion;
     if (relativePath === "js/package.json") {
-      manifest.dependencies["@gadicc/watchbound-node"] = `workspace:${version}`;
+      manifest.dependencies["@gadicc/watchbound-node"] = releaseClass === "native"
+        ? `workspace:${nativeStackVersion}`
+        : nativeStackVersion;
     }
     return `${JSON.stringify(manifest, null, 2)}\n`;
   }
   if (relativePath === "Cargo.toml") {
-    return replaceExactly(source, /^version = ".*"$/mu, `version = "${version}"`, relativePath);
+    return replaceExactly(
+      source,
+      /^version = ".*"$/mu,
+      `version = "${nativeStackVersion}"`,
+      relativePath,
+    );
   }
   if (relativePath === "Cargo.lock") {
     let materialized = source;
@@ -175,7 +196,7 @@ function materializeVersion(relativePath, source, version) {
       materialized = replaceExactly(
         materialized,
         new RegExp(`(name = "${crate}"\\nversion = ")[^"]+(")`, "u"),
-        `$1${version}$2`,
+        `$1${nativeStackVersion}$2`,
         `${relativePath}:${crate}`,
       );
     }
@@ -185,11 +206,47 @@ function materializeVersion(relativePath, source, version) {
     return replaceExactly(
       source,
       /specifier: workspace:.*$/mu,
-      `specifier: workspace:${version}`,
+      `specifier: workspace:${nativeStackVersion}`,
       relativePath,
     );
   }
   throw new Error(`unsupported release version file: ${relativePath}`);
+}
+
+function normalizeCandidateIdentity(options) {
+  const wrapperVersion = options.wrapperVersion ?? options.version;
+  const releaseClass = options.releaseClass ?? "native";
+  const nativeStackVersion = options.nativeStackVersion ?? wrapperVersion;
+  assertVersion(wrapperVersion);
+  assertVersion(nativeStackVersion);
+  assert.ok(
+    releaseClass === "native" || releaseClass === "wrapper",
+    "release class must be native or wrapper",
+  );
+  if (releaseClass === "native") {
+    assert.equal(
+      nativeStackVersion,
+      wrapperVersion,
+      "native releases require wrapper/native version lockstep",
+    );
+  } else {
+    assert.notEqual(
+      nativeStackVersion,
+      SOURCE_VERSION,
+      "wrapper releases require a published native stack version",
+    );
+    assert.ok(
+      compareExactVersions(nativeStackVersion, wrapperVersion) < 0,
+      "wrapper releases require an older native stack version",
+    );
+  }
+  return { wrapperVersion, nativeStackVersion, releaseClass };
+}
+
+function candidateVersionFiles(releaseClass) {
+  return releaseClass === "wrapper"
+    ? ["package.json", "js/package.json"]
+    : VERSION_FILES;
 }
 
 function lockedCargoVersion(source, crate) {

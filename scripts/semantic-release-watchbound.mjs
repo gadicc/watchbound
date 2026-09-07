@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,6 +7,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { installExactJsrNative } from "./install-jsr-native.mjs";
 import { loadNativeMatrix, targetForRuntime } from "./lib/native-matrix.mjs";
+import { compareExactVersions } from "./lib/release-package-plan.mjs";
+import {
+  readQualifiedNativeStack,
+  verifyQualifiedNativeStack,
+} from "./lib/qualified-native-stack.mjs";
 import {
   SOURCE_VERSION,
   assertWorkspaceVersion,
@@ -21,23 +27,44 @@ const TARGET_BOOTSTRAP_DEPRECATION =
   "Inert namespace bootstrap only; do not depend on this version.";
 const FIRST_PUBLICATION_TARGETS = ["linux-arm-gnueabihf"];
 
-export function prepare(_pluginConfig, { nextRelease }) {
+export async function prepare(_pluginConfig, { nextRelease }) {
+  const identity = releaseIdentity(nextRelease.version);
   assertPlannedVersion(nextRelease.version);
   assertWorkspaceVersion(workspaceRoot, SOURCE_VERSION);
-  assertReleaseTargetsQualified();
-  run(process.execPath, ["scripts/set-release-version.mjs", nextRelease.version]);
-  verifyCurrentCandidate(nextRelease.version);
-  installCanonicalNativeMatrix();
-  run("pnpm", ["check:reproducible"]);
-  run("pnpm", ["test:packages"]);
+  if (identity.releaseClass === "wrapper") {
+    const baseline = readQualifiedNativeStack(workspaceRoot);
+    if (baseline.version !== identity.nativeStackVersion) {
+      throw new Error("planned native stack differs from the explicit qualified baseline");
+    }
+    await verifyQualifiedNativeStack(workspaceRoot);
+  } else {
+    assertReleaseTargetsQualified();
+  }
+  run(process.execPath, [
+    "scripts/set-release-version.mjs",
+    nextRelease.version,
+    "--release-class",
+    identity.releaseClass,
+    "--native-stack-version",
+    identity.nativeStackVersion,
+  ]);
+  verifyCurrentCandidate(identity);
+  if (identity.releaseClass === "native") {
+    installCanonicalNativeMatrix();
+    run("pnpm", ["check:reproducible"]);
+    run("pnpm", ["test:packages"]);
+  } else {
+    run("pnpm", ["test:wrapper-release"]);
+  }
 }
 
 export async function publish(_pluginConfig, { nextRelease }) {
-  const { version } = nextRelease;
-  verifyPublishPreconditions(version);
+  const identity = releaseIdentity(nextRelease.version);
+  const { wrapperVersion: version } = identity;
+  await verifyPublishPreconditions(version, workspaceRoot, identity);
   const distTag = nextRelease.channel ?? "latest";
   const jsrPackage = `jsr:@gadicc/watchbound@${version}`;
-  const packages = releasePackages(version);
+  const packages = releasePackages();
   const targets = packages.filter(({ kind }) => kind === "target");
   const loader = packages.find(({ kind }) => kind === "loader");
   const wrapper = packages.find(({ kind }) => kind === "wrapper");
@@ -45,6 +72,9 @@ export async function publish(_pluginConfig, { nextRelease }) {
     schemaVersion: 2,
     kind: "watchbound-publication-ledger",
     version,
+    wrapperVersion: identity.wrapperVersion,
+    nativeStackVersion: identity.nativeStackVersion,
+    releaseClass: identity.releaseClass,
     sourceSha: capture("git", ["rev-parse", "HEAD"]),
     startedAt: new Date().toISOString(),
     operations: [],
@@ -55,26 +85,27 @@ export async function publish(_pluginConfig, { nextRelease }) {
     await preflightNpmNamespaces(packages);
     const states = new Map();
     for (const descriptor of packages) {
-      states.set(descriptor.name, await npmPackageState(`${descriptor.name}@${version}`));
-    }
-    const missingTargets = targets.filter(({ name }) => states.get(name) === null);
-    if (states.get(wrapper.name) !== null && states.get(loader.name) === null) {
-      throw new Error(`${wrapper.name}@${version} exists without its exact loader dependency`);
-    }
-    if (
-      (states.get(wrapper.name) !== null || states.get(loader.name) !== null) &&
-      missingTargets.length > 0
-    ) {
-      throw new Error(
-        `loader or wrapper exists without exact native targets: ${missingTargets.map(({ name }) => name).join(", ")}`,
+      states.set(
+        descriptor.name,
+        await npmPackageState(`${descriptor.name}@${descriptor.version}`),
       );
     }
     for (const descriptor of packages) {
       const existing = states.get(descriptor.name);
       if (existing !== null) {
-        verifyExistingNpmPackage(existing, descriptor, version);
+        verifyExistingNpmPackage(existing, descriptor);
       }
     }
+    const jsrState = await jsrPackageState(jsrPackage);
+    if (jsrState !== null) {
+      verifyExistingJsrPackage(jsrState, path.join(workspaceRoot, "dist/jsr"));
+    }
+    publicationResumePlan({
+      releaseClass: identity.releaseClass,
+      packages,
+      states,
+      jsrExists: jsrState !== null,
+    });
 
     for (const descriptor of packages) {
       const existing = states.get(descriptor.name);
@@ -82,9 +113,8 @@ export async function publish(_pluginConfig, { nextRelease }) {
         publishNpm(descriptor, distTag);
         recordOperation(ledger, `npm:${descriptor.name}`, "published-verification-pending");
         verifyExistingNpmPackage(
-          await waitForNpmPackage(`${descriptor.name}@${version}`),
+          await waitForNpmPackage(`${descriptor.name}@${descriptor.version}`),
           descriptor,
-          version,
         );
       }
       recordOperation(
@@ -94,16 +124,36 @@ export async function publish(_pluginConfig, { nextRelease }) {
       );
     }
 
-    if (!await jsrPackageExists(jsrPackage)) {
+    if (jsrState === null) {
       const matrix = loadNativeMatrix(workspaceRoot);
       const currentTarget = targetForRuntime(matrix, process.platform, process.arch);
-      const currentTargetPackage = targets.find(({ targetId }) =>
-        targetId === currentTarget.id);
-      installExactJsrNative(
-        run,
-        path.join(workspaceRoot, "dist/jsr"),
-        [loader.tarball, currentTargetPackage.tarball],
-      );
+      if (identity.releaseClass === "native") {
+        const currentTargetPackage = targets.find(({ targetId }) =>
+          targetId === currentTarget.id);
+        installExactJsrNative(
+          run,
+          path.join(workspaceRoot, "dist/jsr"),
+          [loader.tarball, currentTargetPackage.tarball],
+        );
+      } else {
+        const baseline = readQualifiedNativeStack(workspaceRoot);
+        const currentTargetPackage = baseline.targets.find(({ id }) =>
+          id === currentTarget.id);
+        run(
+          "npm",
+          [
+            "install",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--no-package-lock",
+            "--no-save",
+            `${baseline.loader.name}@${baseline.version}`,
+            `${currentTargetPackage.name}@${baseline.version}`,
+          ],
+          path.join(workspaceRoot, "dist/jsr"),
+        );
+      }
       run(
         "deno",
         ["publish", "--dry-run", "--allow-dirty", "--no-check"],
@@ -118,6 +168,10 @@ export async function publish(_pluginConfig, { nextRelease }) {
       if (!await waitForJsrPackage(jsrPackage)) {
         throw new Error(`${jsrPackage} was not visible after publication`);
       }
+      verifyExistingJsrPackage(
+        await jsrPackageState(jsrPackage),
+        path.join(workspaceRoot, "dist/jsr"),
+      );
       recordOperation(ledger, "jsr-wrapper", "verified-published");
     } else {
       recordOperation(ledger, "jsr-wrapper", "verified-existing");
@@ -139,10 +193,22 @@ export async function publish(_pluginConfig, { nextRelease }) {
   };
 }
 
-export function verifyPublishPreconditions(version, root = workspaceRoot) {
+export async function verifyPublishPreconditions(
+  version,
+  root = workspaceRoot,
+  identity = releaseIdentity(version),
+) {
   assertPlannedVersion(version);
-  const candidate = verifyCurrentCandidate(version, root);
-  assertReleaseTargetsQualified(root);
+  const candidate = verifyCurrentCandidate(identity, root);
+  if (identity.releaseClass === "native") {
+    assertReleaseTargetsQualified(root);
+  } else {
+    const baseline = readQualifiedNativeStack(root);
+    if (baseline.version !== identity.nativeStackVersion) {
+      throw new Error("publish native stack differs from the explicit qualified baseline");
+    }
+    await verifyQualifiedNativeStack(root);
+  }
   return candidate;
 }
 
@@ -165,7 +231,11 @@ function installCanonicalNativeMatrix() {
   const comparisonPath = path.join(canonicalRoot, "independent-reproducibility.json");
   const comparison = readJsonAbsolute(comparisonPath);
   const matrix = loadNativeMatrix(workspaceRoot);
-  const candidate = verifyCurrentCandidate(readJson("package.json").version);
+  const candidate = verifyCurrentCandidate({
+    wrapperVersion: readJson("package.json").version,
+    nativeStackVersion: readJson("package.json").version,
+    releaseClass: "native",
+  });
   if (
     comparison.schemaVersion !== 2 ||
     comparison.kind !== "watchbound-independent-native-matrix-comparison" ||
@@ -206,28 +276,31 @@ function installCanonicalNativeMatrix() {
   process.env.WATCHBOUND_EXPECTED_NATIVE_SHA256 = sha256(currentSource);
 }
 
-function releasePackages(version) {
+function releasePackages() {
   const manifest = readJson("dist/native-package-manifest.json");
   const targets = manifest.targets.map((target) => ({
     kind: "target",
     targetId: target.id,
     name: target.name,
+    version: target.version,
     root: target.root,
-    tarball: genericTarballPath(target.name, version),
+    tarball: genericTarballPath(target.name, target.version),
   }));
   return orderReleasePackages([
     ...targets,
-    {
+    ...(manifest.loader ? [{
       kind: "loader",
       name: manifest.loader.name,
+      version: manifest.loader.version,
       root: manifest.loader.root,
-      tarball: genericTarballPath(manifest.loader.name, version),
-    },
+      tarball: genericTarballPath(manifest.loader.name, manifest.loader.version),
+    }] : []),
     {
       kind: "wrapper",
       name: manifest.wrapper.name,
+      version: manifest.wrapper.version,
       root: manifest.wrapper.root,
-      tarball: genericTarballPath(manifest.wrapper.name, version),
+      tarball: genericTarballPath(manifest.wrapper.name, manifest.wrapper.version),
     },
   ]);
 }
@@ -276,11 +349,36 @@ function assertPlannedVersion(version) {
   }
 }
 
-function verifyCurrentCandidate(version, root = workspaceRoot) {
+function verifyCurrentCandidate(identity, root = workspaceRoot) {
   return verifyReleaseCandidate(root, {
     sourceSha: capture("git", ["rev-parse", "HEAD"], root),
-    version,
+    ...identity,
   });
+}
+
+function releaseIdentity(version) {
+  const releaseClass = process.env.WATCHBOUND_RELEASE_CLASS ?? "native";
+  const nativeStackVersion = process.env.WATCHBOUND_NATIVE_STACK_VERSION ?? version;
+  if (releaseClass !== "native" && releaseClass !== "wrapper") {
+    throw new Error(`invalid planned release class: ${releaseClass}`);
+  }
+  if (releaseClass === "native" && nativeStackVersion !== version) {
+    throw new Error("native release versions must remain lockstep");
+  }
+  if (
+    releaseClass === "wrapper" &&
+    compareExactVersions(nativeStackVersion, version) >= 0
+  ) {
+    throw new Error("wrapper releases require an older qualified native stack");
+  }
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(nativeStackVersion)) {
+    throw new Error("planned native stack version must be exact semver");
+  }
+  return {
+    wrapperVersion: version,
+    nativeStackVersion,
+    releaseClass,
+  };
 }
 
 async function npmPackageState(specifier) {
@@ -336,24 +434,44 @@ export async function preflightNpmNamespaces(packages, {
 async function waitForNpmPackage(specifier) {
   for (let attempt = 1; attempt <= 10; attempt += 1) {
     const state = await npmPackageState(specifier);
-    if (state !== null) return state;
+    if (
+      state !== null &&
+      state.dist?.attestations?.provenance?.predicateType ===
+        "https://slsa.dev/provenance/v1"
+    ) {
+      return state;
+    }
     await delay(3_000);
   }
-  throw new Error(`${specifier} was not visible after publication`);
+  throw new Error(`${specifier} with provenance was not visible after publication`);
 }
 
-function verifyExistingNpmPackage(state, descriptor, version) {
+function verifyExistingNpmPackage(state, descriptor) {
   const expectedManifest = readJson(path.join("dist", descriptor.root, "package.json"));
   const expectedIntegrity = sha512Integrity(descriptor.tarball);
-  if (state.name !== expectedManifest.name || state.version !== version) {
-    throw new Error(`registry identity mismatch for ${expectedManifest.name}@${version}`);
+  if (state.name !== expectedManifest.name || state.version !== descriptor.version) {
+    throw new Error(
+      `registry identity mismatch for ${expectedManifest.name}@${descriptor.version}`,
+    );
   }
   if (state.dist?.integrity !== expectedIntegrity) {
-    throw new Error(`registry integrity mismatch for ${expectedManifest.name}@${version}`);
+    throw new Error(
+      `registry integrity mismatch for ${expectedManifest.name}@${descriptor.version}`,
+    );
+  }
+  if (
+    state.dist?.attestations?.provenance?.predicateType !==
+      "https://slsa.dev/provenance/v1"
+  ) {
+    throw new Error(
+      `registry provenance mismatch for ${expectedManifest.name}@${descriptor.version}`,
+    );
   }
   for (const field of ["dependencies", "optionalDependencies", "os", "cpu", "libc"]) {
     if (JSON.stringify(state[field] ?? null) !== JSON.stringify(expectedManifest[field] ?? null)) {
-      throw new Error(`registry ${field} mismatch for ${expectedManifest.name}@${version}`);
+      throw new Error(
+        `registry ${field} mismatch for ${expectedManifest.name}@${descriptor.version}`,
+      );
     }
   }
 }
@@ -372,6 +490,10 @@ export async function waitForJsrPackage(specifier, {
 }
 
 export async function jsrPackageExists(specifier, fetchImplementation = globalThis.fetch) {
+  return await jsrPackageState(specifier, fetchImplementation) !== null;
+}
+
+export async function jsrPackageState(specifier, fetchImplementation = globalThis.fetch) {
   const match =
     /^jsr:@(?<scope>[a-z0-9-]+)\/(?<packageName>[a-z0-9-]+)@(?<version>[^/]+)$/u
       .exec(specifier);
@@ -383,7 +505,7 @@ export async function jsrPackageExists(specifier, fetchImplementation = globalTh
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   });
-  if (response.status === 404) return false;
+  if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(
       `could not determine whether ${specifier} exists: ${metadataUrl} returned HTTP ${response.status}`,
@@ -400,7 +522,88 @@ export async function jsrPackageExists(specifier, fetchImplementation = globalTh
   ) {
     throw new Error(`invalid JSR version metadata for ${specifier}`);
   }
-  return true;
+  return metadata;
+}
+
+export function verifyExistingJsrPackage(metadata, packageRoot) {
+  assertJsrMetadata(metadata, "existing JSR package");
+  assert.deepEqual(
+    metadata.exports,
+    readJsonAbsolute(path.join(packageRoot, "jsr.json")).exports,
+    "existing JSR package exports",
+  );
+  const expectedFiles = [
+    "README.md",
+    "LICENSE.txt",
+    "package.json",
+    "jsr.json",
+    ...fs.readdirSync(packageRoot).filter((entry) => /\.(?:js|d\.ts)$/u.test(entry)),
+  ].sort();
+  assert.deepEqual(
+    Object.keys(metadata.manifest).map((entry) => entry.replace(/^\//u, "")).sort(),
+    expectedFiles,
+    "existing JSR package file set",
+  );
+  for (const relativePath of expectedFiles) {
+    const contents = fs.readFileSync(path.join(packageRoot, relativePath));
+    assert.equal(
+      metadata.manifest[`/${relativePath}`]?.checksum,
+      `sha256-${crypto.createHash("sha256").update(contents).digest("hex")}`,
+      `existing JSR package checksum for ${relativePath}`,
+    );
+    assert.equal(
+      metadata.manifest[`/${relativePath}`]?.size,
+      contents.length,
+      `existing JSR package size for ${relativePath}`,
+    );
+  }
+}
+
+function assertJsrMetadata(metadata, label) {
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    !metadata.manifest ||
+    typeof metadata.manifest !== "object" ||
+    !metadata.exports ||
+    typeof metadata.exports !== "object"
+  ) {
+    throw new Error(`invalid ${label} metadata`);
+  }
+}
+
+export function publicationResumePlan({ releaseClass, packages, states, jsrExists }) {
+  const stateFor = (name) => states instanceof Map ? states.get(name) : states[name];
+  const targets = packages.filter(({ kind }) => kind === "target");
+  const loader = packages.find(({ kind }) => kind === "loader");
+  const wrapper = packages.find(({ kind }) => kind === "wrapper");
+  assert.ok(wrapper, "publication plan requires a wrapper");
+  if (releaseClass === "native") {
+    assert.ok(loader, "native publication plan requires a loader");
+    const missingTargets = targets.filter(({ name }) => stateFor(name) === null);
+    if (stateFor(wrapper.name) !== null && stateFor(loader.name) === null) {
+      throw new Error(`${wrapper.name}@${wrapper.version} exists without its exact loader`);
+    }
+    if (
+      (stateFor(wrapper.name) !== null || stateFor(loader.name) !== null) &&
+      missingTargets.length > 0
+    ) {
+      throw new Error(
+        `loader or wrapper exists without exact native targets: ${missingTargets.map(({ name }) => name).join(", ")}`,
+      );
+    }
+  } else {
+    assert.equal(releaseClass, "wrapper", "publication release class");
+    assert.equal(loader, undefined, "wrapper publication cannot include a loader");
+    assert.deepEqual(targets, [], "wrapper publication cannot include native targets");
+  }
+  if (jsrExists && stateFor(wrapper.name) === null) {
+    throw new Error("JSR wrapper exists before its exact npm wrapper");
+  }
+  return {
+    npm: packages.filter(({ name }) => stateFor(name) === null).map(({ name }) => name),
+    jsr: !jsrExists,
+  };
 }
 
 function isMissing(output) {

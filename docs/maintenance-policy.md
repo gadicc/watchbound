@@ -1,11 +1,11 @@
 # Maintenance and release policy
 
-Status: release `2.1.1` is published and passed exact x64, ARM64, and GNU/Linux
+Status: release `2.1.2` is published and passed exact x64, ARM64, and GNU/Linux
 ARMv7 hard-float qualification plus every npm and JSR Node-route registry
 smoke. Its public contract uses capability schema 9 and binding API 5. Release
-`2.1.0` first added the ARMv7 target; `2.1.1` is the current corrective release
-and the version consumers should pin. Future releases and consumer production
-readiness remain separately gated.
+`2.1.0` first added the ARMv7 target; `2.1.2` is the selected qualified native
+stack. Future releases and consumer production readiness remain separately
+gated.
 
 The ARMv7 contract is backed by deterministic cross-build/package,
 QEMU-user Electron, system-QEMU kernel-floor, and immutable registry lifecycle

@@ -34,6 +34,18 @@ registry independently, verify the immutable artifact digest and provenance
 where a version exists, then either complete only the missing operation from a
 reviewed exact commit or publish a new patch/prerelease version.
 
+Identify the release class from the retained release plan, generated package
+manifest, release metadata, and publication ledger. For a wrapper-only release,
+the only mutable sequence was npm `watchbound` followed by JSR
+`@gadicc/watchbound`; the referenced loader/target version must already match
+the checked-in qualified-native-stack descriptor and its original evidence.
+Resume may verify an existing npm wrapper and perform only a missing JSR
+publication. It must not publish, retag, or regenerate the native stack. For a
+native/full release, retain the target-before-loader-before-wrapper ordering
+and require all exact target versions before accepting an existing loader or
+wrapper. In either class, JSR existing before its npm wrapper, a missing
+prerequisite, or any integrity/manifest mismatch stops recovery.
+
 Semantic-release creates and pushes its Git tag before invoking publish
 plugins. A failed tagged run may therefore produce no release on an ordinary
 rerun. Use the reviewed recovery command from the exact tagged source only
@@ -71,8 +83,10 @@ JSR Node-route smokes pass.
   rerun only the read-only smoke after the bounded propagation window.
 - If integrity, dependency resolution, import, delivery, callback lifecycle,
   disposal, or resource restoration fails, do not retry publication. Deprecate
-  both affected npm packages, yank the JSR version, annotate the GitHub Release,
-  and prepare a corrected lockstep patch.
+  the affected npm release unit, yank the JSR wrapper version, annotate the
+  GitHub Release, and prepare a corrected patch. A wrapper-only correction may
+  reuse the same verified native baseline only when the failure is confined to
+  the wrapper; any native uncertainty requires a native/full lockstep release.
 - Move `latest` back only to a verified contract-compatible stable release. The
   earlier-callback `0.0.1` bootstrap is not a silent v1 rollback target.
 - Preserve the installed lock metadata, expected and observed native hashes,
@@ -95,7 +109,9 @@ Before restoring publishing:
 1. resolve the cause and add a regression or release-gate check;
 2. rotate affected credentials and re-establish the two exact npm trusted
    publisher records when required;
-3. run the full CI and release rehearsal from the corrected commit;
+3. run ordinary CI plus the release rehearsal required by the fail-closed
+   classifier: wrapper/package and selected-baseline checks for a proven
+   wrapper-only correction, otherwise the complete native qualification;
 4. review the generated tarballs, `SHA256SUMS`, release metadata, CycloneDX
    SBOM, and provenance;
 5. publish a new immutable version through the reviewed `main`

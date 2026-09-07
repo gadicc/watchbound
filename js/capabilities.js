@@ -13,6 +13,7 @@ const wrapperPackage = JSON.parse(
 
 export const WRAPPER_VERSION = wrapperPackage.version;
 export const WRAPPER_DELIVERY = packageDelivery(wrapperPackage);
+export const WRAPPER_NATIVE_STACK_VERSION = nativeStackVersion(wrapperPackage);
 
 const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -851,6 +852,20 @@ function packageDelivery(manifest) {
     throw new Error("wrapper package delivery metadata is invalid");
   }
   return delivery;
+}
+
+function nativeStackVersion(manifest) {
+  const dependency = manifest.dependencies?.["@gadicc/watchbound-node"];
+  if (typeof dependency !== "string") {
+    throw new Error("Watchbound wrapper is missing its native loader dependency");
+  }
+  const version = dependency.startsWith("workspace:")
+    ? dependency.slice("workspace:".length)
+    : dependency;
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new Error("Watchbound wrapper native loader dependency must be an exact version");
+  }
+  return version;
 }
 
 export function normalizeRuntimeStats(stats) {

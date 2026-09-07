@@ -22,6 +22,7 @@ const workspaceRoot = path.resolve(
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const nativeStackVersion = options["native-stack-version"] ?? options.version;
 logPhase("startup");
 const waitTimeoutMs = parseInstalledSmokeWaitTimeoutMs(
   options["wait-timeout-ms"],
@@ -51,6 +52,7 @@ const evidence = {
   kind: "watchbound-installed-package-smoke",
   route: options.route,
   expectedVersion: options.version,
+  expectedNativeStackVersion: nativeStackVersion,
   expectedNativeTarget: options["native-target"] ?? nativeTarget.id,
   expectedNativeSha256: options["native-sha256"],
   waitTimeoutMs,
@@ -101,11 +103,11 @@ async function runSmoke() {
   const loaderPackage = readJson(path.join(loaderRoot, "package.json"));
   const nativePackage = readJson(path.join(nativeRoot, "package.json"));
   assert.equal(wrapperPackage.version, options.version);
-  assert.equal(loaderPackage.version, options.version);
-  assert.equal(nativePackage.version, options.version);
+  assert.equal(loaderPackage.version, nativeStackVersion);
+  assert.equal(nativePackage.version, nativeStackVersion);
   assert.equal(
     wrapperPackage.dependencies?.["@gadicc/watchbound-node"],
-    options.version,
+    nativeStackVersion,
   );
   assert.equal(wrapperDelivery(wrapperPackage), "bundled-native-package");
   assert.equal(loaderPackage.watchbound?.delivery, "bundled-native-package");
@@ -132,8 +134,8 @@ async function runSmoke() {
   evidence.host.glibc = capabilities.runtime.libc.version;
   assert.deepEqual(capabilities.versions, {
     wrapper: options.version,
-    native: options.version,
-    engine: options.version,
+    native: nativeStackVersion,
+    engine: nativeStackVersion,
     bindingApi: 5,
   });
   assert.equal(capabilities.build.delivery, "bundled-native-package");
@@ -412,7 +414,9 @@ function wrapperDelivery(manifest) {
   }
   if (
     manifest.name === "@jsr/gadicc__watchbound" &&
-    manifest.dependencies?.["@gadicc/watchbound-node"] === manifest.version
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(
+      manifest.dependencies?.["@gadicc/watchbound-node"] ?? "",
+    )
   ) {
     return "bundled-native-package";
   }
@@ -649,7 +653,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-installed-package.mjs --project <path> --wrapper <name> --version <version> --native-sha256 <digest> --route <route> [--native-target <id>] [--wrapper-path <path>] [--evidence <path>] [--wait-timeout-ms <milliseconds>]",
+        "usage: check-installed-package.mjs --project <path> --wrapper <name> --version <version> --native-sha256 <digest> --route <route> [--native-stack-version <version>] [--native-target <id>] [--wrapper-path <path>] [--evidence <path>] [--wait-timeout-ms <milliseconds>]",
       );
     }
     parsed[flag.slice(2)] = value;
@@ -662,6 +666,13 @@ function parseOptions(args) {
     "route",
   ]) {
     assert.ok(parsed[required], `--${required} is required`);
+  }
+  assert.match(parsed.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u);
+  if (parsed["native-stack-version"] !== undefined) {
+    assert.match(
+      parsed["native-stack-version"],
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u,
+    );
   }
   assert.match(parsed["native-sha256"], /^[0-9a-f]{64}$/u);
   return parsed;

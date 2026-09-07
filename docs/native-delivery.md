@@ -1,10 +1,10 @@
 # Native delivery contract
 
-Status: release `2.1.1` publishes the architecture-neutral loader and exact
+Status: release `2.1.2` publishes the architecture-neutral loader and exact
 x64, ARM64, and ARMv7 hard-float GNU/Linux target packages supported by the
 checked-in matrix. It retains binding API 5 and advances the public contract to
-capability schema 9. Release `2.1.0` first published ARMv7; `2.1.1` is the
-current corrective release.
+capability schema 9. Release `2.1.0` first published ARMv7; `2.1.2` is the
+currently selected qualified native stack.
 
 The final ARMv7 artifact passed exact cross-build, packaging, QEMU-user
 Electron, system-QEMU kernel-floor, and post-publication npm and JSR Node
@@ -36,6 +36,16 @@ Workspace manifests remain private controlled-source packages. A source build
 places exactly the current host target beside `node/index.js`. Public package
 trees are generated under ignored `dist/` paths and are never the development
 source of truth.
+
+The architecture-neutral wrapper is a separate release unit from the native
+stack. Its generated dependency on `@gadicc/watchbound-node` is always an exact
+version. The loader's generated optional dependencies on all native targets
+are also exact and stay at the loader version. A native/full release advances
+wrapper, loader, engine, and targets together; a wrapper-only release advances
+only the npm and JSR wrappers and keeps the loader/engine/target identity at an
+explicitly selected previously qualified version. The selection and its
+retained evidence are defined in `config/qualified-native-stack.json`; mutable
+registry tags are not inputs.
 
 There are no `preinstall`, `install`, or `postinstall` scripts. Neither loader
 nor wrapper compiles code, downloads an artifact, reads a native-library
@@ -77,11 +87,15 @@ loading.
 The public-package path verifies package name, version, delivery kind, target
 identifier, Rust triple, architecture, libc, filename, declared SHA-256, one
 regular non-symlink `.node` file, bounded size, computed SHA-256, ELF magic,
-class, endianness, and machine before `require()`. After load it verifies
-metadata schema 1, binding API 5, wrapper/native/engine version lockstep,
-Node-API floor 6, target triple, release profile, and raw capability schema 5.
-The wrapper then verifies the detailed native capability contract and public
-capability schema 9.
+class, endianness, and machine before `require()`. After load, the loader
+verifies metadata schema 1, binding API 5, exact loader/native/engine version
+lockstep, Node-API floor 6, target triple, release profile, and raw capability
+schema 5. The wrapper passes its exact declared loader dependency version into
+the loader handshake, so its own independently released version need not equal
+the native-stack version. The wrapper then verifies the detailed native
+capability contract and public capability schema 9.
+`capabilities.versions.wrapper` reports the wrapper release, while `native` and
+`engine` report the selected native stack.
 
 ELF validation includes the ARM artifact's ELF32 class, little-endian encoding,
 `EM_ARM` machine value, and EABI5 hard-float `e_flags`; a soft-float ELF cannot

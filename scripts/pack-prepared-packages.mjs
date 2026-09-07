@@ -8,6 +8,7 @@ const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const options = parseOptions(process.argv.slice(2));
 const manifest = readJson(path.join(workspaceRoot, "dist/native-package-manifest.json"));
 const packages = [manifest.loader, manifest.wrapper, ...manifest.targets]
+  .filter(Boolean)
   .filter((descriptor) => !options.target || descriptor.id === undefined || descriptor.id === options.target);
 const tarballRoot = path.join(workspaceRoot, "dist/tarballs");
 fs.mkdirSync(tarballRoot, { recursive: true });

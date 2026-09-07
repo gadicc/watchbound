@@ -16,6 +16,16 @@ const tarballRoot = path.join(distRoot, "tarballs");
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "watchbound-packages-"));
 const version = readJson(path.join(workspaceRoot, "package.json")).version;
 const packageManifest = readJson(path.join(distRoot, "native-package-manifest.json"));
+assert.equal(packageManifest.schemaVersion, 2);
+assert.equal(packageManifest.releaseClass, "native");
+assert.equal(packageManifest.wrapperVersion, version);
+assert.equal(packageManifest.nativeStackVersion, version);
+assert.equal(packageManifest.loader?.version, version);
+assert.equal(packageManifest.wrapper?.version, version);
+assert.ok(packageManifest.targets.length > 0);
+for (const packagedTarget of packageManifest.targets) {
+  assert.equal(packagedTarget.version, version);
+}
 const matrix = readJson(path.join(workspaceRoot, "config", "native-matrix.json"));
 const currentTarget = matrix.targets.find((target) =>
   target.platform === process.platform && target.architecture === process.arch);

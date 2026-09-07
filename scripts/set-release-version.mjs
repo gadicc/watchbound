@@ -8,26 +8,48 @@ const workspaceRoot = path.resolve(
   "..",
 );
 const version = process.argv[2];
-const hasSourceSha = process.argv[3] === "--source-sha";
-const sourceSha = hasSourceSha
-  ? process.argv[4]
-  : captureGitHead();
+const options = parseOptions(process.argv.slice(3));
+const sourceSha = options.sourceSha ?? captureGitHead();
+const releaseClass = options.releaseClass ?? "native";
+const nativeStackVersion = options.nativeStackVersion ?? version;
 
 if (
   !version ||
   !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version) ||
-  (!hasSourceSha && process.argv.length !== 3) ||
-  (hasSourceSha && process.argv.length !== 5) ||
-  (hasSourceSha && !/^[0-9a-f]{40}$/u.test(sourceSha ?? ""))
+  !/^[0-9a-f]{40}$/u.test(sourceSha ?? "")
 ) {
   throw new Error(
-    "usage: node scripts/set-release-version.mjs <semver> [--source-sha <sha>]",
+    "usage: node scripts/set-release-version.mjs <wrapper-semver> [--source-sha <sha>] [--release-class <native|wrapper>] [--native-stack-version <semver>]",
   );
 }
 
-materializeReleaseCandidate(workspaceRoot, { sourceSha, version });
+materializeReleaseCandidate(workspaceRoot, {
+  sourceSha,
+  wrapperVersion: version,
+  nativeStackVersion,
+  releaseClass,
+});
 
-process.stdout.write(`Stamped Watchbound release version ${version}\n`);
+process.stdout.write(
+  `Stamped Watchbound ${releaseClass} release wrapper=${version} native=${nativeStackVersion}\n`,
+);
+
+function parseOptions(args) {
+  const parsed = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (!flag?.startsWith("--") || value === undefined) {
+      throw new Error("release version options must be flag/value pairs");
+    }
+    const key = flag.slice(2);
+    if (key === "source-sha") parsed.sourceSha = value;
+    else if (key === "release-class") parsed.releaseClass = value;
+    else if (key === "native-stack-version") parsed.nativeStackVersion = value;
+    else throw new Error(`unknown release version option: ${flag}`);
+  }
+  return parsed;
+}
 
 function captureGitHead() {
   const result = spawnSync("git", ["rev-parse", "HEAD"], {

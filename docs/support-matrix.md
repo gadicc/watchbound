@@ -10,10 +10,11 @@ compatible capability schemas. See
 below remain immutable evidence for the packages to which they refer; they do
 not by themselves qualify this source candidate.
 
-Status: release `2.1.1` publishes every target whose status is `supported` in
+Status: release `2.1.2` publishes every target whose status is `supported` in
 the checked-in matrix: x64, ARM64, and exact GNU/Linux ARMv7 hard-float. The
 historical `1.1.0` release was the first published multi-target release;
-`2.1.0` first published ARMv7, and `2.1.1` is the current corrective release.
+`2.1.0` first published ARMv7, and `2.1.2` is the explicitly selected
+qualified native stack in `config/qualified-native-stack.json`.
 
 ARMv7 target id `linux-arm-gnueabihf` has a deliberately narrower
 qualification basis: deterministic cross-build/package evidence plus the

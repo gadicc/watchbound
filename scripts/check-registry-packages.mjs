@@ -15,6 +15,7 @@ const workspaceRoot = path.resolve(
   "..",
 );
 const options = parseOptions(process.argv.slice(2));
+const nativeStackVersion = options["native-stack-version"] ?? options.version;
 const matrix = loadNativeMatrix(workspaceRoot);
 const nativeTarget = targetForId(matrix, options["native-target"]);
 const evidencePath = path.resolve(options.evidence);
@@ -68,6 +69,8 @@ try {
     options.route === "npm" ? "watchbound" : "@gadicc/watchbound",
     "--version",
     options.version,
+    "--native-stack-version",
+    nativeStackVersion,
     "--native-sha256",
     options["native-sha256"],
     "--native-target",
@@ -175,7 +178,7 @@ function parseOptions(args) {
     const value = args[index + 1];
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error(
-        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> --native-target <id> --native-sha256 <digest> --evidence <path> [--electron <path> --emulator <path> --emulator-cpu <cpu> --rootfs <path>]",
+        "usage: check-registry-packages.mjs --route <npm|jsr-node> --version <version> [--native-stack-version <version>] --native-target <id> --native-sha256 <digest> --evidence <path> [--electron <path> --emulator <path> --emulator-cpu <cpu> --rootfs <path>]",
       );
     }
     const name = flag.slice(2);
@@ -189,6 +192,13 @@ function parseOptions(args) {
   );
   for (const required of ["version", "native-target", "native-sha256", "evidence"]) {
     assert.ok(parsed[required], `--${required} is required`);
+  }
+  assert.match(parsed.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u);
+  if (parsed["native-stack-version"] !== undefined) {
+    assert.match(
+      parsed["native-stack-version"],
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u,
+    );
   }
   assert.match(parsed["native-sha256"], /^[0-9a-f]{64}$/u);
   if (parsed.emulator) {
@@ -247,6 +257,7 @@ function retainFailureEvidence(error) {
     kind: "watchbound-registry-install-smoke",
     route: options.route,
     expectedVersion: options.version,
+    expectedNativeStackVersion: nativeStackVersion,
     expectedNativeTarget: options["native-target"],
     expectedNativeSha256: options["native-sha256"],
     status: "failed",

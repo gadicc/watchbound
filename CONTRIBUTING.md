@@ -91,6 +91,17 @@ Forced overflow is input/output intensive correctness evidence. Run it only thro
 
 All checked-in npm, Cargo, and lockfile versions stay at `0.0.0-development`. Semantic release is the only published-version authority; release jobs apply a planned version as an uncommitted transform of the exact source commit.
 
+Release classification is fail-closed. Documentation and checked-in skills do
+not publish. Changes confined to `js/**` may publish only the npm and JSR
+wrappers against the exact published native stack selected in
+`config/qualified-native-stack.json`. Engine, binding, loader, matrix,
+packaging, release-tooling, workflow, or unclassified changes require the full
+native qualification and keep loader plus target packages version-lockstep.
+Never choose a native baseline from a mutable registry tag. A baseline update
+must point to a completed full release and pass
+`node scripts/verify-qualified-native-stack.mjs` against retained evidence,
+provenance, package integrities, and native digests.
+
 Do not publish packages or integrate Watchbound into Codex Desktop without explicit maintainer authorization. Follow the [maintenance policy](docs/maintenance-policy.md), [release runbook](docs/releasing.md), and [incident response guide](docs/release-incident-response.md) for authorized release work.
 
 ## Write commits

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeMatrix } from "./lib/native-matrix.mjs";
+import { createReleasePackagePlan } from "./lib/release-package-plan.mjs";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,59 +17,85 @@ const matrix = loadNativeMatrix(workspaceRoot);
 const rootManifest = readJson("package.json");
 const wrapperSourceManifest = readJson("js/package.json");
 const nativeSourceManifest = readJson("node/package.json");
-const version = rootManifest.version;
+const wrapperVersion = rootManifest.version;
+const releaseClass = process.env.WATCHBOUND_RELEASE_CLASS ?? "native";
+const nativeStackVersion = process.env.WATCHBOUND_NATIVE_STACK_VERSION ??
+  (releaseClass === "native" ? wrapperVersion : null);
 
 assert(
-  wrapperSourceManifest.version === version &&
-    nativeSourceManifest.version === version,
-  "workspace package versions must move in lockstep",
+  releaseClass === "native" || releaseClass === "wrapper",
+  "release class must be native or wrapper",
 );
 assert(
-  wrapperSourceManifest.dependencies?.["@gadicc/watchbound-node"] ===
-    `workspace:${version}`,
-  "wrapper workspace dependency must match the release version",
+  typeof nativeStackVersion === "string" &&
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(nativeStackVersion),
+  "native stack version must be exact semver",
 );
+assert(wrapperSourceManifest.version === wrapperVersion, "wrapper version must match root");
+if (releaseClass === "native") {
+  assert(nativeStackVersion === wrapperVersion, "native releases must move in lockstep");
+  assert(nativeSourceManifest.version === nativeStackVersion, "loader version must match");
+  assert(
+    wrapperSourceManifest.dependencies?.["@gadicc/watchbound-node"] ===
+      `workspace:${nativeStackVersion}`,
+    "native release workspace dependency must match the native stack",
+  );
+} else {
+  assert(
+    wrapperSourceManifest.dependencies?.["@gadicc/watchbound-node"] === nativeStackVersion,
+    "wrapper release source dependency must exact-pin the qualified native stack",
+  );
+}
 for (const manifest of [wrapperSourceManifest, nativeSourceManifest]) {
   assert(
     manifest.watchbound?.delivery === "controlled-source-build",
     "workspace packages must identify controlled source-build delivery",
   );
 }
-assert(
-  fs.readFileSync(path.join(workspaceRoot, "Cargo.toml"), "utf8")
-    .includes(`version = "${version}"`),
-  "Cargo workspace version must match the release version",
-);
-const cargoLock = fs.readFileSync(path.join(workspaceRoot, "Cargo.lock"), "utf8");
-for (const crate of ["watchbound-engine", "watchbound-node"]) {
+if (releaseClass === "native") {
   assert(
-    cargoLock.includes(`name = "${crate}"\nversion = "${version}"`),
-    `${crate} lockfile version must match the release version`,
+    fs.readFileSync(path.join(workspaceRoot, "Cargo.toml"), "utf8")
+      .includes(`version = "${nativeStackVersion}"`),
+    "Cargo workspace version must match the native stack",
   );
+  const cargoLock = fs.readFileSync(path.join(workspaceRoot, "Cargo.lock"), "utf8");
+  for (const crate of ["watchbound-engine", "watchbound-node"]) {
+    assert(
+      cargoLock.includes(`name = "${crate}"\nversion = "${nativeStackVersion}"`),
+      `${crate} lockfile version must match the native stack`,
+    );
+  }
 }
 
 const artifactRoot = process.env.WATCHBOUND_NATIVE_ARTIFACTS_DIR
   ? path.resolve(process.env.WATCHBOUND_NATIVE_ARTIFACTS_DIR)
   : path.join(workspaceRoot, "node");
-const availableTargets = matrix.targets
+const availableTargets = releaseClass === "native" ? matrix.targets
   .map((target) => ({
     target,
     artifactPath: path.join(artifactRoot, target.binary),
   }))
-  .filter(({ artifactPath }) => fs.existsSync(artifactPath));
-assert(availableTargets.length > 0, "build at least one configured native artifact");
-if (process.env.WATCHBOUND_REQUIRE_ALL_TARGETS === "1") {
+  .filter(({ artifactPath }) => fs.existsSync(artifactPath)) : [];
+if (releaseClass === "native") {
+  assert(availableTargets.length > 0, "build at least one configured native artifact");
+}
+if (releaseClass === "native" && process.env.WATCHBOUND_REQUIRE_ALL_TARGETS === "1") {
   assert(
     availableTargets.length === matrix.targets.length,
     "release preparation requires every configured native target",
   );
 }
+const packagePlan = createReleasePackagePlan({
+  releaseClass,
+  wrapperVersion,
+  nativeStackVersion,
+  targets: matrix.targets,
+});
 
 fs.rmSync(outputRoot, { recursive: true, force: true });
 fs.mkdirSync(npmRoot, { recursive: true });
 
 const commonMetadata = {
-  version,
   author: "Gadi Cohen <dragon@wastelands.net>",
   homepage: "https://github.com/gadicc/watchbound#readme",
   repository: {
@@ -91,6 +118,7 @@ const commonMetadata = {
 
 const nativeManifest = {
   name: "@gadicc/watchbound-node",
+  version: nativeStackVersion,
   ...commonMetadata,
   description: "Architecture-neutral native loader for Watchbound",
   keywords: ["filesystem", "inotify", "linux", "napi", "watcher"],
@@ -106,7 +134,7 @@ const nativeManifest = {
     "LICENSE.txt",
   ],
   optionalDependencies: Object.fromEntries(
-    matrix.targets.map((target) => [target.package, version]),
+    Object.entries(packagePlan.loader?.optionalDependencies ?? {}),
   ),
   watchbound: {
     delivery: "bundled-native-package",
@@ -118,6 +146,7 @@ const nativeManifest = {
 
 const wrapperManifest = {
   name: "watchbound",
+  version: wrapperVersion,
   ...commonMetadata,
   description: wrapperSourceManifest.description,
   keywords: wrapperSourceManifest.keywords,
@@ -127,7 +156,7 @@ const wrapperManifest = {
   exports: wrapperSourceManifest.exports,
   files: ["*.js", "*.d.ts", "README.md", "LICENSE.txt"],
   dependencies: {
-    "@gadicc/watchbound-node": version,
+    ...packagePlan.wrapper.dependencies,
   },
   watchbound: {
     delivery: "bundled-native-package",
@@ -138,22 +167,30 @@ const wrapperManifest = {
 const nativeRoot = path.join(npmRoot, "node");
 const wrapperRoot = path.join(npmRoot, "wrapper");
 const targetsRoot = path.join(npmRoot, "targets");
-fs.mkdirSync(nativeRoot, { recursive: true });
 fs.mkdirSync(wrapperRoot, { recursive: true });
-fs.mkdirSync(targetsRoot, { recursive: true });
-
-for (const file of ["index.js", "index.d.ts", "load-native.cjs"]) {
-  copy(path.join("node", file), path.join(nativeRoot, file));
+if (releaseClass === "native") {
+  fs.mkdirSync(nativeRoot, { recursive: true });
+  fs.mkdirSync(targetsRoot, { recursive: true });
 }
-copy("config/native-matrix.json", path.join(nativeRoot, "native-matrix.json"));
+
+if (releaseClass === "native") {
+  for (const file of ["index.js", "index.d.ts", "load-native.cjs"]) {
+    copy(path.join("node", file), path.join(nativeRoot, file));
+  }
+  copy("config/native-matrix.json", path.join(nativeRoot, "native-matrix.json"));
+}
 for (const file of runtimeWrapperFiles()) {
   copy(path.join("js", file), path.join(wrapperRoot, file));
 }
-for (const destination of [nativeRoot, wrapperRoot]) {
+for (const destination of releaseClass === "native"
+  ? [nativeRoot, wrapperRoot]
+  : [wrapperRoot]) {
   copy("README.md", path.join(destination, "README.md"));
   copy("LICENSE.txt", path.join(destination, "LICENSE.txt"));
 }
-writeJson(path.join(nativeRoot, "package.json"), nativeManifest);
+if (releaseClass === "native") {
+  writeJson(path.join(nativeRoot, "package.json"), nativeManifest);
+}
 writeJson(path.join(wrapperRoot, "package.json"), wrapperManifest);
 
 const targetPackages = [];
@@ -163,6 +200,7 @@ for (const { target, artifactPath } of availableTargets) {
   const nativeSha256 = sha256(artifactPath);
   const targetManifest = {
     name: target.package,
+    version: nativeStackVersion,
     ...commonMetadata,
     description: `${target.rustTarget} Node-API binding for Watchbound`,
     cpu: [target.architecture],
@@ -192,6 +230,7 @@ for (const { target, artifactPath } of availableTargets) {
   targetPackages.push({
     id: target.id,
     name: target.package,
+    version: nativeStackVersion,
     root: path.relative(outputRoot, targetRoot),
     binary: target.binary,
     sha256: nativeSha256,
@@ -205,28 +244,33 @@ writeJson(path.join(jsrRoot, "package.json"), {
 });
 writeJson(path.join(jsrRoot, "jsr.json"), {
   name: "@gadicc/watchbound",
-  version,
+  version: wrapperVersion,
   exports: { ".": "./index.js" },
   publish: {
     include: ["*.js", "*.d.ts", "package.json", "README.md", "LICENSE.txt"],
   },
 });
 writeJson(path.join(outputRoot, "native-package-manifest.json"), {
-  schemaVersion: 1,
-  version,
-  loader: {
+  schemaVersion: 2,
+  releaseClass,
+  version: wrapperVersion,
+  wrapperVersion,
+  nativeStackVersion,
+  loader: releaseClass === "native" ? {
     name: nativeManifest.name,
+    version: nativeStackVersion,
     root: path.relative(outputRoot, nativeRoot),
-  },
+  } : null,
   wrapper: {
     name: wrapperManifest.name,
+    version: wrapperVersion,
     root: path.relative(outputRoot, wrapperRoot),
   },
   targets: targetPackages,
 });
 
 process.stdout.write(
-  `Prepared Watchbound ${version} packages for ${targetPackages.map(({ id }) => id).join(", ")}\n`,
+  `Prepared Watchbound ${releaseClass} packages wrapper=${wrapperVersion} native=${nativeStackVersion}${targetPackages.length > 0 ? ` for ${targetPackages.map(({ id }) => id).join(", ")}` : ""}\n`,
 );
 
 function runtimeWrapperFiles() {

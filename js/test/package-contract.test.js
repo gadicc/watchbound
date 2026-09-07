@@ -33,17 +33,19 @@ test("private manifests retain source-build development and architecture-neutral
   const root = readJson("package.json");
   const wrapper = readJson("js/package.json");
   const native = readJson("node/package.json");
-  const { version } = root;
-  assert.equal(
-    version,
-    process.env.WATCHBOUND_CANDIDATE_VERSION ?? "0.0.0-development",
-  );
+  const releaseClass = process.env.WATCHBOUND_RELEASE_CLASS ?? "native";
+  const version = process.env.WATCHBOUND_CANDIDATE_VERSION ?? "0.0.0-development";
+  const nativeSourceVersion = releaseClass === "wrapper"
+    ? "0.0.0-development"
+    : version;
+  assert.equal(root.version, version);
+  assert.equal(wrapper.version, version);
+  assert.equal(native.version, nativeSourceVersion);
 
   assert.equal(wrapper.name, "watchbound");
   assert.equal(native.name, "@gadicc/watchbound-node");
   for (const manifest of [root, wrapper, native]) {
     assert.equal(manifest.private, true);
-    assert.equal(manifest.version, version);
     assert.equal(manifest.license, "MIT");
     assert.equal(manifest.author, "Gadi Cohen <dragon@wastelands.net>");
     assert.match(manifest.repository.url, /github\.com\/gadicc\/watchbound/u);
@@ -80,7 +82,9 @@ test("private manifests retain source-build development and architecture-neutral
   ]);
   assert.equal(
     wrapper.dependencies["@gadicc/watchbound-node"],
-    `workspace:${version}`,
+    releaseClass === "wrapper"
+      ? process.env.WATCHBOUND_NATIVE_STACK_VERSION
+      : `workspace:${version}`,
   );
   assert.match(wrapper.description, /Node\.js recursive file watching for Linux/u);
   for (const keyword of [
@@ -708,6 +712,8 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   const flake = fs.readFileSync(path.join(workspaceRoot, "flake.nix"), "utf8");
   assert.match(release, /^  push:\n    branches: \[main\]$/mu);
+  assert.match(ci, /^  qualified-native-baseline:$/mu);
+  assert.match(ci, /node scripts\/verify-qualified-native-stack\.mjs/u);
   assert.match(
     release,
     /^  workflow_dispatch:\n    inputs:\n      candidate_sha:/mu,
@@ -728,6 +734,20 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(release, /watchbound-qualification-plan/u);
   assert.match(release, /actions\/download-artifact@/u);
   assert.match(release, /select-release-plan\.mjs/u);
+  assert.match(
+    selectReleasePlan,
+    /`\$\{plan\.baseSha\}\.\.\$\{sourceSha\}`/u,
+  );
+  assert.match(
+    selectReleasePlan,
+    /release plan changed paths differ from Git/u,
+  );
+  assert.match(planRelease, /"--no-renames",\n\s+"--name-only"/u);
+  assert.match(selectReleasePlan, /"--no-renames",\n\s+"--name-only"/u);
+  assert.match(
+    release,
+    /name: Select exact candidate plan[\s\S]*?fetch-depth: 0/u,
+  );
   assert.match(release, /candidate_version: \$\{\{ needs\.plan\.outputs\.version \}\}/u);
   assert.match(
     release,
@@ -737,7 +757,7 @@ test("manual qualification is read-only while semantic release stays push-only",
     release.match(
       /^          node-version: \$\{\{ needs\.plan\.outputs\.build-node \}\}$/gmu,
     )?.length,
-    9,
+    10,
   );
   assert.equal(
     release.match(/^          node-version: 24\.15\.0$/gmu)?.length,
@@ -760,7 +780,7 @@ test("manual qualification is read-only while semantic release stays push-only",
   );
   assert.match(
     release,
-    /if: >-\n      always\(\) &&\n      needs\.plan\.result == 'success' &&\n      \(github\.event_name == 'push' \|\|\n      needs\.plan\.outputs\.qualify == 'true'\)/u,
+    /if: >-\n      always\(\) &&\n      needs\.plan\.result == 'success' &&\n      \(github\.event_name == 'workflow_dispatch' \|\|\n      needs\.plan\.outputs\.release-class != 'wrapper'\)/u,
   );
   const cascadeJobs = {
     "repro-build": ["plan"],
@@ -784,6 +804,7 @@ test("manual qualification is read-only while semantic release stays push-only",
     release: [
       "plan",
       "tests",
+      "wrapper-tests",
       "aggregate",
       "release-armv7-runtime",
       "release-distro",
@@ -793,7 +814,7 @@ test("manual qualification is read-only while semantic release stays push-only",
     ],
     "registry-smoke": ["plan", "release"],
     "registry-armv7-smoke": ["plan", "release"],
-    verified: ["registry-smoke", "registry-armv7-smoke"],
+    verified: ["release", "registry-smoke", "registry-armv7-smoke"],
   };
   for (const [job, requiredResults] of Object.entries(cascadeJobs)) {
     const start = release.indexOf(`  ${job}:\n`);
@@ -815,7 +836,19 @@ test("manual qualification is read-only while semantic release stays push-only",
   }
   assert.match(
     release,
-    /needs\.tests\.result == 'success' &&[\s\S]*?needs\.release-overflow\.result == 'success' &&[\s\S]*?needs\.plan\.outputs\.will-release == 'true'/u,
+    /needs\.plan\.outputs\.release-class == 'native' &&[\s\S]*?needs\.tests\.result == 'success' &&[\s\S]*?needs\.release-overflow\.result == 'success'/u,
+  );
+  assert.match(
+    release,
+    /needs\.plan\.outputs\.release-class == 'wrapper' &&[\s\S]*?needs\.wrapper-tests\.result == 'success' &&[\s\S]*?needs\.release-overflow\.result == 'skipped'/u,
+  );
+  assert.match(
+    release,
+    /needs\.release\.outputs\.release-class == 'native' &&[\s\S]*?needs\.registry-armv7-smoke\.result == 'success'/u,
+  );
+  assert.match(
+    release,
+    /needs\.release\.outputs\.release-class == 'wrapper' &&[\s\S]*?needs\.registry-armv7-smoke\.result == 'skipped'/u,
   );
   assert.match(release, /github\.event_name == 'push'/u);
   assert.match(release, /github\.ref == 'refs\/heads\/main'/u);
@@ -1012,13 +1045,17 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(electronAsarCheck, /exclusion-smoke-helpers\.cjs/u);
   assert.match(distroPackageSmoke, /--wait-timeout-ms/u);
   assert.match(selectReleasePlan, /watchbound-release-plan/u);
-  assert.match(selectReleasePlan, /plan\.schemaVersion, 2/u);
+  assert.match(selectReleasePlan, /plan\.schemaVersion, 3/u);
   assert.match(selectReleasePlan, /plan\.sourceVersion, SOURCE_VERSION/u);
   assert.match(selectReleasePlan, /plan\.sourceSha/u);
   assert.match(selectReleasePlan, /git", \["rev-parse", "HEAD"\]/u);
   assert.match(selectReleasePlan, /will-release=/u);
   assert.match(planRelease, /sourceVersion: SOURCE_VERSION/u);
-  assert.match(planRelease, /version: result\.nextRelease\.version/u);
+  assert.match(
+    planRelease,
+    /wrapperVersion: willRelease \? result\.nextRelease\.version : null/u,
+  );
+  assert.match(planRelease, /readQualifiedNativeStack\(workspaceRoot\)\.version/u);
   assert.doesNotMatch(planRelease, /committed candidate/u);
   assert.match(checkSourceVersion, /WATCHBOUND_CANDIDATE_VERSION/u);
   assert.match(checkSourceVersion, /assertCommittedSourceVersion/u);
@@ -1290,12 +1327,12 @@ test("spent JSR recoveries cannot be dispatched or reused", () => {
   }
 });
 
-test("the wrapper resolves the native package boundary and asserts lockstep versions", () => {
+test("the wrapper resolves and asserts its exact native stack dependency", () => {
   const source = fs.readFileSync(path.join(workspaceRoot, "js/index.js"), "utf8");
   assert.match(source, /from "@gadicc\/watchbound-node"/u);
   assert.doesNotMatch(source, /from "\.\.\/node\/index\.js"/u);
   assert.match(
     source,
-    /nativeBinding\.assertWrapperVersion\(WRAPPER_VERSION, WRAPPER_DELIVERY\)/u,
+    /nativeBinding\.assertWrapperVersion\(\s*WRAPPER_NATIVE_STACK_VERSION,\s*WRAPPER_DELIVERY/u,
   );
 });

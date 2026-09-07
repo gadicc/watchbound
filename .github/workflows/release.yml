@@ -148,7 +148,11 @@ jobs:
     outputs:
       qualify: ${{ steps.select.outputs.qualify }}
       will-release: ${{ steps.select.outputs.will-release }}
+      change-class: ${{ steps.select.outputs.change-class }}
+      release-class: ${{ steps.select.outputs.release-class }}
       version: ${{ steps.select.outputs.version }}
+      wrapper-version: ${{ steps.select.outputs.wrapper-version }}
+      native-stack-version: ${{ steps.select.outputs.native-stack-version }}
       source-sha: ${{ steps.select.outputs.source-sha }}
       tag: ${{ steps.select.outputs.tag }}
       source: ${{ steps.matrix.outputs.source }}
@@ -164,7 +168,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
+          # The selector independently recomputes the plan's complete diff.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -192,14 +197,70 @@ jobs:
     if: >-
       always() &&
       needs.plan.result == 'success' &&
-      (github.event_name == 'push' ||
-      needs.plan.outputs.qualify == 'true')
+      (github.event_name == 'workflow_dispatch' ||
+      needs.plan.outputs.release-class != 'wrapper')
     uses: ./.github/workflows/ci.yml
     with:
       candidate_sha: ${{ needs.plan.outputs.source-sha }}
       candidate_version: ${{ needs.plan.outputs.version }}
     permissions:
       contents: read
+
+  wrapper-tests:
+    name: Qualify wrapper against published native stack
+    needs: plan
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.release-class == 'wrapper' &&
+      needs.plan.outputs.will-release == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.plan.outputs.build-node }}
+          architecture: x64
+          package-manager-cache: false
+      - run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm install --frozen-lockfile
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.6.7
+      - uses: ./.github/actions/materialize-release-candidate
+        with:
+          source-sha: ${{ needs.plan.outputs.source-sha }}
+          version: ${{ needs.plan.outputs.wrapper-version }}
+          release-class: wrapper
+          native-stack-version: ${{ needs.plan.outputs.native-stack-version }}
+      - name: Run wrapper semantics and package rehearsal
+        run: |
+          node --test \
+            js/test/automatic-reconciliation.test.js \
+            js/test/container-qualification.test.js \
+            js/test/installed-package-smoke.test.js \
+            js/test/observed-state.test.js \
+            js/test/package-contract.test.js \
+            js/test/path-delivery.test.js \
+            js/test/qualified-native-stack.test.js \
+            js/test/registry-native-targets.test.js \
+            js/test/release-planning.test.js \
+            js/test/release-version.test.js
+          node scripts/check-js.mjs
+          pnpm typecheck
+          pnpm test:wrapper-release
+          node scripts/verify-release-candidate.mjs \
+            --source-sha "${{ needs.plan.outputs.source-sha }}" \
+            --version "${{ needs.plan.outputs.wrapper-version }}" \
+            --release-class wrapper \
+            --native-stack-version "${{ needs.plan.outputs.native-stack-version }}"
 
   repro-build:
     name: Reproduce ${{ matrix.target }} (${{ matrix.builder }})
@@ -791,20 +852,31 @@ jobs:
           on native x64/ARM64 and QEMU-executed ARMv7 hard-float."
 
   release:
-    name: Publish exact qualified target matrix
-    needs: [plan, tests, aggregate, release-armv7-runtime, release-distro, release-electron, release-kernel-baseline, release-overflow]
+    name: Publish exact qualified release unit
+    needs: [plan, tests, wrapper-tests, aggregate, release-armv7-runtime, release-distro, release-electron, release-kernel-baseline, release-overflow]
     if: >-
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.plan.result == 'success' &&
+      ((needs.plan.outputs.release-class == 'native' &&
       needs.tests.result == 'success' &&
+      needs.wrapper-tests.result == 'skipped' &&
       needs.aggregate.result == 'success' &&
       needs.release-armv7-runtime.result == 'success' &&
       needs.release-distro.result == 'success' &&
       needs.release-electron.result == 'success' &&
       needs.release-kernel-baseline.result == 'success' &&
-      needs.release-overflow.result == 'success' &&
+      needs.release-overflow.result == 'success') ||
+      (needs.plan.outputs.release-class == 'wrapper' &&
+      needs.tests.result == 'skipped' &&
+      needs.wrapper-tests.result == 'success' &&
+      needs.aggregate.result == 'skipped' &&
+      needs.release-armv7-runtime.result == 'skipped' &&
+      needs.release-distro.result == 'skipped' &&
+      needs.release-electron.result == 'skipped' &&
+      needs.release-kernel-baseline.result == 'skipped' &&
+      needs.release-overflow.result == 'skipped')) &&
       needs.plan.outputs.will-release == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 50
@@ -816,6 +888,8 @@ jobs:
     outputs:
       published: ${{ steps.published.outputs.published }}
       version: ${{ steps.published.outputs.version }}
+      release-class: ${{ needs.plan.outputs.release-class }}
+      native-stack-version: ${{ needs.plan.outputs.native-stack-version }}
       native-matrix: ${{ needs.aggregate.outputs.native-matrix }}
     env:
       CARGO_INCREMENTAL: "0"
@@ -828,6 +902,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.plan.outputs.release-class == 'native'
         with:
           name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
@@ -852,8 +927,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.88.0 --profile minimal
-          rustup default 1.88.0
+          if [[ "${{ needs.plan.outputs.release-class }}" == native ]]; then
+            rustup toolchain install 1.88.0 --profile minimal
+            rustup default 1.88.0
+          fi
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm config set store-dir "$PNPM_STORE_DIR"
@@ -868,6 +945,8 @@ jobs:
           NPM_CONFIG_PROVENANCE: "true"
           WATCHBOUND_CANONICAL_NATIVE_DIR: ${{ runner.temp }}/approved-matrix
           WATCHBOUND_PLANNED_VERSION: ${{ needs.plan.outputs.version }}
+          WATCHBOUND_RELEASE_CLASS: ${{ needs.plan.outputs.release-class }}
+          WATCHBOUND_NATIVE_STACK_VERSION: ${{ needs.plan.outputs.native-stack-version }}
           WATCHBOUND_REPRODUCIBLE_OUTPUT: ${{ runner.temp }}/same-runner-reproducibility.json
         run: pnpm release
       - id: published
@@ -903,6 +982,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.release.outputs.release-class == 'native'
         with:
           name: watchbound-approved-native-matrix
           path: ${{ runner.temp }}/approved-matrix
@@ -918,10 +998,15 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           npm install --global npm@11.18.0
-          digest="$(sha256sum "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" | cut -d ' ' -f 1)"
+          if [[ "${{ needs.release.outputs.release-class }}" == native ]]; then
+            digest="$(sha256sum "$RUNNER_TEMP/approved-matrix/${{ matrix.binary }}" | cut -d ' ' -f 1)"
+          else
+            digest="$(node scripts/verify-qualified-native-stack.mjs --target-sha256 "${{ matrix.target }}")"
+          fi
           node scripts/check-registry-packages.mjs \
             --route "${{ matrix.route }}" \
             --version "${{ needs.release.outputs.version }}" \
+            --native-stack-version "${{ needs.release.outputs.native-stack-version }}" \
             --native-target "${{ matrix.target }}" \
             --native-sha256 "$digest" \
             --evidence "$RUNNER_TEMP/registry-${{ matrix.route }}-${{ matrix.target }}.json"
@@ -940,7 +1025,8 @@ jobs:
       always() &&
       needs.plan.result == 'success' &&
       needs.release.result == 'success' &&
-      needs.release.outputs.published == 'true'
+      needs.release.outputs.published == 'true' &&
+      needs.release.outputs.release-class == 'native'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -1012,11 +1098,15 @@ jobs:
 
   verified:
     name: Stable target matrix verified
-    needs: [registry-smoke, registry-armv7-smoke]
+    needs: [release, registry-smoke, registry-armv7-smoke]
     if: >-
       always() &&
+      needs.release.result == 'success' &&
       needs.registry-smoke.result == 'success' &&
-      needs.registry-armv7-smoke.result == 'success'
+      ((needs.release.outputs.release-class == 'native' &&
+      needs.registry-armv7-smoke.result == 'success') ||
+      (needs.release.outputs.release-class == 'wrapper' &&
+      needs.registry-armv7-smoke.result == 'skipped'))
     runs-on: ubuntu-24.04
     steps:
-      - run: echo "Every exact npm and JSR target route passed."
+      - run: echo "Every required exact npm and JSR route passed."

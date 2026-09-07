@@ -8,6 +8,14 @@ inputs:
   version:
     description: Version selected by the release plan
     required: true
+  release-class:
+    description: Fail-closed release class
+    required: false
+    default: native
+  native-stack-version:
+    description: Exact qualified loader/target version; defaults to the wrapper version
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -17,15 +25,30 @@ runs:
       env:
         WATCHBOUND_CANDIDATE_SHA: ${{ inputs.source-sha }}
         WATCHBOUND_CANDIDATE_VERSION: ${{ inputs.version }}
-      run: >-
-        node scripts/set-release-version.mjs
-        "$WATCHBOUND_CANDIDATE_VERSION"
-        --source-sha "$WATCHBOUND_CANDIDATE_SHA"
+        WATCHBOUND_RELEASE_CLASS: ${{ inputs.release-class }}
+        WATCHBOUND_NATIVE_STACK_VERSION: ${{ inputs.native-stack-version }}
+      run: |
+        native_stack_version="$WATCHBOUND_NATIVE_STACK_VERSION"
+        if [[ -z "$native_stack_version" ]]; then
+          native_stack_version="$WATCHBOUND_CANDIDATE_VERSION"
+        fi
+        node scripts/set-release-version.mjs \
+          "$WATCHBOUND_CANDIDATE_VERSION" \
+          --source-sha "$WATCHBOUND_CANDIDATE_SHA" \
+          --release-class "$WATCHBOUND_RELEASE_CLASS" \
+          --native-stack-version "$native_stack_version"
     - name: Retain the generated-candidate identity
       shell: bash
       env:
         WATCHBOUND_CANDIDATE_SHA: ${{ inputs.source-sha }}
         WATCHBOUND_CANDIDATE_VERSION: ${{ inputs.version }}
+        WATCHBOUND_RELEASE_CLASS: ${{ inputs.release-class }}
+        WATCHBOUND_NATIVE_STACK_VERSION: ${{ inputs.native-stack-version }}
       run: |
         printf 'WATCHBOUND_CANDIDATE_SHA=%s\n' "$WATCHBOUND_CANDIDATE_SHA" >> "$GITHUB_ENV"
         printf 'WATCHBOUND_CANDIDATE_VERSION=%s\n' "$WATCHBOUND_CANDIDATE_VERSION" >> "$GITHUB_ENV"
+        printf 'WATCHBOUND_RELEASE_CLASS=%s\n' "$WATCHBOUND_RELEASE_CLASS" >> "$GITHUB_ENV"
+        if [[ -z "$WATCHBOUND_NATIVE_STACK_VERSION" ]]; then
+          WATCHBOUND_NATIVE_STACK_VERSION="$WATCHBOUND_CANDIDATE_VERSION"
+        fi
+        printf 'WATCHBOUND_NATIVE_STACK_VERSION=%s\n' "$WATCHBOUND_NATIVE_STACK_VERSION" >> "$GITHUB_ENV"

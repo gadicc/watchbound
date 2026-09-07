@@ -19,6 +19,11 @@ const version = rootPackage.version;
 const packageManifest = readJson(
   path.join(workspaceRoot, "dist", "native-package-manifest.json"),
 );
+assert.equal(packageManifest.schemaVersion, 2, "release package manifest schema");
+assert.equal(packageManifest.releaseClass, "native", "native evidence release class");
+assert.equal(packageManifest.wrapperVersion, version, "native evidence wrapper version");
+assert.equal(packageManifest.nativeStackVersion, version, "native evidence stack version");
+assert.equal(packageManifest.loader?.version, version, "native evidence loader version");
 const matrix = loadNativeMatrix(workspaceRoot);
 const tarballRoot = path.join(workspaceRoot, "dist", "tarballs");
 const evidenceRoot = path.join(workspaceRoot, "dist", "evidence");
@@ -33,6 +38,7 @@ const nativeArtifacts = packageManifest.targets.map((packagedTarget) => {
   const target = matrix.targets.find(({ id }) => id === packagedTarget.id);
   assert.ok(target, `package manifest contains unknown target ${packagedTarget.id}`);
   assert.equal(packagedTarget.name, target.package);
+  assert.equal(packagedTarget.version, version);
   assert.equal(packagedTarget.binary, target.binary);
   const binaryPath = path.join(
     workspaceRoot,
@@ -129,7 +135,10 @@ const tools = {
 writeJson(path.join(evidenceRoot, "release-metadata.json"), {
   schemaVersion: 2,
   package: "watchbound",
+  releaseClass: "native",
   version,
+  wrapperVersion: version,
+  nativeStackVersion: version,
   commit,
   delivery: "target-native-packages",
   baseline: matrix.releaseBaseline,

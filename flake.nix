@@ -29,6 +29,23 @@
             && !(pkgs.lib.hasSuffix ".node" (toString path));
         };
         node = pkgs.nodejs_24;
+        # This nixpkgs pin predates NixOS/nixpkgs#524985. Backport only its
+        # crates.io CDN change so curl User-Agent policy cannot break locked
+        # crate fetches, without moving the qualified Nix toolchain closure.
+        cratesIoApiBase = "https://crates.io/api/v1/crates";
+        staticCratesBase = "https://static.crates.io/crates";
+        staticCratesFetchurl = args:
+          assert pkgs.lib.assertMsg (pkgs.lib.hasPrefix cratesIoApiBase args.url)
+            "the pinned importCargoLock crates.io URL changed; remove or update the static CDN backport";
+          pkgs.fetchurl (args // {
+            url = "${staticCratesBase}${pkgs.lib.removePrefix cratesIoApiBase args.url}";
+          });
+        staticCratesImportCargoLock = pkgs.rustPlatform.importCargoLock.override {
+          fetchurl = staticCratesFetchurl;
+        };
+        staticCratesBuildRustPackage = pkgs.rustPlatform.buildRustPackage.override {
+          importCargoLock = staticCratesImportCargoLock;
+        };
         electronLibs = with pkgs; [
           glib gtk3 pango cairo gdk-pixbuf atk at-spi2-atk at-spi2-core
           nss nspr dbus cups expat libdrm mesa libgbm alsa-lib libX11
@@ -72,7 +89,7 @@
             runHook postInstall
           '';
         };
-        watchboundNative = pkgs.rustPlatform.buildRustPackage {
+        watchboundNative = staticCratesBuildRustPackage {
           pname = "watchbound-native-${target.id}";
           version = rootPackage.version;
           src = sourceRoot;

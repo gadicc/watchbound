@@ -1063,6 +1063,20 @@ test("manual qualification is read-only while semantic release stays push-only",
   assert.match(materializeAction, /WATCHBOUND_CANDIDATE_SHA=.*GITHUB_ENV/su);
   assert.match(materializeAction, /WATCHBOUND_CANDIDATE_VERSION=.*GITHUB_ENV/su);
   assert.match(flake, /eachSystem \[ "x86_64-linux" "aarch64-linux" \]/u);
+  assert.match(
+    flake,
+    /staticCratesFetchurl = args:[\s\S]*?assert pkgs\.lib\.assertMsg \(pkgs\.lib\.hasPrefix cratesIoApiBase args\.url\)[\s\S]*?pkgs\.fetchurl/u,
+  );
+  assert.match(
+    flake,
+    /staticCratesImportCargoLock = pkgs\.rustPlatform\.importCargoLock\.override \{[\s\S]*?fetchurl = staticCratesFetchurl;/u,
+  );
+  assert.match(
+    flake,
+    /staticCratesBuildRustPackage = pkgs\.rustPlatform\.buildRustPackage\.override \{[\s\S]*?importCargoLock = staticCratesImportCargoLock;/u,
+  );
+  assert.match(flake, /watchboundNative = staticCratesBuildRustPackage/u);
+  assert.doesNotMatch(flake, /extraRegistries/u);
   assert.match(flake, /electron-v\$\{matrix\.codexRuntime\.electron\}-linux-/u);
   assert.match(flake, /target\.codexElectron\.sha256SRI/u);
   assert.match(flake, /patchelf/u);

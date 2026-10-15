@@ -83,7 +83,7 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files -- 'node/*.node' 'node/*.so')"
           test -z "$(find node -maxdepth 1 -type f \( -name '*.node' -o -name '*.so' \) -print -quit)"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -165,7 +165,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - name: Retain the target artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node/${{ matrix.binary }}
@@ -189,7 +189,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -236,7 +236,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - name: Retain the cross-built target artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node/${{ matrix.binary }}
@@ -259,7 +259,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -276,7 +276,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -289,7 +289,7 @@ jobs:
           node scripts/pack-prepared-packages.mjs --target "${{ matrix.target }}"
           sha256sum "node/${{ matrix.binary }}"
       - name: Select the runtime under test without rebuilding the addon
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.nodeVersion }}
           architecture: ${{ matrix.architecture }}
@@ -307,7 +307,7 @@ jobs:
             --native-sha256 "$WATCHBOUND_RETAINED_NATIVE_SHA256" \
             --evidence "$RUNNER_TEMP/watchbound-node-${{ matrix.nodeVersion }}-${{ matrix.architecture }}.json"
       - if: always() && matrix.coverage == 'full-lifecycle'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-node-${{ matrix.nodeVersion }}-${{ matrix.architecture }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-node-${{ matrix.nodeVersion }}-${{ matrix.architecture }}.json
@@ -329,7 +329,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -346,7 +346,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -369,7 +369,7 @@ jobs:
             --native-sha256 "$retained_native_sha256" \
             --evidence "$RUNNER_TEMP/watchbound-electron-${{ matrix.runtime }}.json"
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-electron-${{ matrix.runtime }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-electron-${{ matrix.runtime }}.json
@@ -391,7 +391,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -409,7 +409,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -446,7 +446,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-armv7-runtime-${{ matrix.target }}-${{ github.run_attempt }}
           path: |
@@ -465,7 +465,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.x
           architecture: x64
@@ -509,7 +509,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -523,7 +523,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -549,7 +549,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-distro-${{ matrix.lane }}-${{ matrix.architecture }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-${{ matrix.lane }}-${{ matrix.architecture }}.json
@@ -571,7 +571,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -590,7 +590,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -644,7 +644,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-kernel-${{ matrix.target }}-${{ github.run_attempt }}
           path: |
@@ -668,7 +668,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -682,7 +682,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.33.2 --activate
           pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: watchbound-ci-native-${{ matrix.target }}
           path: node
@@ -709,7 +709,7 @@ jobs:
               --version "${{ inputs.candidate_version }}"
           fi
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchbound-electron-${{ matrix.target }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbound-electron-${{ matrix.target }}.json
@@ -733,7 +733,7 @@ jobs:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.matrix.outputs.build-node }}
           architecture: ${{ matrix.architecture }}
@@ -743,7 +743,7 @@ jobs:
         with:
           source-sha: ${{ inputs.candidate_sha }}
           version: ${{ inputs.candidate_version }}
-      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Build and exercise the locked source closure
         shell: bash
         run: |
